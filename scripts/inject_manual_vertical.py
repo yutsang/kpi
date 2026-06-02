@@ -45,8 +45,32 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--entity", required=True, choices=sorted(ENTITIES))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--clear", action="store_true",
+                    help="REVERT: blank manual_vertical (set by a prior inject) so V falls back to llm_vertical")
     args = ap.parse_args()
     company = ENTITIES[args.entity]
+
+    if args.clear:
+        alias = args.entity
+        interim = ROOT / "data" / alias / "interim"
+        hits = sorted(interim.glob("*unique_projects*.xlsx")) if interim.exists() else []
+        if not hits:
+            hits = [p for p in (ROOT / "data").glob("*/interim/*unique_projects*.xlsx")
+                    if alias in str(p).lower() or company in str(p).lower()]
+        if not hits:
+            print(f"X no *unique_projects*.xlsx for {alias}."); return
+        xlsx = hits[0]
+        pdf = pd.read_excel(xlsx)
+        had = int((pdf.get("manual_vertical", pd.Series(dtype=str)).astype("string").fillna("").str.strip() != "").sum()) if "manual_vertical" in pdf.columns else 0
+        if "manual_vertical" in pdf.columns:
+            pdf["manual_vertical"] = ""
+        if "tag_source" in pdf.columns:
+            ts = pdf["tag_source"].astype("string").fillna("")
+            pdf["tag_source"] = ts.where(ts != TAG_SOURCE, "")
+        pdf.to_excel(xlsx, index=False)
+        print(f"[{alias}] cleared manual_vertical on {had} projects in {xlsx.name}. "
+              f"Next: kedro run --pipeline={alias}  (V falls back to llm_vertical + conf overrides)")
+        return
 
     ov = ROOT / "data" / "_overrides" / f"{args.entity}_vertical.tsv"
     if not ov.exists():
