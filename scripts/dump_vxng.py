@@ -90,7 +90,10 @@ def dump(ent: str):
             f.write(f"\n===== {tag}  TOTAL = {tot:,.0f}  ({len(sub):,} rows) =====\n")
             if sub.empty:
                 continue
-            g = sub.groupby(["ng_code", vlab])["_amt"].agg(["size", "sum"]).reset_index()
+            sub = sub.copy()
+            sub["ng_code"] = sub["ng_code"].astype("string").fillna("(未分類)").replace("", "(未分類)")
+            sub[vlab] = sub[vlab].astype("string").fillna("(未分類)").replace("", "(未分類)")
+            g = sub.groupby(["ng_code", vlab], dropna=False)["_amt"].agg(["size", "sum"]).reset_index()
             g = g[g["sum"] != 0]
             # NG-only summary first (compact, for cross-entity sanity)
             ng = g.groupby("ng_code")["sum"].sum().reset_index()
