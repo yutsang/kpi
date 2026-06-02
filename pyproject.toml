@@ -1,0 +1,20 @@
+[project]
+name = "kpi"
+version = "0.1.0"
+description = "Macau NG0-NG11 KPI tagging + cross-tab reporting"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.kedro]
+package_name = "kpi"
+project_name = "kpi"
+kedro_init_version = "0.19.0"
+source_dir = "src"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kpi*"]

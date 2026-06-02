@@ -1,0 +1,82 @@
+# Phase 2 — only generic templates and universal taxonomy are shared.
+
+# Per-machine secrets
+conf/local/
+
+# Each filled per-entity parameters.yml is gitignored; only .template is shared.
+# (conf/base/parameters.yml NOT ignored — contains shared reporting_cycle config)
+conf/company_*/parameters.yml
+conf/table_2/parameters.yml
+
+# .env secrets
+.env
+
+# Real business data — never commit
+data/
+
+# Sig batch transfer folder — contains account_code/account_desc/desc_norm
+# extracted from raw.parquet. Treated as confidential like data/.
+# Used as a workspace for the Claude-classify-then-inject workflow (paste
+# batch txt → I classify → user downloads classified file). NEVER commit.
+sig_batches/
+sig_results.txt
+
+# Root-level inspection / sampling outputs — contain account_code, project
+# names, vendors, sig descriptions. ALWAYS confidential.
+inspect_raw_project_cols.txt
+inspect_raw_projects.txt
+inspect_galaxy_24_raw.txt
+inspect_excel_sheets.txt
+inspect_sig_patterns_*.txt
+inspect_combine_sheet.txt
+inspect_bucket_routing_*.txt
+inspect_wynn_config.txt
+inspect_wynn_2023.txt
+inspect_wynn_2023_sheets.txt
+parse_all_vertical*.txt
+sample_500_sigs.txt
+sample_500_random.txt
+sample_round*.txt
+final_qa_output.txt
+inspect_sig_reduction_*.txt
+project_batches/
+!project_batches_classified_*.zip
+
+# kedro / Python junk
+logs/
+.kedro.yml.bak
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.ipynb_checkpoints/
+mappings/*.xlsx
+!mappings/.gitkeep
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/
+CLAUDE.md
+*.xlsx
+
+# MGM build & search scripts
+mgm_build.py
+inspect_mgm.py
+search_events*.py
+search_events*.log
+
+# Communication scratch folder — user drops script-output txt/tsv here for review.
+# Ephemeral (user deletes intermittently); never rely on after a run; never commit.
+results/
+
+# Confidentiality (2026-05-30) — untracked + purged from history; synced manually
+# like data/. Repo holds functional pipeline code + methodology only. Config (incl
+# categories.yml NG taxonomy), docs, and per-entity vertical override patches carry
+# NG / project / company specifics and must NOT live in git.
+conf/
+docs/
+v_override_patches/
