@@ -50,6 +50,30 @@ def fuzzy(df, name):
     return None
 
 
+def cn_to_ng(s):
+    """Map a project-team 項目性質 / 範疇 Chinese category to an NG code (keyword-based,
+    tolerant to variants/suffixes). Returns None if unmappable so it isn't forced."""
+    s = str(s or "").strip()
+    if not s or s.lower() in ("nan", "none", "<na>"):
+        return None
+    if "非博彩" in s:                      # binary 博彩/非博彩 → can't pin NG1-11
+        return None
+    if "博彩" in s:                        return "NG0"
+    if "海上" in s or "郵輪" in s or "海洋" in s:            return "NG10"
+    if "外國客源" in s or "吸引外國" in s or "國際客" in s or "海外辦" in s or "客源" in s:
+        return "NG1"
+    if "會議" in s or "會展" in s or "展覽" in s:            return "NG2"
+    if "娛樂表演" in s or "演唱" in s or "演藝" in s:        return "NG3"
+    if "體育" in s:                        return "NG4"
+    if "文化" in s or "藝術" in s or "文藝" in s:            return "NG5"
+    if "健康" in s or "養生" in s:          return "NG6"
+    if "主題遊樂" in s or "主題樂園" in s:  return "NG7"
+    if "美食" in s or "餐飲" in s:          return "NG8"
+    if "社區" in s:                        return "NG9"
+    if "其他" in s:                        return "NG11"
+    return None
+
+
 def year_mask(yr, tag):
     return yr.str.startswith(tag) | (yr == f"Yr 20{tag}") | (yr == f"20{tag}")
 
@@ -77,10 +101,15 @@ def main():
         their_col = None
         _ngc = fuzzy(df, cols.get("ng11_category", ""))
         if _ngc:
-            tv = df[_ngc].astype("string").fillna("").str.strip().str.upper().str.replace(" ", "")
-            if tv.str.fullmatch(r"NG\d+").fillna(False).mean() > 0.3:
-                df["_their"] = tv.where(tv.str.fullmatch(r"NG\d+").fillna(False), "")
+            raw = df[_ngc].astype("string").fillna("")
+            up = raw.str.strip().str.upper().str.replace(" ", "")
+            nonblank = raw.str.strip().ne("")
+            if up.str.fullmatch(r"NG\d+").fillna(False).mean() > 0.3:          # NG0-11 column (Galaxy)
+                df["_their"] = up.where(up.str.fullmatch(r"NG\d+").fillna(False), "")
                 their_col = _ngc
+            elif nonblank.mean() > 0.2 and raw[nonblank].nunique() >= 5:        # Chinese 項目性質 (Wynn/VML/Melco)
+                df["_their"] = raw.map(lambda s: cn_to_ng(s) or "")
+                their_col = f"{_ngc}→NG(中文map)"
         ycol = next((c for c in YEAR_CANDIDATES if c in df.columns), None)
         yr = df[ycol].astype("string").fillna("")
         def tot(mask, col, ng):
