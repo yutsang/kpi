@@ -107,6 +107,11 @@ def main():
             if up.str.fullmatch(r"NG\d+").fillna(False).mean() > 0.3:          # NG0-11 column (Galaxy)
                 df["_their"] = up.where(up.str.fullmatch(r"NG\d+").fillna(False), "")
                 their_col = _ngc
+            elif raw.str.contains("博彩", na=False).any() and raw.str.contains("非博彩", na=False).any() \
+                    and raw[nonblank].nunique() < 5:                            # binary 博彩/非博彩 (SJM 項目類型)
+                df["_their"] = raw.map(lambda s: "NG0" if ("博彩" in str(s) and "非博彩" not in str(s))
+                                       else ("非博彩" if "非博彩" in str(s) else ""))
+                their_col = f"{_ngc}(博彩/非博彩二元)"
             elif nonblank.mean() > 0.2 and raw[nonblank].nunique() >= 5:        # Chinese 項目性質 (Wynn/VML/Melco)
                 df["_their"] = raw.map(lambda s: cn_to_ng(s) or "")
                 their_col = f"{_ngc}→NG(中文map)"
@@ -126,7 +131,16 @@ def main():
                 tcell = ("", "", "", "")
             lines.append(f"{ent}\t{ng}\t{NG_LABEL[ng]}\t{o25:.0f}\t{o24:.0f}\t"
                          + "\t".join(tcell))
-        src = f"their=raw NG col {their_col!r}" if their_col else "their=(no NG0-11 col — tell me source)"
+        # 非博彩合計 (all non-NG0 classified) — the meaningful line for binary 項目類型 (SJM)
+        if their_col:
+            def nong(mask, col):
+                sub = df[mask & (df[col] != "NG0") & (df[col].astype(str) != "")]
+                return float(sub["_amt"].sum())
+            o25n, o24n = nong(m25, "_our"), nong(m24, "_our")
+            t25n, t24n = nong(m25, "_their"), nong(m24, "_their")
+            lines.append(f"{ent}\tNON-GAMING\t非博彩合計\t{o25n:.0f}\t{o24n:.0f}\t"
+                         f"{t25n:.0f}\t{t24n:.0f}\t{o25n-t25n:.0f}\t{o24n-t24n:.0f}")
+        src = f"their={their_col!r}" if their_col else "their=(no NG col — tell me source)"
         print(f"[{ent}] our_25={df[m25]['_amt'].sum():,.0f}  our_24={df[m24]['_amt'].sum():,.0f}  {src}")
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\nwrote {out.relative_to(ROOT)}  ({len(args.entity)} entities)")
