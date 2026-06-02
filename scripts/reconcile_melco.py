@@ -54,22 +54,40 @@ def blank(v):
     return str(v).strip().lower() in BLANKS
 
 
-def their_h(r, C):
+# 24 performer 取數 whitelist (支出性质-mapping ∈ 呢啲 or blank);25 唔需要
+PERF_WL24 = {"cost recovery", "保險費用", "表演者費用", "差旅費", "第三方公司支出",
+             "管理費", "其他", "影視製作及租賃成本", "折扣費用", "製作費用", ""}
+
+
+def their_h(r, C, yr):
     g = lambda k: r.get(C.get(k)) if C.get(k) else None
     comp_ind, comp_nat = g("comp_ind"), str(g("comp_nat") or "").strip()
     payroll = g("payroll"); perf = str(g("perf") or "").strip().upper()
     cap = str(g("capex_opex") or ""); spend = str(g("spend") or "").strip()
     ledger = str(g("ledger") or ""); capx = str(g("capex_split") or "").strip()
-    if str(comp_ind or "").strip().upper() == "Y":
+    # 1 comp — 25: KP識別Comp=Y ; 24: Comp性質-CN 非 N/A 非空 (項目組 24 用 Comp性質分類)
+    comp_is = (str(comp_ind or "").strip().upper() == "Y") if yr == "25" \
+        else (not blank(comp_nat) and "N/A" not in comp_nat.upper())
+    if comp_is:
         return COMP_TO_H.get(comp_nat, "H_COMP_OTHER")
+    # 2 labor
     if not blank(payroll):
         return "H_LABOR"
-    if perf == "Y" and (blank(comp_ind) or "N/A" in str(comp_ind).upper()) and "opex" in cap.lower() and blank(payroll):
-        return "H_PERFORMER"
+    # 3 performer — 25: comp=N/A/空 & Opex ; 24: comp_nat=N/A/空 & 支出性质∈whitelist
+    if perf == "Y" and blank(payroll):
+        if yr == "25":
+            ok = (blank(comp_ind) or "N/A" in str(comp_ind).upper()) and "opex" in cap.lower()
+        else:
+            ok = ("N/A" in comp_nat.upper() or blank(comp_nat)) and spend.lower() in PERF_WL24
+        if ok:
+            return "H_PERFORMER"
+    # 4 capex (建設/設施/維護)
     if "capex" in cap.lower() and blank(payroll):
         return CAPEX_TO_H.get(capx, "H_CONSTRUCTION" if capx else "")
+    # 5 sponsorship (within 營銷)
     if "sponsorship" in ledger.lower():
         return "H_SPONSORSHIP"
+    # 6 marketing / 7 professional / 8 license / 9 residual
     if spend == "營銷費用":
         return "H_ADVERTISING"
     if spend == "專業服務費":
@@ -110,9 +128,14 @@ def main():
     if miss:
         print(f"  ! missing cols: {miss}  — columns are: {list(a.columns)[:30]}")
 
-    take = a[C["take"]].astype(str).str.strip().str.upper().isin(["Y"]) if C["take"] else pd.Series(True, index=a.index)
-    a = a[take].copy()
-    a["their_H"] = a.apply(lambda r: their_h(r, C), axis=1)
+    # 取數 gate — 25 用 取數標籤=Y;24 嘅 pivot 用 Report Years=全部,冇 取數標籤 gate → 唔 filter
+    if yr == "25" and C["take"]:
+        take = a[C["take"]].astype(str).str.strip().str.upper().isin(["Y"])
+        a = a[take].copy()
+        print(f"  25: 取數標籤=Y gate -> {len(a):,} rows")
+    else:
+        print(f"  24: no 取數標籤 gate (Report Years=all) -> {len(a):,} rows")
+    a["their_H"] = a.apply(lambda r: their_h(r, C, yr), axis=1)
     a["_amt"] = pd.to_numeric(a[C["amount"]], errors="coerce").fillna(0) if C["amount"] else 0.0
     a["_uid"] = a[C["uid"]].astype(str) if C["uid"] else ""
 
