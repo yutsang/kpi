@@ -74,26 +74,40 @@ def dump(ent: str):
         print(f"[{ent}] X no year column among {YEAR_CANDIDATES}."); return
 
     yr = df[ycol].astype("string").fillna("")
+
+    def ngnum(s):
+        m = re.search(r"NG(\d+)", str(s))
+        return int(m.group(1)) if m else 99
+
     out = ROOT / "results" / f"{ent}_vxng.tsv"
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as f:
         f.write(f"# {ent}  source={parquet.name}  year_col={ycol}\n")
-        f.write("year\tng_code\tvertical_label\tn_rows\tamount_mop\n")
         for tag in ("25", "24"):
             m = yr.str.startswith(tag) | (yr == f"Yr 20{tag}") | (yr == f"20{tag}")
             sub = df[m]
+            tot = float(sub["_amt"].sum()) if not sub.empty else 0.0
+            f.write(f"\n===== {tag}  TOTAL = {tot:,.0f}  ({len(sub):,} rows) =====\n")
             if sub.empty:
-                f.write(f"{tag}\t(no rows)\t\t0\t0\n"); continue
-            g = (sub.groupby(["ng_code", vlab])["_amt"]
-                 .agg(["size", "sum"]).reset_index()
-                 .sort_values(["ng_code", "sum"], ascending=[True, False]))
-            g["_k"] = g["ng_code"].str.extract(r"NG(\d+)").astype(float)
+                continue
+            g = sub.groupby(["ng_code", vlab])["_amt"].agg(["size", "sum"]).reset_index()
+            g = g[g["sum"] != 0]
+            # NG-only summary first (compact, for cross-entity sanity)
+            ng = g.groupby("ng_code")["sum"].sum().reset_index()
+            ng["_k"] = ng["ng_code"].map(ngnum)
+            ng = ng.sort_values("_k")
+            f.write("  NG summary:\n")
+            for _, r in ng.iterrows():
+                pct = (r["sum"] / tot * 100) if tot else 0
+                f.write(f"    {r['ng_code']:<5} {r['sum']:>16,.0f}  {pct:4.1f}%\n")
+            # NG x V detail (non-zero only)
+            f.write("  NG x Vertical (non-zero):\n")
+            f.write("  year\tng\tvertical_label\tn_rows\tamount\n")
+            g["_k"] = g["ng_code"].map(ngnum)
             g = g.sort_values(["_k", "sum"], ascending=[True, False])
             for _, r in g.iterrows():
-                f.write(f"{tag}\t{r['ng_code']}\t{r[vlab]}\t{int(r['size'])}\t{r['sum']:.0f}\n")
-            tot = sub["_amt"].sum()
-            f.write(f"{tag}\tTOTAL\t\t{len(sub)}\t{tot:.0f}\n")
-    print(f"[{ent}] wrote {out.relative_to(ROOT)}")
+                f.write(f"  {tag}\t{r['ng_code']}\t{r[vlab]}\t{int(r['size'])}\t{r['sum']:,.0f}\n")
+    print(f"[{ent}] wrote {out.relative_to(ROOT)}  ({len(df):,} rows)")
 
 
 def main():
