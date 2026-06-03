@@ -58,19 +58,27 @@ def dump(ent, year, unclassified, inputs_only, batch, top):
 
     ac, ad = fuzzy(df, cols.get("account_code")), fuzzy(df, cols.get("account_desc"))
     de, am, pj = fuzzy(df, cols.get("description")), fuzzy(df, cols.get("amount")), fuzzy(df, cols.get("project"))
-    # step4 DROPS the signature column from tagged_rows (RAM reclaim) — rebuild it identically
-    # via the same shared helper (respects conf signature_fields; default acct|adesc|desc_norm[|job]).
+    # step4 DROPS the signature column from tagged_rows (RAM reclaim) — rebuild it here.
+    # Self-contained (only the long-standing normalize_description) so it runs even if the
+    # local src/ predates the signature_fields helper. Default fields = account|account_desc|
+    # desc_norm[+job_code when configured]; honour conf signature_fields if the entity set it.
     sys.path.insert(0, str(ROOT / "src"))
-    from kpi.lib.text import normalize_description, resolve_signature_fields, compose_signature
+    from kpi.lib.text import normalize_description
     jc = fuzzy(df, cols.get("job_code"))
     _empty = pd.Series([""] * len(df), index=df.index)
-    _parts = {
+    comp = {
         "account_code": (df[ac].astype("string").fillna("").str.strip() if ac else _empty),
         "account_desc": (df[ad].astype("string").fillna("").str.strip() if ad else _empty),
         "desc_norm": (df[de].apply(normalize_description) if de else _empty),
         "job_code": (df[jc].astype("string").fillna("").str.strip() if jc else _empty),
     }
-    df["signature"] = compose_signature(_parts, resolve_signature_fields(cf, cols, df.columns))
+    sig_fields = cf.get("signature_fields") or (
+        ["account_code", "account_desc", "desc_norm"] + (["job_code"] if jc else []))
+    sig = None
+    for f in sig_fields:
+        s = comp[str(f)].astype("string").fillna("")
+        sig = s if sig is None else sig + "|" + s
+    df["signature"] = sig
     df["_H"] = df["horizontal_id"].astype(str)
     df["_ad"] = df[ad].astype(str) if ad else ""
     df["_amt"] = pd.to_numeric(df[am], errors="coerce").fillna(0) if am else 0.0
