@@ -118,8 +118,8 @@ def main():
                 pd.concat([_existing, _new], ignore_index=True).to_excel(sig_path, index=False)
                 print(f"  [sig] merged {len(_new):,} NEW signatures into {sig_path.name} "
                       f"(kept {len(_existing):,} existing + their tags)")
-        else:
-            print(f"  [sig] no new signatures ({len(_existing):,} existing kept)")
+            else:
+                print(f"  [sig] no new signatures ({len(_existing):,} existing kept)")
 
     summary_lines = [
         f"company: {company}",
