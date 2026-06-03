@@ -99,13 +99,25 @@ def main():
         print(f"  [sig] created {sig_path.name} with {len(sig_df):,} signatures")
     else:
         _existing = pd.read_excel(sig_path)
-        _ekeys = set(_existing["signature"].astype(str)) if "signature" in _existing.columns else set()
-        _new = sig_df[~sig_df["signature"].astype(str).isin(_ekeys)].copy()
-        if len(_new):
-            _new = _new.reindex(columns=_existing.columns)
-            pd.concat([_existing, _new], ignore_index=True).to_excel(sig_path, index=False)
-            print(f"  [sig] merged {len(_new):,} NEW signatures into {sig_path.name} "
-                  f"(kept {len(_existing):,} existing + their tags)")
+        # Granularity guard: if signature_fields changed (e.g. VML → account level), the
+        # existing keys are a different SHAPE (segment count) — merging would mix
+        # granularities. Detect via '|'-segment count and REBUILD fresh instead (no manual
+        # delete needed). Safe: regenerated deterministically from the parquet.
+        _new_parts = int(str(sig_df["signature"].iloc[0]).count("|")) if len(sig_df) else 0
+        _old_parts = (int(str(_existing["signature"].iloc[0]).count("|"))
+                      if len(_existing) and "signature" in _existing.columns else _new_parts)
+        if _new_parts != _old_parts:
+            sig_df.to_excel(sig_path, index=False)
+            print(f"  [sig] signature granularity changed ({_old_parts + 1}→{_new_parts + 1} fields) — "
+                  f"REBUILT {sig_path.name} fresh with {len(sig_df):,} signatures (old keys incompatible)")
+        else:
+            _ekeys = set(_existing["signature"].astype(str)) if "signature" in _existing.columns else set()
+            _new = sig_df[~sig_df["signature"].astype(str).isin(_ekeys)].copy()
+            if len(_new):
+                _new = _new.reindex(columns=_existing.columns)
+                pd.concat([_existing, _new], ignore_index=True).to_excel(sig_path, index=False)
+                print(f"  [sig] merged {len(_new):,} NEW signatures into {sig_path.name} "
+                      f"(kept {len(_existing):,} existing + their tags)")
         else:
             print(f"  [sig] no new signatures ({len(_existing):,} existing kept)")
 
