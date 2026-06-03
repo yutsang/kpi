@@ -130,17 +130,24 @@ def dump(ent, year, unclassified, inputs_only, batch, top):
     suffix = f"_{year}_unclassified" if unclassified else f"_{year}"
     tsv = out_dir / f"{ent}_sigs{suffix}.tsv"
     out.to_csv(tsv, sep="\t", index=False, encoding="utf-8-sig")
+    # JSONL is the PASTE-ROBUST artifact — JSON has no tab-reliance, so copy/paste can't
+    # mangle the signature key. Paste the .jsonl back, not the .tsv.
+    jsonl = out_dir / f"{ent}_sigs{suffix}.jsonl"
+    out.to_json(jsonl, orient="records", lines=True, force_ascii=False)
     n = len(out)
     n_batches = (n + batch - 1) // batch if n else 0
     for b in range(n_batches):
-        out.iloc[b * batch:(b + 1) * batch].to_csv(
-            out_dir / f"{ent}_sigs{suffix}_batch{b + 1:02d}of{n_batches:02d}.tsv",
-            sep="\t", index=False, encoding="utf-8-sig")
+        chunk = out.iloc[b * batch:(b + 1) * batch]
+        chunk.to_csv(out_dir / f"{ent}_sigs{suffix}_batch{b + 1:02d}of{n_batches:02d}.tsv",
+                     sep="\t", index=False, encoding="utf-8-sig")
+        chunk.to_json(out_dir / f"{ent}_sigs{suffix}_batch{b + 1:02d}of{n_batches:02d}.jsonl",
+                      orient="records", lines=True, force_ascii=False)
 
     print(f"\n===== {ent} year {year}: {tot:,} sigs total | H_OTHER {n_other:,} "
           f"(|Σamt| {amt_other:,.0f} = {amt_other / amt_all * 100 if amt_all else 0:.0f}% of year) =====")
-    print(f"  dumped {n:,} rows{' (H_OTHER only)' if unclassified else ''} → {tsv.relative_to(ROOT)}")
-    print(f"  {n_batches} paste-batch files (≤{batch}): {ent}_sigs{suffix}_batch01of{n_batches:02d}.tsv ...")
+    print(f"  dumped {n:,} rows{' (H_OTHER only)' if unclassified else ''}")
+    print(f"  ► PASTE THIS (mangle-proof): {jsonl.relative_to(ROOT)}   (or .tsv: {tsv.relative_to(ROOT)})")
+    print(f"  {n_batches} batch files (≤{batch}) in .jsonl + .tsv")
     print(f"----- top {min(top, n)} by |amount| -----")
     print(out.head(top).to_csv(sep="\t", index=False))
 
