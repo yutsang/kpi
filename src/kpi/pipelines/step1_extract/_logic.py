@@ -35,8 +35,19 @@ def main():
         raise FileNotFoundError(f"Run step0 first. Missing: {src}")
 
     sig_path = interim / f"{company}_unique_signatures.xlsx"
-    if sig_path.exists():
-        print(f"  [skip] {sig_path.name} already exists (delete to regenerate)")
+    proj_path = interim / f"{company}_unique_projects.xlsx"
+    acct_path = interim / f"{company}_unique_accounts.xlsx"
+    vend_path = interim / f"{company}_unique_vendors.xlsx"
+    # Gate each output INDEPENDENTLY. The old behaviour skipped the whole node if the sig file
+    # existed, so rebuilding unique_projects (e.g. to pick up a newly-added year's projects) forced
+    # deleting unique_signatures → a full step3 re-LLM. Now: rebuild whichever project/account/vendor
+    # file is missing, and MERGE new signatures into the existing sig file (existing rows + their
+    # step3 tags preserved; only genuinely new sigs appended). Skip the node only if ALL exist.
+    _need_vend = bool((cfg["columns"] or {}).get("vendor"))
+    if (proj_path.exists() and acct_path.exists() and sig_path.exists()
+            and (vend_path.exists() or not _need_vend)):
+        print("  [skip] all step1 outputs exist — delete a specific *_unique_*.xlsx to rebuild it "
+              "(new signatures merge automatically; unique_signatures is never wiped)")
         return
 
     cols = cfg["columns"]
@@ -72,14 +83,30 @@ def main():
 
     sig_df = build_signatures(df, cols)
 
-    proj_path = interim / f"{company}_unique_projects.xlsx"
-    acct_path = interim / f"{company}_unique_accounts.xlsx"
-    vend_path = interim / f"{company}_unique_vendors.xlsx"
-    sig_path = interim / f"{company}_unique_signatures.xlsx"
-    proj.to_excel(proj_path, index=False)
-    acct.to_excel(acct_path, index=False)
-    vend.to_excel(vend_path, index=False)
-    sig_df.to_excel(sig_path, index=False)
+    # Write whichever project/account/vendor file is missing — don't clobber an existing tagged file.
+    if not proj_path.exists():
+        proj.to_excel(proj_path, index=False)
+    if not acct_path.exists():
+        acct.to_excel(acct_path, index=False)
+    if cols.get("vendor") and not vend_path.exists():
+        vend.to_excel(vend_path, index=False)
+    # Signatures: create if missing, else MERGE — keep every existing row (and its step3 columns /
+    # tags) and only APPEND signatures not already present. So adding a year never wipes the sig file
+    # nor forces a full step3 re-LLM; only the genuinely new sigs are left untagged for step3/feedback.
+    if not sig_path.exists():
+        sig_df.to_excel(sig_path, index=False)
+        print(f"  [sig] created {sig_path.name} with {len(sig_df):,} signatures")
+    else:
+        _existing = pd.read_excel(sig_path)
+        _ekeys = set(_existing["signature"].astype(str)) if "signature" in _existing.columns else set()
+        _new = sig_df[~sig_df["signature"].astype(str).isin(_ekeys)].copy()
+        if len(_new):
+            _new = _new.reindex(columns=_existing.columns)
+            pd.concat([_existing, _new], ignore_index=True).to_excel(sig_path, index=False)
+            print(f"  [sig] merged {len(_new):,} NEW signatures into {sig_path.name} "
+                  f"(kept {len(_existing):,} existing + their tags)")
+        else:
+            print(f"  [sig] no new signatures ({len(_existing):,} existing kept)")
 
     summary_lines = [
         f"company: {company}",
