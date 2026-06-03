@@ -401,6 +401,24 @@ def main():
         if rule_constrain_hits:
             print(f"  [rules] {rule_constrain_hits} signatures with narrowed candidate lists (subset rules)")
 
+    # Conf flag `skip_signature_llm: true` — for entities whose H is fully driven by a project-team
+    # column_map applied at step4 (e.g. VML 分類1/分類1.1). Don't run the slow sig LLM at all: every
+    # still-unresolved sig is defaulted (H_OTHER), and step4's row_horizontal_overrides set the real H.
+    # Feedback overrides + predominant rules above still win. Avoids a multi-hour wasted LLM pass.
+    if bool(ent.get("skip_signature_llm", False)):
+        _dft = ent.get("signature_default_horizontal", "H_OTHER")
+        _n = 0
+        for i in range(len(payloads_all)):
+            if pre_results[i] is None:
+                pre_results[i] = {
+                    "horizontal_id": _dft, "confidence": 0.0,
+                    "reasoning": "signature LLM skipped (conf skip_signature_llm); final H from step4 row overrides",
+                    "_tag_source": "skip_llm",
+                }
+                _n += 1
+        print(f"  [skip-llm] signature LLM disabled — {_n} sigs defaulted to {_dft} "
+              f"(step4 column_map / overrides set final H)", flush=True)
+
     payloads = [p for p, r in zip(payloads_all, pre_results) if r is None]
     batched_payloads = [p for p in payloads if not p.get("_candidates")]
     single_payloads = [p for p in payloads if p.get("_candidates")]
