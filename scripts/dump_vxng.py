@@ -80,7 +80,7 @@ def dump(ent: str):
     # resolves both Chinese labels ('美食之都'→NG8, '博彩…'→NG0) AND literal 'NG8' (Galaxy).
     # V_TO_NG(vertical_id) is only the FALLBACK for rows whose ng11_category is blank/unmappable —
     # the vertical we add is just a label; it never decides NG.
-    df["ng_code"] = df["vertical_id"].map(lambda v: V_TO_NG.get(str(v), "NG11"))  # fallback only
+    df["ng_code"] = ""   # NG ONLY from the databook col below — NEVER V_TO_NG (user: 永遠唔可以 V→NG)
     ngc = fuzzy(df, cols.get("ng11_category", ""))
     if ngc:
         sys.path.insert(0, str(ROOT / "src"))
@@ -97,9 +97,11 @@ def dump(ent: str):
         _map = {x: _res(x) for x in {str(z) for z in df[ngc].dropna().unique()}}
         nd = df[ngc].astype(str).map(_map).fillna("")
         valid = nd.str.fullmatch(r"NG\d+").fillna(False)
-        df["ng_code"] = nd.where(valid, df["ng_code"])
-        print(f"[{ent}] NG from dataframe col {ngc!r}: {int(valid.sum()):,}/{len(df):,} rows "
-              f"(blank/unmappable → V_TO_NG fallback)")
+        df["ng_code"] = nd.where(valid, "")   # unmappable/blank → "" → (未分類), NOT V_TO_NG
+        print(f"[{ent}] NG from databook col {ngc!r}: {int(valid.sum()):,}/{len(df):,} mapped "
+              f"({len(df) - int(valid.sum()):,} → 未分類)")
+    else:
+        print(f"[{ent}] ⚠ ng11_category col {cols.get('ng11_category')!r} NOT FOUND — ALL 未分類 (check col name!)")
     vlab = "vertical_label" if "vertical_label" in df.columns else "vertical_id"
     ycol = next((c for c in YEAR_CANDIDATES if c in df.columns), None)
     if not ycol:

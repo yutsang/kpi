@@ -198,11 +198,8 @@ def build(ent: str, com: str, categories: dict) -> Path | None:
     else:
         df["amount_mop"] = 0.0
 
-    if "vertical_id" in df.columns:
-        df["ng_code"] = df["vertical_id"].map(lambda v: V_TO_NG.get(str(v), ("NG11", "其他"))[0])
-        df["ng_label"] = df["vertical_id"].map(lambda v: V_TO_NG.get(str(v), ("NG11", "其他"))[1])
-    else:
-        df["ng_code"] = "NG11"; df["ng_label"] = "其他"
+    # NG NEVER from V (V_TO_NG) — only from the databook col below. Init blank → unmapped = (未分類).
+    df["ng_code"] = ""; df["ng_label"] = ""
 
     # NG ALWAYS comes from the dataframe's 項目性質 / NG11 Category column. normalize_ng_code
     # resolves Chinese labels ('美食之都'→NG8, '博彩…'→NG0) AND literal 'NG8'/'NG0' (Galaxy). NG and
@@ -224,10 +221,12 @@ def build(ent: str, com: str, categories: dict) -> Path | None:
         _nd = df[_ngc].astype(str).map(_nmap).fillna("")
         _valid = _nd.str.fullmatch(r"NG\d+").fillna(False)
         _nglab = {ng: lbl for ng, lbl in V_TO_NG.values()}
-        df["ng_code"] = _nd.where(_valid, df["ng_code"])
-        df["ng_label"] = df["ng_code"].map(lambda n: _nglab.get(str(n), "其他"))
-        print(f"[{ent}] NG from dataframe column {_ngc!r}: {int(_valid.sum()):,}/{len(df):,} rows "
-              f"(blank/unmappable → V_TO_NG fallback)", flush=True)
+        df["ng_code"] = _nd.where(_valid, "")   # unmappable/blank → (未分類), NOT V_TO_NG
+        df["ng_label"] = df["ng_code"].map(lambda n: _nglab.get(str(n), "(未分類)"))
+        print(f"[{ent}] NG from databook column {_ngc!r}: {int(_valid.sum()):,}/{len(df):,} mapped "
+              f"({len(df) - int(_valid.sum()):,} → 未分類)", flush=True)
+    else:
+        print(f"[{ent}] ⚠ ng11_category col {cols.get('ng11_category')!r} NOT FOUND — ALL 未分類", flush=True)
 
     ycol = next((c for c in YEAR_CANDIDATES if c in df.columns), None)
     if ycol:
