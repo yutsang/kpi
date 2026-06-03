@@ -62,6 +62,8 @@ def main():
     if pcol not in proj_df.columns:
         print(f"X project col {pcol!r} not in {px.name}; cols={list(proj_df.columns)}"); return
     projects = proj_df[pcol].astype("string").fillna("").tolist()
+    # Extra descriptive name columns (e.g. Wynn project col is a CODE → add 'Sub project'
+    # + '项目名称中文' so V is classifiable). project_name_cols from conf; skip the code col itself.
     vcol = next((c for c in ("manual_vertical", "llm_vertical", "vertical_id") if c in proj_df.columns), None)
     cur = dict(zip(proj_df[pcol].astype("string").fillna(""),
                    proj_df[vcol].astype("string").fillna(""))) if vcol else {}
@@ -76,7 +78,21 @@ def main():
             df[c] = "" if key != "amount" else 0
     df = df.assign(_proj=df[pcol].astype("string").fillna(""))
     has_bucket = "report_period" in df.columns
+    name_cols = [c for c in (cols.get("project_name_cols") or [])
+                 if c and c in df.columns and c != pcol]
+    if name_cols:
+        print(f"  name_hint cols: {name_cols}")
     groups = dict(tuple(df.groupby("_proj", sort=False)))
+
+    def _distinct(series, k=5):
+        out = []
+        for x in series.tolist():
+            s = str(x).strip()
+            if s and s.lower() != "nan" and s not in out:
+                out.append(s)
+            if len(out) >= k:
+                break
+        return out
 
     rows = []
     for proj in projects:
@@ -89,8 +105,11 @@ def main():
         cands = candidates_for_ng(ng, cats)
         co = ctx["capex_opex_counts"]
         buckets = (",".join(sorted(set(sub["report_period"].astype(str)))) if has_bucket else "")
+        name_hint = " ¦ ".join(f"{nc}={' / '.join(_distinct(sub[nc]))}"
+                               for nc in name_cols if _distinct(sub[nc]))
         rows.append({
             "project": proj,
+            "name_hint": name_hint,
             "their_性質": raw_ng,
             "NG": ng,
             "ng_label": ng_categories.get(ng, {}).get("label", ""),
@@ -107,10 +126,19 @@ def main():
     if out.empty:
         print("X no projects matched between unique_projects.xlsx and raw.parquet"); return
     out = out.reindex(out["Σamt"].abs().sort_values(ascending=False).index).reset_index(drop=True)
-    rep = ROOT / "results" / f"ctx_{args.entity}.tsv"
-    rep.parent.mkdir(parents=True, exist_ok=True)
+    repdir = ROOT / "results"
+    repdir.mkdir(parents=True, exist_ok=True)
+    rep = repdir / f"ctx_{args.entity}.tsv"
     out.to_csv(rep, sep="\t", index=False, encoding="utf-8-sig")
-    print(f"[{args.entity}] {len(out)} projects → {rep.relative_to(ROOT)}")
+    # JSONL — ROBUST channel: json escapes tabs/newlines inside strings, so the file
+    # survives any tab→space mangling on transfer. THIS is the file to send to Claude.
+    # (inject_manual_vertical normalizes whitespace, so internal-space drift still matches.)
+    import json as _json
+    repj = repdir / f"ctx_{args.entity}.jsonl"
+    with repj.open("w", encoding="utf-8") as fh:
+        for r in out.to_dict("records"):
+            fh.write(_json.dumps(r, ensure_ascii=False) + "\n")
+    print(f"[{args.entity}] {len(out)} projects → {rep.relative_to(ROOT)}  +  {repj.relative_to(ROOT)} (send the .jsonl)")
 
     # NG money histogram
     h = out.groupby("NG")["Σamt"].agg(["size", "sum"]).reindex(
