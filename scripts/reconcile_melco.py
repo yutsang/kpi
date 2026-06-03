@@ -83,8 +83,9 @@ def their_h(r, C, yr):
             ok = ("N/A" in comp_nat.upper() or blank(comp_nat)) and spend.lower() in PERF_WL24
         if ok:
             return "H_PERFORMER"
-    # 4 capex (建設/設施/維護) — 劃分空白/篩唔出 → 一般維護費 (項目組 note)
-    if "capex" in cap.lower() and blank(payroll):
+    # 4 capex (建設/設施/維護) — labor 已喺 step2 claim 咗 Y/staff;Capex 就照 劃分 拆,
+    #   劃分空白/篩唔出 → 一般維護費 (項目組 note)。唔再 gate payroll(會漏咗一堆 Capex)。
+    if "capex" in cap.lower():
         return CAPEX_TO_H.get(capx, "H_MAINTENANCE")
     # 5 sponsorship (within 營銷)
     if "sponsorship" in ledger.lower():
@@ -146,10 +147,14 @@ def main():
     our = None
     if pqf.exists():
         k = pq.read_table(pqf).replace_schema_metadata(None).to_pandas()
-        ucol = col(k, "KPMG唯一識別碼", "unique_id")
+        ucol = col(k, "KPMG唯一識別碼", "unique_id", "KPMG ref number")
         if ucol and "horizontal_label" in k.columns:
-            our = dict(zip(k[ucol].astype(str), k["horizontal_label"].astype(str)))
-    a["our_H"] = a["_uid"].map(our) if our else ""
+            our = dict(zip(k[ucol].astype(str).str.strip(), k["horizontal_label"].astype(str)))
+            print(f"  join: our kpi_report uid={ucol!r}, {len(our):,} keys")
+        else:
+            print(f"  ⚠ JOIN FAIL — uid col found={ucol!r}, has horizontal_label={'horizontal_label' in k.columns}.")
+            print(f"     kpi_report cols: {[c for c in k.columns][:30]}")
+    a["our_H"] = a["_uid"].str.strip().map(our).fillna("") if our else ""
     HLBL = {"H_VENUE": "活動場地", "H_HOTEL_ROOM": "酒店客房", "H_FNB": "餐飲", "H_COMP_TICKET": "贈票支出",
             "H_COMP_OTHER": "Comp其他", "H_LABOR": "人工成本", "H_PERFORMER": "合約成本", "H_CONSTRUCTION": "建設與設施支出",
             "H_EQUIP": "設施及器具採購", "H_MAINTENANCE": "維護費", "H_SPONSORSHIP": "贊助費", "H_ADVERTISING": "廣告及推廣",
