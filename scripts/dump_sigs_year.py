@@ -107,21 +107,23 @@ def dump(ent, year, unclassified, inputs_only, batch, top):
     out["desc_sample"] = out["signature"].map(g["_de"].agg(lambda s: _top(s, 3))).str.slice(0, 90)
     out["projects"] = out["signature"].map(g["_pj"].agg(lambda s: _top(s, 2))).str.slice(0, 50)
     out["peer_H"] = out["account_desc"].map(peer).fillna("")
+
+    # summary stats + the --unclassified filter both need current_H — do them BEFORE hiding columns
+    tot = len(out)
+    is_other = out["current_H"].eq("H_OTHER")
+    n_other = int(is_other.sum())
+    amt_all = float(out["amount"].abs().sum())
+    amt_other = float(out.loc[is_other, "amount"].abs().sum())
+    if unclassified:
+        out = out[out["current_H"].eq("H_OTHER")].copy()
+    out = out.reindex(out["amount"].abs().sort_values(ascending=False).index)
+
+    # column selection LAST — --inputs-only hides current_H/peer_H so the LLM pass stays blind/independent
     if inputs_only:
-        # BLIND classification input — hide current_H/peer_H so the LLM pass is independent
-        # of the existing (項目組-similar) answer. Compare happens AFTER, in a separate join.
         out = out[["signature", "account_code", "account_desc", "desc_sample", "n_rows", "amount", "projects"]]
     else:
         out = out[["signature", "current_H", "peer_H", "account_code", "account_desc",
                    "desc_sample", "n_rows", "amount", "projects"]]
-
-    tot = len(out)
-    n_other = int(out["current_H"].eq("H_OTHER").sum())
-    amt_other = float(out.loc[out["current_H"].eq("H_OTHER"), "amount"].abs().sum())
-    amt_all = float(out["amount"].abs().sum())
-    if unclassified:
-        out = out[out["current_H"].eq("H_OTHER")].copy()
-    out = out.reindex(out["amount"].abs().sort_values(ascending=False).index)
 
     out_dir = ROOT / "data" / "review" / "_dump"
     out_dir.mkdir(parents=True, exist_ok=True)
