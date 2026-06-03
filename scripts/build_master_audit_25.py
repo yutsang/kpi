@@ -188,18 +188,30 @@ def build(ent: str, com: str, categories: dict) -> Path | None:
     else:
         df["ng_code"] = "NG11"; df["ng_label"] = "其他"
 
-    # If the entity carries a raw NG column whose values ARE NG0–NG11 (e.g. Galaxy 'NG11 Category'),
-    # that is the project-team's authoritative NG bucket — use it for ng_code (NG and the fine
-    # vertical_label are independent dimensions, NOT 1:1). Keep vertical_id from step2 untouched.
+    # NG ALWAYS comes from the dataframe's 項目性質 / NG11 Category column. normalize_ng_code
+    # resolves Chinese labels ('美食之都'→NG8, '博彩…'→NG0) AND literal 'NG8'/'NG0' (Galaxy). NG and
+    # the finer vertical_label are independent dimensions (NOT 1:1) — the vertical we add is only a
+    # label, it never decides NG. V_TO_NG above is the FALLBACK for blank/unmappable ng11_category.
     _ngc = _fuzzy_col(df, cols.get("ng11_category", ""))
     if _ngc:
-        _ngv = df[_ngc].astype(str).str.strip().str.upper().str.replace(" ", "")
-        _isng = _ngv.str.fullmatch(r"NG\d+").fillna(False)
-        if _isng.mean() > 0.3:
-            _nglab = {ng: lbl for ng, lbl in V_TO_NG.values()}
-            df["ng_code"] = _ngv.where(_isng, df["ng_code"])
-            df["ng_label"] = df["ng_code"].map(lambda n: _nglab.get(str(n), "其他"))
-            print(f"[{ent}] NG from raw column {_ngc!r} ({int(_isng.sum()):,}/{len(df):,} rows are NG0-11)", flush=True)
+        from kpi.lib.conf import load_categories as _lc
+        from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code as _nz
+        _cats = _lc()
+
+        def _resolve(x):
+            for cand in (x, x.upper().replace(" ", "")):
+                r = _nz(cand, _cats) or ""
+                if r[:2] == "NG" and r[2:].isdigit():
+                    return r
+            return ""
+        _nmap = {x: _resolve(x) for x in {str(z) for z in df[_ngc].dropna().unique()}}
+        _nd = df[_ngc].astype(str).map(_nmap).fillna("")
+        _valid = _nd.str.fullmatch(r"NG\d+").fillna(False)
+        _nglab = {ng: lbl for ng, lbl in V_TO_NG.values()}
+        df["ng_code"] = _nd.where(_valid, df["ng_code"])
+        df["ng_label"] = df["ng_code"].map(lambda n: _nglab.get(str(n), "其他"))
+        print(f"[{ent}] NG from dataframe column {_ngc!r}: {int(_valid.sum()):,}/{len(df):,} rows "
+              f"(blank/unmappable → V_TO_NG fallback)", flush=True)
 
     ycol = next((c for c in YEAR_CANDIDATES if c in df.columns), None)
     if ycol:

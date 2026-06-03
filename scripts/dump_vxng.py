@@ -59,15 +59,30 @@ def dump(ent: str):
 
     amt = fuzzy(df, cols.get("amount", ""))
     df["_amt"] = pd.to_numeric(df[amt], errors="coerce").fillna(0) if amt else 0.0
-    df["ng_code"] = df["vertical_id"].map(lambda v: V_TO_NG.get(str(v), "NG11"))
-    # raw NG column override (project-team authoritative NG, e.g. Galaxy 'NG11 Category')
+    # NG ALWAYS comes from the dataframe's 項目性質 / NG11 Category column. normalize_ng_code
+    # resolves both Chinese labels ('美食之都'→NG8, '博彩…'→NG0) AND literal 'NG8' (Galaxy).
+    # V_TO_NG(vertical_id) is only the FALLBACK for rows whose ng11_category is blank/unmappable —
+    # the vertical we add is just a label; it never decides NG.
+    df["ng_code"] = df["vertical_id"].map(lambda v: V_TO_NG.get(str(v), "NG11"))  # fallback only
     ngc = fuzzy(df, cols.get("ng11_category", ""))
     if ngc:
-        v = df[ngc].astype(str).str.strip().str.upper().str.replace(" ", "")
-        isng = v.str.fullmatch(r"NG\d+").fillna(False)
-        if isng.mean() > 0.3:
-            df["ng_code"] = v.where(isng, df["ng_code"])
-            print(f"[{ent}] NG from raw col {ngc!r} ({int(isng.sum()):,}/{len(df):,})")
+        sys.path.insert(0, str(ROOT / "src"))
+        from kpi.lib.conf import load_categories
+        from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code
+        _cats = load_categories()
+
+        def _res(x):
+            for c in (x, x.upper().replace(" ", "")):
+                r = normalize_ng_code(c, _cats) or ""
+                if r[:2] == "NG" and r[2:].isdigit():
+                    return r
+            return ""
+        _map = {x: _res(x) for x in {str(z) for z in df[ngc].dropna().unique()}}
+        nd = df[ngc].astype(str).map(_map).fillna("")
+        valid = nd.str.fullmatch(r"NG\d+").fillna(False)
+        df["ng_code"] = nd.where(valid, df["ng_code"])
+        print(f"[{ent}] NG from dataframe col {ngc!r}: {int(valid.sum()):,}/{len(df):,} rows "
+              f"(blank/unmappable → V_TO_NG fallback)")
     vlab = "vertical_label" if "vertical_label" in df.columns else "vertical_id"
     ycol = next((c for c in YEAR_CANDIDATES if c in df.columns), None)
     if not ycol:
