@@ -34,6 +34,23 @@ V_TO_NG = {  # vertical_id -> NG code (same mapping as build_master_audit_25)
 }
 
 
+def _cn_kw(s) -> str:
+    """Robust 中文 項目性質 → NG (keyword; handles label variants). '' if none.
+    博彩 before 娛樂 (博彩娛樂場→NG0); 非博彩 = binary noise → no NG."""
+    s = str(s)
+    if "非博彩" in s:
+        return ""
+    for kws, ng in [(["博彩", "gaming"], "NG0"), (["海上"], "NG10"),
+                    (["外國", "客源", "國際客"], "NG1"), (["會議", "會展", "mice"], "NG2"),
+                    (["娛樂", "演唱", "表演"], "NG3"), (["體育", "賽事"], "NG4"),
+                    (["文化", "藝術", "文藝"], "NG5"), (["健康", "養生"], "NG6"),
+                    (["主題", "遊樂"], "NG7"), (["美食", "餐飲"], "NG8"),
+                    (["社區"], "NG9"), (["其他"], "NG11")]:
+        if any(k in s or k in s.lower() for k in kws):
+            return ng
+    return ""
+
+
 def fuzzy(df, name):
     if not name: return None
     if name in df.columns: return name
@@ -76,7 +93,7 @@ def dump(ent: str):
                 r = normalize_ng_code(c, _cats) or ""
                 if r[:2] == "NG" and r[2:].isdigit():
                     return r
-            return ""
+            return _cn_kw(x)   # keyword fallback for 中文 label variants (SJM etc.)
         _map = {x: _res(x) for x in {str(z) for z in df[ngc].dropna().unique()}}
         nd = df[ngc].astype(str).map(_map).fillna("")
         valid = nd.str.fullmatch(r"NG\d+").fillna(False)
