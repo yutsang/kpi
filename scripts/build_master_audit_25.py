@@ -397,8 +397,8 @@ def build(ent: str, com: str, categories: dict) -> Path | None:
         return g.sort_values(["vertical_label", "amount_mop"] if "vertical_label" in g.columns
                              else ["amount_mop"], ascending=[True, False])
 
-    # Write one Excel per year (12 files: 6 entity × {24, 25})
-    for year in ("25", "24"):
+    # Write one Excel per year (entities with a 23 source also get a 23 file; empty years skipped).
+    for year in ("25", "24", "23"):
         gc.collect()
         sub = _filter_year(df, ycol, year) if ycol else df.iloc[0:0]
         print(f"[{ent}] year {year}: {len(sub):,} rows", flush=True)
