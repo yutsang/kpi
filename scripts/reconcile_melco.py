@@ -83,9 +83,9 @@ def their_h(r, C, yr):
             ok = ("N/A" in comp_nat.upper() or blank(comp_nat)) and spend.lower() in PERF_WL24
         if ok:
             return "H_PERFORMER"
-    # 4 capex (建設/設施/維護)
+    # 4 capex (建設/設施/維護) — 劃分空白/篩唔出 → 一般維護費 (項目組 note)
     if "capex" in cap.lower() and blank(payroll):
-        return CAPEX_TO_H.get(capx, "H_CONSTRUCTION" if capx else "")
+        return CAPEX_TO_H.get(capx, "H_MAINTENANCE")
     # 5 sponsorship (within 營銷)
     if "sponsorship" in ledger.lower():
         return "H_SPONSORSHIP"
@@ -157,12 +157,22 @@ def main():
     a["their_H_label"] = a["their_H"].map(HLBL).fillna(a["their_H"])
     a["agree"] = (a["their_H_label"].fillna("") == a["our_H"].fillna("")) | (a["our_H"].fillna("") == "")
 
-    out = ROOT / "results" / f"melco_{yr}_reconcile.tsv"
+    # 診斷:仲有邊啲行 their_H 空白(formula 覆蓋唔到) — 睇 Ledger Type x 支出性質
+    blanks = a[a["their_H_label"].fillna("") == ""]
+    if len(blanks):
+        print(f"\n  ⚠ their_H 空白: {len(blanks):,} 行, Σ {blanks['_amt'].sum():,.0f} — 頭 12 個 (Ledger Type | 支出性質):")
+        bd = blanks.groupby([blanks[C["capex_opex"]].astype(str) if C["capex_opex"] else "",
+                             blanks[C["spend"]].astype(str) if C["spend"] else ""])["_amt"].agg(["size", "sum"])
+        for (lt, sp), r in bd.sort_values("sum", ascending=False).head(12).iterrows():
+            print(f"      {str(lt)[:14]:14} | {str(sp)[:24]:24} {int(r['size']):>6}  {r['sum']:>14,.0f}")
+
+    out = ROOT / "results" / f"melco_{yr}_reconcile_diff.tsv"
     out.parent.mkdir(parents=True, exist_ok=True)
     keep = [c for c in [C["uid"], C["spend"], C["comp_nat"], C["capex_split"],
-                        "their_H_label", "our_H", "_amt", "agree"] if c]
-    a[keep].to_csv(out, sep="\t", index=False)
-    print(f"\nwrote {out.relative_to(ROOT)}  ({len(a):,} 取數=Y rows)")
+                        "their_H_label", "our_H", "_amt"] if c]
+    diff = a[~a["agree"]]  # 只寫唔 agree 嘅行 (慳走一致嗰啲)
+    diff[keep].sort_values("_amt", ascending=False).to_csv(out, sep="\t", index=False)
+    print(f"\nwrote {out.relative_to(ROOT)}  (只列 their≠our: {len(diff):,} / {len(a):,} 行)")
     # summary: their_H total vs our_H total
     print("\n  their_H bucket Σ (萬):")
     g = a.groupby("their_H_label")["_amt"].agg(["size", "sum"]).sort_values("sum", ascending=False)
