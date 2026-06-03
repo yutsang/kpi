@@ -91,28 +91,28 @@ def dump(ent: str):
             if r[:2] == "NG" and r[2:].isdigit():
                 return r
         return _cn_kw(x)
-    ng_names = [cols.get("ng11_category", "")]
-    for _ys in (cf.get("yearly_sources") or []):
-        _c = (_ys.get("columns_override") or {}).get("ng11_category")
-        if _c:
-            ng_names.append(_c)
-    ng_src = pd.Series("", index=df.index, dtype="object")
-    found = []
-    for nm in ng_names:
+    ng_cols = []
+    _conf_names = [cols.get("ng11_category", "")] + [
+        (ys.get("columns_override") or {}).get("ng11_category") for ys in (cf.get("yearly_sources") or [])]
+    for nm in _conf_names:
         fc = fuzzy(df, nm)
-        if fc and fc not in found:
-            found.append(fc)
-            s = df[fc].astype(str).fillna("").replace("nan", "")
-            ng_src = ng_src.mask(ng_src.eq(""), s)   # fill still-blank rows from this column
-    if found:
-        _map = {x: _res(x) for x in set(ng_src.unique())}
-        nd = ng_src.map(_map).fillna("")
-        valid = nd.str.fullmatch(r"NG\d+").fillna(False)
-        df["ng_code"] = nd.where(valid, "")
-        print(f"[{ent}] NG from databook col(s) {found}: {int(valid.sum()):,}/{len(df):,} mapped "
-              f"({len(df) - int(valid.sum()):,} → 未分類)")
-    else:
-        print(f"[{ent}] ⚠ no ng11_category col found among {ng_names} — ALL 未分類")
+        if fc and fc not in ng_cols:
+            ng_cols.append(fc)
+    # ALSO scan any column whose header CONTAINS a 範疇 marker (handles exact-name drift: parens/spaces)
+    for c in df.columns:
+        if c not in ng_cols and any(k in str(c) for k in ("項目性質", "項目類型", "項目分類", "範疇", "NG11 Category", "NG Category")):
+            ng_cols.append(c)
+    # resolve EACH candidate col → NG, then per row take the FIRST that maps to a real NG
+    # (so binary '非博彩項目' → '' is skipped in favour of the 範疇 column that actually maps).
+    ngc_series = pd.Series("", index=df.index, dtype="object")
+    for fc in ng_cols:
+        m = {x: _res(x) for x in set(df[fc].astype(str).unique())}
+        r = df[fc].astype(str).map(m).fillna("")
+        r = r.where(r.str.fullmatch(r"NG\d+").fillna(False), "")
+        ngc_series = ngc_series.mask(ngc_series.eq(""), r)
+    df["ng_code"] = ngc_series
+    _nm = int(ngc_series.str.fullmatch(r"NG\d+").fillna(False).sum())
+    print(f"[{ent}] NG from databook col(s) {ng_cols}: {_nm:,}/{len(df):,} mapped ({len(df) - _nm:,} → 未分類)")
     vlab = "vertical_label" if "vertical_label" in df.columns else "vertical_id"
     ycol = next((c for c in YEAR_CANDIDATES if c in df.columns), None)
     if not ycol:
@@ -128,7 +128,7 @@ def dump(ent: str):
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as f:
         f.write(f"# {ent}  source={parquet.name}  year_col={ycol}\n")
-        for tag in ("25", "24"):
+        for tag in ("25", "24", "23"):
             m = yr.str.startswith(tag) | (yr == f"Yr 20{tag}") | (yr == f"20{tag}")
             sub = df[m]
             tot = float(sub["_amt"].sum()) if not sub.empty else 0.0
