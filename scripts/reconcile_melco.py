@@ -70,8 +70,10 @@ def their_h(r, C, yr):
         else (not blank(comp_nat) and "N/A" not in comp_nat.upper())
     if comp_is:
         return COMP_TO_H.get(comp_nat, "H_COMP_OTHER")
-    # 2 labor
-    if not blank(payroll):
+    # 2 labor — 只係特定值至算人工 (Y / Y,staff cost分攤 / Staff cost come from Project Team),
+    #            唔係「非空就算」(個欄好多行有非空非人工嘅值)
+    pay = str(payroll or "").strip()
+    if "staff cost" in pay.lower() or pay.upper() == "Y" or pay.upper().startswith("Y,"):
         return "H_LABOR"
     # 3 performer — 25: comp=N/A/空 & Opex ; 24: comp_nat=N/A/空 & 支出性质∈whitelist
     if perf == "Y" and blank(payroll):
