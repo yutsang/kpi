@@ -187,3 +187,37 @@ def signature_key(account_code: object, account_desc: object, description: objec
     ad = "" if account_desc is None else str(account_desc).strip()
     d = normalize_description(description)
     return f"{a}|{ad}|{d}"
+
+
+SIGNATURE_BASE_FIELDS = ("account_code", "account_desc", "desc_norm")
+
+
+def resolve_signature_fields(ent_cfg: dict | None, cols: dict | None, df_columns) -> list[str]:
+    """Ordered fields that compose a signature. Conf `signature_fields` overrides the
+    default (account_code|account_desc|desc_norm [+ job_code when configured]).
+
+    Used by BOTH step1.build_signatures and step4's per-row rebuild so the signature
+    strings always match (a mismatch silently maps every row's H to None). With no
+    `signature_fields` set the returned list is the historical default, so every entity
+    that doesn't opt in produces byte-identical signatures.
+
+    e.g. VML sets ["account_code", "account_desc"] → account-level H signatures (~1.2k,
+    not 41k) because desc_norm there is unique-per-txn vendor/contract/project free text.
+    """
+    f = (ent_cfg or {}).get("signature_fields")
+    if f:
+        return [str(x) for x in f]
+    base = list(SIGNATURE_BASE_FIELDS)
+    jc = (cols or {}).get("job_code", "")
+    if jc and df_columns is not None and jc in df_columns:
+        base.append("job_code")
+    return base
+
+
+def compose_signature(parts: dict, fields: list[str]):
+    """Join the named component Series (already stripped) with '|' into a signature Series."""
+    out = None
+    for f in fields:
+        s = parts[f].astype("string").fillna("")
+        out = s if out is None else out + "|" + s
+    return out

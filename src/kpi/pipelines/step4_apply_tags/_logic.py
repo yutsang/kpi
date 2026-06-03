@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 from kpi.lib.conf import load_config, load_categories, path  # noqa: E402
 from kpi.lib.io_setup import force_unbuffered_io  # noqa: E402
-from kpi.lib.text import normalize_description  # noqa: E402
+from kpi.lib.text import compose_signature, normalize_description, resolve_signature_fields  # noqa: E402
 
 force_unbuffered_io()
 
@@ -183,25 +183,24 @@ def main():
 
     # ----- Per-row signature recomputation (must match step 1 exactly) -----
     print("Building per-row signatures (this is the slow part) ...", flush=True)
+    _ent_cfg = ((cfg.get("_master") or {}).get("companies") or {}).get(company, {}) or {}
+    _fields = resolve_signature_fields(_ent_cfg, cols, df.columns)
     acc = df[cols["account_code"]].astype("string").fillna("").str.strip()
     ad = df[cols["account_desc"]].astype("string").fillna("").str.strip()
     desc_raw = df[cols["description"]]
     tqdm.pandas(desc="normalize description", file=sys.stderr)
     desc_norm = desc_raw.progress_apply(normalize_description)
-
-    # Include job_code as the 4th signature segment IFF it's configured AND present in df,
-    # matching step1 build_signatures() exactly.
+    # job_code component (empty Series when not configured); helper picks it up only if in _fields.
     jc_col = cols.get("job_code", "")
-    if jc_col and jc_col in df.columns:
-        jc = df[jc_col].astype("string").fillna("").str.strip()
-        df["signature"] = acc + "|" + ad + "|" + desc_norm + "|" + jc
-        del jc
-    else:
-        df["signature"] = acc + "|" + ad + "|" + desc_norm
+    jc = (df[jc_col].astype("string").fillna("").str.strip()
+          if jc_col and jc_col in df.columns else pd.Series([""] * len(df), index=df.index))
+    # Same fields + shared helper as step1 build_signatures() → byte-identical signature.
+    df["signature"] = compose_signature(
+        {"account_code": acc, "account_desc": ad, "desc_norm": desc_norm, "job_code": jc}, _fields)
     # Free the large per-row string intermediates immediately — on memory-tight boxes
     # (Galaxy 1.15M rows) keeping acc/ad/desc_norm alive alongside the new signature column
     # plus the full frame exhausts RAM at write time.
-    del acc, ad, desc_raw, desc_norm
+    del acc, ad, desc_raw, desc_norm, jc
     gc.collect()
 
     # ----- Apply lookups -----

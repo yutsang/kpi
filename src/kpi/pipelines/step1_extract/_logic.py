@@ -21,7 +21,7 @@ import pandas as pd
 
 from kpi.lib.conf import load_config, path  # noqa: E402
 from kpi.lib.io_setup import force_unbuffered_io  # noqa: E402
-from kpi.lib.text import normalize_description  # noqa: E402
+from kpi.lib.text import compose_signature, normalize_description, resolve_signature_fields  # noqa: E402
 
 force_unbuffered_io()
 
@@ -81,7 +81,8 @@ def main():
 
     vend = agg(cols["vendor"], [cols["account_desc"], cols["description"]]) if cols.get("vendor") else pd.DataFrame()
 
-    sig_df = build_signatures(df, cols)
+    _ent_cfg = ((cfg.get("_master") or {}).get("companies") or {}).get(company, {}) or {}
+    sig_df = build_signatures(df, cols, _ent_cfg)
 
     # Write whichever project/account/vendor file is missing — don't clobber an existing tagged file.
     if not proj_path.exists():
@@ -140,7 +141,7 @@ _RESERVED_COL_KEYS = {
 }
 
 
-def build_signatures(df: pd.DataFrame, cols: dict) -> pd.DataFrame:
+def build_signatures(df: pd.DataFrame, cols: dict, ent_cfg: dict | None = None) -> pd.DataFrame:
     desc_col = cols["description"]
     acct_col = cols["account_code"]
     adesc_col = cols["account_desc"]
@@ -180,14 +181,15 @@ def build_signatures(df: pd.DataFrame, cols: dict) -> pd.DataFrame:
             work[k] = df[v].astype("string").fillna("").str.strip()
             extra_keys.append(k)
 
-    # Signature: include job_code only when configured, so non-affected companies'
-    # signature text (and hence step3 LLM cache keys) stay unchanged.
-    if jc_configured:
-        work["signature"] = (
-            work["account_code"] + "|" + work["account_desc"] + "|" + work["desc_norm"] + "|" + work["job_code"]
-        )
-    else:
-        work["signature"] = work["account_code"] + "|" + work["account_desc"] + "|" + work["desc_norm"]
+    # Signature fields: default account_code|account_desc|desc_norm (+job_code when
+    # configured), OR conf `signature_fields` (e.g. VML ["account_code","account_desc"]
+    # → account-level, since its desc_norm is unique-per-txn vendor/contract free text
+    # that explodes 1.2k accounts into 41k sigs). Built via the shared helper so step4's
+    # per-row rebuild produces the identical string — no opt-in entity is byte-changed.
+    _fields = resolve_signature_fields(ent_cfg, cols, df.columns)
+    work["signature"] = compose_signature(
+        {"account_code": work["account_code"], "account_desc": work["account_desc"],
+         "desc_norm": work["desc_norm"], "job_code": work["job_code"]}, _fields)
 
     grp = work.groupby("signature", dropna=False)
     out = pd.DataFrame({
