@@ -77,8 +77,12 @@ def dump_one(ent, com, top, rules_only, batch):
     rc = _col(df, "row_count", "n_rows")
     amt = _col(df, "total_amount", "amount", "amount_mop")
     ps = _col(df, "project_samples", "project")
+    sg = _col(df, "signature", "sig")          # the step3 override KEY (maps OUR H back)
+    dn = _col(df, "desc_norm")
 
     out = pd.DataFrame()
+    out["signature"] = df[sg].astype(str) if sg else ""   # FIRST col = override key
+    out["desc_norm"] = df[dn].astype(str).str.slice(0, 80) if dn else ""
     out["account_code"] = df[ac].astype(str) if ac else ""
     out["account_desc"] = df[ad].astype(str) if ad else ""
     out["desc_sample"] = df[ds].astype(str).str.slice(0, 80) if ds else ""
