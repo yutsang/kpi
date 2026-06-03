@@ -28,12 +28,14 @@ DEFAULT = {
 # Per-NG keyword→V (first match wins; keywords matched lowercased as substrings, Chinese as-is).
 RULES = {
     "NG0": [
-        (["in016", "gaming equipment", "electronic gaming machine", "gaming machine", "egm",
+        # STRONG venue signal first (Wynn 'GPGV' code = Gaming Venue; '娛樂場場地升級') — must beat the
+        # generic 'slot' noise that otherwise drags a venue-reconfig project into EQUIP.
+        (["gpgv", "娛樂場場地", "gaming venue", "博彩娛樂場", "場地升級", "casino floor", "博彩區"], "V_GAMING_VENUE"),
+        (["in016", "gpgf", "gaming equipment", "electronic gaming machine", "gaming machine", "egm",
           "slot", "角子機", "conversion kit", "chip counting", "smart table", "博彩機", "博彩設備",
           "gaming facility and equipment", "設施及設備", "perfect pay table", "kiosk"], "V_GAMING_EQUIP"),
-        (["in015", "gaming venue", "gaming area", "gaming areas", "博彩區", "casino floor",
-          "qi long", "皇璽會", "娛樂場場地", "娛樂場", "pit ", "section ", "layout change",
-          "reconfiguration", "back wall"], "V_GAMING_VENUE"),
+        (["in015", "gaming area", "gaming areas", "qi long", "皇璽會", "娛樂場", "pit ", "section ",
+          "layout change", "reconfiguration", "back wall"], "V_GAMING_VENUE"),
         (["boh", "back of house", "賬房", "cage", "lobby", "atrium", "it equipment", "network",
           "server", "infrastructure", "reception", "機房", "data centre", "data center"], "V_PROPERTY_UPGRADE"),
     ],
