@@ -201,32 +201,42 @@ def build(ent: str, com: str, categories: dict) -> Path | None:
     # NG NEVER from V (V_TO_NG) — only from the databook col below. Init blank → unmapped = (未分類).
     df["ng_code"] = ""; df["ng_label"] = ""
 
-    # NG ALWAYS comes from the dataframe's 項目性質 / NG11 Category column. normalize_ng_code
-    # resolves Chinese labels ('美食之都'→NG8, '博彩…'→NG0) AND literal 'NG8'/'NG0' (Galaxy). NG and
-    # the finer vertical_label are independent dimensions (NOT 1:1) — the vertical we add is only a
-    # label, it never decides NG. V_TO_NG above is the FALLBACK for blank/unmappable ng11_category.
-    _ngc = _fuzzy_col(df, cols.get("ng11_category", ""))
-    if _ngc:
-        from kpi.lib.conf import load_categories as _lc
-        from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code as _nz
-        _cats = _lc()
+    # NG ALWAYS from the databook 範疇 column — NEVER V. Multi-year files may NAME it differently
+    # (SJM: 25 '項目類型', 24 '項目性質(e.g.博彩娛樂)') → COALESCE top-level + yearly_sources overrides.
+    from kpi.lib.conf import load_categories as _lc
+    from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code as _nz
+    _cats = _lc()
 
-        def _resolve(x):
-            for cand in (x, x.upper().replace(" ", "")):
-                r = _nz(cand, _cats) or ""
-                if r[:2] == "NG" and r[2:].isdigit():
-                    return r
-            return _cn_kw(x)   # keyword fallback for 中文 label variants (SJM etc.)
-        _nmap = {x: _resolve(x) for x in {str(z) for z in df[_ngc].dropna().unique()}}
-        _nd = df[_ngc].astype(str).map(_nmap).fillna("")
+    def _resolve(x):
+        for cand in (x, x.upper().replace(" ", "")):
+            r = _nz(cand, _cats) or ""
+            if r[:2] == "NG" and r[2:].isdigit():
+                return r
+        return _cn_kw(x)
+    _ng_names = [cols.get("ng11_category", "")]
+    for _ys in (cfg.get("yearly_sources") or []):
+        _c = (_ys.get("columns_override") or {}).get("ng11_category")
+        if _c:
+            _ng_names.append(_c)
+    _ng_src = pd.Series("", index=df.index, dtype="object")
+    _found = []
+    for _nm in _ng_names:
+        _fc = _fuzzy_col(df, _nm)
+        if _fc and _fc not in _found:
+            _found.append(_fc)
+            _s = df[_fc].astype(str).fillna("").replace("nan", "")
+            _ng_src = _ng_src.mask(_ng_src.eq(""), _s)
+    _nglab = {ng: lbl for ng, lbl in V_TO_NG.values()}
+    if _found:
+        _nmap = {x: _resolve(x) for x in set(_ng_src.unique())}
+        _nd = _ng_src.map(_nmap).fillna("")
         _valid = _nd.str.fullmatch(r"NG\d+").fillna(False)
-        _nglab = {ng: lbl for ng, lbl in V_TO_NG.values()}
-        df["ng_code"] = _nd.where(_valid, "")   # unmappable/blank → (未分類), NOT V_TO_NG
+        df["ng_code"] = _nd.where(_valid, "")
         df["ng_label"] = df["ng_code"].map(lambda n: _nglab.get(str(n), "(未分類)"))
-        print(f"[{ent}] NG from databook column {_ngc!r}: {int(_valid.sum()):,}/{len(df):,} mapped "
+        print(f"[{ent}] NG from databook col(s) {_found}: {int(_valid.sum()):,}/{len(df):,} mapped "
               f"({len(df) - int(_valid.sum()):,} → 未分類)", flush=True)
     else:
-        print(f"[{ent}] ⚠ ng11_category col {cols.get('ng11_category')!r} NOT FOUND — ALL 未分類", flush=True)
+        print(f"[{ent}] ⚠ no ng11_category col found among {_ng_names} — ALL 未分類", flush=True)
 
     ycol = next((c for c in YEAR_CANDIDATES if c in df.columns), None)
     if ycol:
