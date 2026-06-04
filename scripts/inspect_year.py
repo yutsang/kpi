@@ -40,6 +40,20 @@ def fuzzy(df, name):
     return None
 
 
+def numify(s):
+    return pd.to_numeric(s.astype(str).str.replace(",", "", regex=False).str.replace(r"^\s*-\s*$", "0", regex=True),
+                         errors="coerce").fillna(0)
+
+
+def best_amount(df, cands):
+    best, bs = None, -1.0
+    for c in cands:
+        if c and c in df.columns:
+            sm = numify(df[c]).abs().sum()
+            if sm > bs: best, bs = c, sm
+    return best
+
+
 def ng_cols_of(df, cf, cols):
     names = [cols.get("ng11_category", "")] + [
         (ys.get("columns_override") or {}).get("ng11_category") for ys in (cf.get("yearly_sources") or [])]
@@ -82,14 +96,19 @@ def main():
     p.add_argument("--unique", action="store_true", help="diagnose the audit-master 次數/unique count")
     a = p.parse_args()
     com = ENT[a.entity]
-    parquet = ROOT / "data" / a.entity / "output" / f"{com}_kpi_report.parquet"
-    if not parquet.exists():
-        print(f"X missing {parquet.relative_to(ROOT)}"); return
+    # tagged_rows has ALL raw cols (Subproject, 分類1, etc.) — kpi_report curates them out
+    src = ROOT / "data" / a.entity / "interim" / f"{com}_tagged_rows.parquet"
+    if not src.exists():
+        src = ROOT / "data" / a.entity / "output" / f"{com}_kpi_report.parquet"
+    if not src.exists():
+        print(f"X missing tagged_rows/kpi_report for {a.entity}"); return
     cf = yaml.safe_load((ROOT / "conf" / com / "parameters.yml").open(encoding="utf-8"))
     cols = cf.get("columns", {}) or {}
-    df = pq.read_table(parquet).replace_schema_metadata(None).to_pandas()
-    amt = fuzzy(df, cols.get("amount")) or next((c for c in df.columns if re.search(r"amount|amt|金額|mop", str(c), re.I)), None)
-    df["_amt"] = pd.to_numeric(df[amt], errors="coerce").fillna(0) if amt else 0.0
+    df = pq.read_table(src).replace_schema_metadata(None).to_pandas()
+    amt = best_amount(df, [cols.get("amount"), "MOP Amt", "調整後金額", "Reported Amount(MOP)",
+                           fuzzy(df, cols.get("amount")), next((c for c in df.columns if re.search(r"amount|金額", str(c), re.I)), None)])
+    df["_amt"] = numify(df[amt]) if amt else 0.0
+    print(f"  (source={src.name}, amount_col={amt!r})")
     ngcols = ng_cols_of(df, cf, cols)
     df["_ng"] = derive_ng(df, ngcols)
     yc = next((c for c in ("report_period", "report_year") if c in df.columns), None)

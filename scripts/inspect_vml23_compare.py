@@ -38,6 +38,22 @@ def find(df, *subs):
     return None
 
 
+def numify(s):
+    return pd.to_numeric(s.astype(str).str.replace(",", "", regex=False).str.replace(r"^\s*-\s*$", "0", regex=True),
+                         errors="coerce").fillna(0)
+
+
+def best_amount(df, cands):
+    """pick the amount col with the largest |Σ| (so we use the numeric pipeline col, not raw text)."""
+    best, bs = None, -1.0
+    for c in cands:
+        if c and c in df.columns:
+            sm = numify(df[c]).abs().sum()
+            if sm > bs:
+                best, bs = c, sm
+    return best
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--entity", default="vml")
     a = ap.parse_args()
@@ -58,8 +74,8 @@ def main():
 
     f1 = find(df, "分類1", "分类1", "分類 1")
     le2 = find(df, "類別2", "类别2", "類別 2", "類別2")
-    amt = find(df, "調整後金額") or (cols.get("amount") if cols.get("amount") in df.columns else None) or find(df, "MOP Amt", "Amount", "金額")
-    df["_amt"] = pd.to_numeric(df[amt], errors="coerce").fillna(0) if amt else 0.0
+    amt = best_amount(df, [cols.get("amount"), "MOP Amt", "調整後金額", find(df, "Amount"), find(df, "金額")])
+    df["_amt"] = numify(df[amt]) if amt else 0.0
     tot = df["_amt"].sum()
     print(f"\n[{a.entity} 23] rows={len(df):,}  amount_col={amt!r}")
     print(f"  resolved 項目組 cols → 分類1={f1!r}   類別2={le2!r}")
