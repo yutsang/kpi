@@ -106,17 +106,23 @@ def main():
     for k, r in cov.sort_values("_amt", key=abs, ascending=False).iterrows():
         print(f"  {str(k):28s} rows={int(r['_n']):7,}  Σ={r['_amt']:>16,.0f}")
 
-    un = df[df["_cov"].eq("")]
-    g = un.groupby([df[ACCT].astype(str).str.strip(), df[DESC].astype(str).str.strip()]).agg(
-        n=("_amt", "size"), amt=("_amt", "sum")).reset_index()
-    g.columns = ["account_code", "account_desc", "n", "amt"]
+    un = df[df["_cov"].eq("")].copy()
+    L5 = "Ledger Hierarchy Level 5"          # finer than L4 — splits the blank-account CAPEX (Construction vs Equipment)
+    if L5 not in un.columns:
+        un[L5] = ""
+    un["_ac"] = un[ACCT].astype(str).str.strip()
+    un["_l4"] = un[DESC].astype(str).str.strip()
+    un["_l5"] = un[L5].astype(str).str.strip()
+    g = un.groupby(["_ac", "_l4", "_l5"]).agg(n=("_amt", "size"), amt=("_amt", "sum")).reset_index()
+    g.columns = ["account_code", "L4_desc", "L5_desc", "n", "amt"]
     g = g.reindex(g["amt"].abs().sort_values(ascending=False).index)
     g.to_csv(OUT / "mgm_h_uncovered.tsv", sep="\t", index=False)
-    print(f"\n=== PART H — {len(g)} UNCOVERED (account_code, account_desc) sigs "
+    print(f"\n=== PART H — {len(g)} UNCOVERED (account_code, L4, L5) sigs "
           f"(Σ={un['_amt'].sum():,.0f}, {len(un):,} rows) → results/mgm_h_uncovered.tsv ===")
-    print("  account_code\taccount_desc\tn\tΣamt   (assign H_* each)")
+    print("  account_code\tL4_desc\tL5_desc\tn\tΣamt   (assign H_* each)")
     for _, r in g.head(a.top).iterrows():
-        print(f"  {str(r['account_code'])[:14]:16s}{str(r['account_desc'])[:42]:44s}{int(r['n']):>6,}{r['amt']:>15,.0f}")
+        print(f"  {str(r['account_code'])[:13]:15s}{str(r['L4_desc'])[:30]:32s}{str(r['L5_desc'])[:34]:36s}"
+              f"{int(r['n']):>6,}{r['amt']:>15,.0f}")
     if len(g) > a.top:
         print(f"  … +{len(g)-a.top} more in the TSV")
 
