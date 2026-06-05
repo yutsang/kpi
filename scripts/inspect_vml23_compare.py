@@ -44,14 +44,12 @@ def numify(s):
 
 
 def best_amount(df, cands):
-    """pick the amount col with the largest |Σ| (so we use the numeric pipeline col, not raw text)."""
-    best, bs = None, -1.0
+    """first candidate (in priority order) with a non-zero numeric sum — prefers the pipeline's
+    cols['amount'] (= 調整後金額 for VML 23) over the raw gross 'Amount' / text columns."""
     for c in cands:
-        if c and c in df.columns:
-            sm = numify(df[c]).abs().sum()
-            if sm > bs:
-                best, bs = c, sm
-    return best
+        if c and c in df.columns and numify(df[c]).abs().sum() > 0:
+            return c
+    return None
 
 
 def main():

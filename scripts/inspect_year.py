@@ -46,12 +46,11 @@ def numify(s):
 
 
 def best_amount(df, cands):
-    best, bs = None, -1.0
+    """first candidate (priority order) with non-zero sum — prefers pipeline cols['amount']."""
     for c in cands:
-        if c and c in df.columns:
-            sm = numify(df[c]).abs().sum()
-            if sm > bs: best, bs = c, sm
-    return best
+        if c and c in df.columns and numify(df[c]).abs().sum() > 0:
+            return c
+    return None
 
 
 def ng_cols_of(df, cf, cols):
