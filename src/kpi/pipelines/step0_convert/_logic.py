@@ -174,6 +174,46 @@ def _apply_section_inference_by_capex_opex(df: pd.DataFrame, cols: dict, mapping
     return df
 
 
+def _fill_ng_within_project(df: pd.DataFrame, cols: dict, enabled: bool) -> pd.DataFrame:
+    """Fill blank ng11_category rows from the same project's known NG.
+
+    For entities (e.g. MGM) where a project's CAPEX / CIP-clearing rows carry a blank
+    section but the project's opex rows carry the real NG — propagate the project's
+    modal (most common) non-blank NG to its blank rows. NG is per-project, so this is
+    safe. Only fills blanks; never overwrites a real value. Projects whose rows are all
+    blank stay blank (nothing to infer from).
+    Enable with `ng11_fill_within_project: true`.
+    """
+    if not enabled:
+        return df
+    ng_col = cols.get("ng11_category", "")
+    proj_col = cols.get("project", "")
+    if not ng_col or ng_col not in df.columns or not proj_col or proj_col not in df.columns:
+        return df
+    sec = df[ng_col].astype(str).str.strip()
+    blank = sec.eq("") | sec.str.lower().eq("nan") | df[ng_col].isna()
+    if not blank.any():
+        return df
+
+    def _modal(s: pd.Series):
+        v = s.astype(str).str.strip()
+        v = v[v.ne("") & v.str.lower().ne("nan")]
+        return v.value_counts().index[0] if len(v) else None
+
+    known = df.loc[~blank, [proj_col, ng_col]].copy()
+    known[proj_col] = known[proj_col].astype(str).str.strip()
+    modal = known.groupby(proj_col)[ng_col].agg(_modal)
+    proj_vals = df[proj_col].astype(str).str.strip()
+    fill_vals = proj_vals.map(modal)
+    fill_mask = blank & fill_vals.notna()
+    n = int(fill_mask.sum())
+    if n:
+        df.loc[fill_mask, ng_col] = fill_vals[fill_mask].values
+        n_proj = int(proj_vals[fill_mask].nunique())
+        print(f"  ng_fill_within_project: filled {n:,} blank-NG rows from project modal NG ({n_proj} projects)")
+    return df
+
+
 def _drop_section_header_leak(df: pd.DataFrame, cols: dict) -> pd.DataFrame:
     """Drop rows where ng11_category column literally equals 'Section' (header text leak)."""
     ng_col = cols.get("ng11_category", "")
@@ -353,6 +393,7 @@ def main():
             df = _apply_section_inference_by_capex_opex(
                 df, cols, ent.get("section_inference_by_capex_opex") or {}
             )
+            df = _fill_ng_within_project(df, cols, bool(ent.get("ng11_fill_within_project")))
             df.to_parquet(out, index=False)
             print(f"  Read parquet → {out.name}  rows={n_in:,} → {len(df):,}")
             return
@@ -383,6 +424,7 @@ def main():
     df = _apply_section_inference_by_capex_opex(
         df, cols, ent.get("section_inference_by_capex_opex") or {}
     )
+    df = _fill_ng_within_project(df, cols, bool(ent.get("ng11_fill_within_project")))
 
     # ── Required-column check ─────────────────────────────────────────────────────
     missing_required = []
