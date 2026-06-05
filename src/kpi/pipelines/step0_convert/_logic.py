@@ -174,6 +174,37 @@ def _apply_section_inference_by_capex_opex(df: pd.DataFrame, cols: dict, mapping
     return df
 
 
+def _apply_section_inference_by_project(df: pd.DataFrame, cols: dict, mapping: dict) -> pd.DataFrame:
+    """Fill empty ng11_category rows from a {project_code: NG} map.
+
+    For standalone rows (e.g. MGM adjustment-sheet lump-sum entries) whose project has NO
+    other row to infer NG from (so _fill_ng_within_project can't help) but whose project's
+    NG is known. Only fills empty rows; never overwrites a real value.
+        section_inference_by_project:
+          項目111: NG3
+    """
+    if not mapping:
+        return df
+    ng_col = cols.get("ng11_category", "")
+    pj_col = cols.get("project", "")
+    if not ng_col or ng_col not in df.columns or not pj_col or pj_col not in df.columns:
+        return df
+    sec = df[ng_col].astype(str).str.strip()
+    empty = sec.eq("") | sec.str.lower().eq("nan") | df[ng_col].isna()
+    pj = df[pj_col].astype(str).str.strip()
+    total = 0
+    for pv, ng in mapping.items():
+        m = empty & pj.eq(str(pv).strip())
+        n = int(m.sum())
+        if n:
+            df.loc[m, ng_col] = ng
+            total += n
+            print(f"  section_inference_by_project: {pv!r} (empty section) → {ng}  ({n} rows)")
+    if total:
+        print(f"  section_inference_by_project total: {total} rows filled")
+    return df
+
+
 def _fill_ng_within_project(df: pd.DataFrame, cols: dict, enabled: bool) -> pd.DataFrame:
     """Fill blank ng11_category rows from the same project's known NG.
 
@@ -393,6 +424,9 @@ def main():
             df = _apply_section_inference_by_capex_opex(
                 df, cols, ent.get("section_inference_by_capex_opex") or {}
             )
+            df = _apply_section_inference_by_project(
+                df, cols, ent.get("section_inference_by_project") or {}
+            )
             df = _fill_ng_within_project(df, cols, bool(ent.get("ng11_fill_within_project")))
             df.to_parquet(out, index=False)
             print(f"  Read parquet → {out.name}  rows={n_in:,} → {len(df):,}")
@@ -423,6 +457,9 @@ def main():
     df = _apply_ng_section_mapping(df, cols, ent.get("ng_section_mapping") or {})
     df = _apply_section_inference_by_capex_opex(
         df, cols, ent.get("section_inference_by_capex_opex") or {}
+    )
+    df = _apply_section_inference_by_project(
+        df, cols, ent.get("section_inference_by_project") or {}
     )
     df = _fill_ng_within_project(df, cols, bool(ent.get("ng11_fill_within_project")))
 
