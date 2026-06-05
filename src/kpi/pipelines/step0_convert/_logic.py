@@ -214,7 +214,18 @@ def _rename_to_root_cols(df: pd.DataFrame, year_cols: dict, root_cols: dict) -> 
         if year_name == root_name:
             continue
         if root_name in df.columns:
-            continue  # already has root col — no rename needed
+            # Root col present, but a differently-named override col may ALSO exist with the real
+            # values (e.g. a file carrying both 'NG11 Category' [blank] and 'NG11 category' [filled]).
+            # Coalesce the override into the root col where the root is blank (never overwrites).
+            yn = year_name if year_name in df.columns else df_norm_to_actual.get(_norm_colname(year_name))
+            if yn and yn != root_name and yn in df.columns:
+                root_s = df[root_name].astype("string")
+                blank = root_s.isna() | root_s.str.strip().isin(["", "nan", "None", "NaN"])
+                n_fill = int((blank & df[yn].notna()).sum())
+                if n_fill:
+                    df[root_name] = root_s.mask(blank, df[yn].astype("string"))
+                    print(f"  coalesced {yn!r} → {root_name!r} ({n_fill:,} blank root rows filled)")
+            continue  # root col already present
 
         # Try exact match on year_name
         if year_name in df.columns:
