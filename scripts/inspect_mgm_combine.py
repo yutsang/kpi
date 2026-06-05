@@ -3,7 +3,7 @@ Shows: all columns; the Source column; per-Source row count + Σamount + which p
 columns are populated (each source's shape) — so we can wire up MGM's 大表.
 
   python scripts/inspect_mgm_combine.py
-  python scripts/inspect_mgm_combine.py --file data\mgm\raw\mgm_25_raw.xlsx --sheet combine
+  python scripts/inspect_mgm_combine.py --file data/mgm/raw/mgm_25_raw.xlsx --sheet combine
 """
 from __future__ import annotations
 import argparse, glob, sys
@@ -26,10 +26,14 @@ def main():
     a = ap.parse_args()
     f = a.file
     if not f:
-        cand = glob.glob(str(ROOT / "**" / "mgm_25_raw.xlsx"), recursive=True)
-        if not cand:
-            print("X mgm_25_raw.xlsx not found — pass --file PATH"); return
-        f = cand[0]
+        prefer = ROOT / "data" / "mgm" / "raw" / "mgm_25_raw.xlsx"
+        if prefer.exists():
+            f = str(prefer)
+        else:
+            cand = glob.glob(str(ROOT / "**" / "mgm_25_raw.xlsx"), recursive=True)
+            if not cand:
+                print("X mgm_25_raw.xlsx not found in data/mgm/raw — pass --file PATH"); return
+            f = cand[0]
     print(f"file: {f}")
     xl = pd.ExcelFile(f)
     print(f"sheets: {xl.sheet_names}")
