@@ -31,7 +31,9 @@ H_MAP = {
     "租賃折扣": "H_DISCOUNT", "費用折扣": "H_DISCOUNT", "comp其他": "H_COMP_OTHER", "Comp其他": "H_COMP_OTHER",
     "交通費": "H_COMP_OTHER", "贈票支出": "H_COMP_TICKET", "維護維修": "H_MAINTENANCE", "其他": "H_OTHER",
 }
-DEFAULTS = {"23": ("分類1", "類別2"), "24": ("分類1", "分類2"), "25": ("分類2", "進一步分類")}
+# value-confirmed per year (the project-team H column name differs by year; V = 分類2):
+#   24 H lives in 分類1.1 (the 2nd 分類1, holds 工程建設/設施採購…); 25 H lives in 進一步分類.
+DEFAULTS = {"23": ("分類1", "類別2"), "24": ("分類1.1", "分類2"), "25": ("進一步分類", "分類2")}
 
 
 def numify(s):
