@@ -232,13 +232,16 @@ def main():
     df["horizontal_label"] = df["horizontal_id"].map(lambda h: hlookup.get(h, {}).get("label", "") if h else "")
 
     # ----- Capex/Opex from source (normalize casing: "opex"→"Opex", "CAPEX"→"Capex") -----
+    # capex_opex_unmatched (per-entity): when the source col carries codes that aren't capex/opex
+    # (e.g. MGM Source = CAPEX / WD1 / WD5-Patron / ADJUSTMENT), map every non-capex value to it.
+    _co_unmatched = _ent_cfg.get("capex_opex_unmatched") if isinstance(_ent_cfg, dict) else None
     def _norm_co(s: str) -> str:
         ls = s.strip().lower()
         if ls == "capex" or ls.startswith("capital"):
             return "Capex"
         if ls == "opex" or ls.startswith("operat"):
             return "Opex"
-        return s
+        return _co_unmatched if _co_unmatched else s
     df["final_capex_opex"] = df[cols["capex_opex"]].astype("string").fillna("").map(_norm_co)
 
     # ----- 維護費 only counts as opex: a CAPEX 維護 row belongs to 建設與設施支出 -----
