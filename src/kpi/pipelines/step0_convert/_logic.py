@@ -220,12 +220,15 @@ def _rename_to_root_cols(df: pd.DataFrame, year_cols: dict, root_cols: dict) -> 
             # Restricted to ng11_category only — never touch project/amount/account keys.
             yn = year_name if year_name in df.columns else df_norm_to_actual.get(_norm_colname(year_name))
             if k == "ng11_category" and yn and yn != root_name and yn in df.columns:
-                root_s = df[root_name].astype("string")
-                blank = root_s.isna() | root_s.str.strip().isin(["", "nan", "None", "NaN"])
-                n_fill = int((blank & df[yn].notna()).sum())
+                # The columns_override DECLARES this col as the year's NG source → it is authoritative.
+                # Overwrite the root col with it wherever it is non-blank (the root may hold a stale /
+                # unmappable value, e.g. Galaxy 23SY's 'NG11 Category' vs the real 'NG11 category').
+                over_s = df[yn].astype("string")
+                good = over_s.notna() & ~over_s.str.strip().isin(["", "nan", "None", "NaN"])
+                n_fill = int(good.sum())
                 if n_fill:
-                    df[root_name] = root_s.mask(blank, df[yn].astype("string"))
-                    print(f"  coalesced {yn!r} → {root_name!r} ({n_fill:,} blank root rows filled)")
+                    df[root_name] = over_s.where(good, df[root_name].astype("string"))
+                    print(f"  override {yn!r} → {root_name!r} ({n_fill:,} authoritative rows)")
             continue  # root col already present
 
         # Try exact match on year_name
