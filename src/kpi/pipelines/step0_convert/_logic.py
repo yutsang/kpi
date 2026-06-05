@@ -343,8 +343,17 @@ def main():
             return
 
         print(f"Reading {src.name} ...")
-        df = pd.read_excel(src, sheet_name=cfg["paths"]["raw_sheet"], header=header_row,
-                           dtype=object, engine="openpyxl")
+        _rs = cfg["paths"]["raw_sheet"]
+        if isinstance(_rs, (list, tuple)):
+            # multi-sheet: read each + concat (column-aligned; missing cols → NaN). e.g. MGM combine+adjustment
+            _parts = []
+            for _sh in _rs:
+                _dp = pd.read_excel(src, sheet_name=_sh, header=header_row, dtype=object, engine="openpyxl")
+                print(f"  sheet {_sh!r}: rows={len(_dp):,}  cols={len(_dp.columns)}")
+                _parts.append(_dp)
+            df = pd.concat(_parts, ignore_index=True, sort=False)
+        else:
+            df = pd.read_excel(src, sheet_name=_rs, header=header_row, dtype=object, engine="openpyxl")
         print(f"  rows={len(df):,}  cols={len(df.columns)}")
 
         df = _apply_row_filter(df, cfg.get("exclude_where"), mode="exclude")
