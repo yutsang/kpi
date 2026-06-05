@@ -76,6 +76,19 @@ def main():
                 if pops: filled.append(f"{role}={pops[:2]}")
             print(f"  {sv[:30]:32s} n={int(r['n']):6,d}  Σ={r['amt']:>16,.0f}  | {' '.join(filled)}")
 
+        # per-Source FULL column fill% — which columns each source actually populates (for sigs/desc/acct)
+        def fillpct(s):
+            t = s.astype(str).str.strip()
+            return 100.0 * t.replace(["nan", "NaT", "None", "<NA>"], "").ne("").mean()
+        print("\n=== per-Source column fill% (only cols >5% in that source; * = the source-specific ones) ===")
+        for _, r in rows.iterrows():
+            sv = str(r[src]); sub = df[df[src].astype(str).eq(sv)]
+            pops = [(c, fillpct(sub[c])) for c in df.columns if c not in ("_amt", src)]
+            pops = [(c, p) for c, p in pops if p > 5]
+            pops.sort(key=lambda x: -x[1])
+            line = ", ".join(f"{c}={p:.0f}%" for c, p in pops)
+            print(f"\n  [{sv}]  n={len(sub):,}  populated cols ({len(pops)}):\n    {line}")
+
 
 if __name__ == "__main__":
     main()
