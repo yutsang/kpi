@@ -170,9 +170,12 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
         _od = Path(out_dir); _od.mkdir(parents=True, exist_ok=True)
         p = _od / "tableau_cube.csv"
         cube.to_csv(p, index=False, encoding="utf-8-sig")
-        print(f"✓ wrote {p} — ONE file, {len(cube):,} agg rows, "
-              f"{cube['amount_mop'].sum()/1e6:.0f}M (all 6 entities × 24/25). "
-              f"Connect this single CSV in Tableau; rows=vertical_label, cols=horizontal_label.")
+        px = _od / "tableau_cube.xlsx"
+        cube.to_excel(px, index=False, engine="xlsxwriter")
+        print(f"✓ wrote {p}  (Tableau → Text File)")
+        print(f"✓ wrote {px}  (Tableau → Microsoft Excel)")
+        print(f"  ONE file, {len(cube):,} agg rows, {cube['amount_mop'].sum()/1e6:.0f}M "
+              f"(all 6 entities × 24/25). rows=vertical_label, cols=horizontal_label.")
         return
 
     # Default: 6 per-entity × 2 year Excels (12 files for Tableau union)
