@@ -417,19 +417,38 @@ def build(ent: str, com: str, categories: dict, combined: bool = False) -> Path 
         je_cols_present = [c for c in JE_KEEP if c in allsub.columns]
         je_all = allsub[je_cols_present]
         out_path = out_dir / f"{ent}_投資方向_合併.xlsx"
+        # ONE filterable cross-tab — `year` as the first column so the project team Excel-filters by year.
+        _pdf = allsub[[c for c in ("year", "ng_code", "ng_label", "vertical_id", "vertical_label",
+                                   "horizontal_label", "amount_mop") if c in allsub.columns]].copy()
+        for _c in _pdf.columns:
+            if _c != "amount_mop":
+                _pdf[_c] = _pdf[_c].astype(object)
+        _pv = _pdf.pivot_table(index=["year", "ng_code", "ng_label", "vertical_id", "vertical_label"],
+                               columns="horizontal_label", values="amount_mop",
+                               aggfunc="sum", fill_value=0, observed=True)
+        _horder = [h["label"] for h in categories.get("horizontals", [])
+                   if h.get("id") != "H_COUNT" and h.get("label")]
+        _extra = [c for c in _pv.columns if c not in _horder]
+        _pv = _pv.reindex(columns=_horder + _extra, fill_value=0)
+        _pv["總計"] = _pv.sum(axis=1)          # per-row total — survives Excel AutoFilter
+        _vord = {v["id"]: i for i, v in enumerate(categories.get("verticals", []))}
+        _yr = {"25": 0, "24": 1, "23": 2}
+
+        def _ckey(t):
+            m = re.match(r"NG(\d+)", str(t[1]))
+            return (_yr.get(str(t[0]), 9), int(m.group(1)) if m else 998, _vord.get(str(t[3]), 998))
+        _pv = _pv.iloc[sorted(range(len(_pv)), key=lambda i: _ckey(_pv.index[i]))]
+
         with pd.ExcelWriter(out_path, engine="xlsxwriter") as w:
             idx = pd.DataFrame(
-                [("0_index", "This map")]
-                + [(f"1_pivot_{y}", f"V × H cross-tab matrix for year {y} (Σ amount_mop, NG header + 總計)") for y in years_present]
-                + [("2_橫向", "Horizontal drill: (year, H, account_code, account_desc, project, subproject) × Σ amount — all years"),
-                   ("3_縱向", "Vertical drill: (year, NG, V, project, subproject) × Σ amount — all years"),
-                   ("4_大表", f"ALL JE rows ({len(je_all):,}) flat, all {len(years_present)} years (year_bucket column)")],
+                [("0_index", "This map"),
+                 ("1_投資方向pivot", "V × H cross-tab — ALL 3 years in ONE sheet. First col = year → Excel AutoFilter by year (25/24/23). 總計 = per-row total."),
+                 ("2_橫向", "Horizontal drill: (year, H, account_code, account_desc, project, subproject) × Σ amount — all years"),
+                 ("3_縱向", "Vertical drill: (year, NG, V, project, subproject) × Σ amount — all years"),
+                 ("4_大表", f"ALL JE rows ({len(je_all):,}) flat, all {len(years_present)} years (year_bucket column)")],
                 columns=["sheet", "contents"])
             idx.to_excel(w, sheet_name="0_index", index=False)
-            for y in years_present:
-                kpi = _kpi_pivot(_filter_year(df, ycol, y), categories)
-                (kpi if not kpi.empty else pd.DataFrame({"note": ["(no data)"]})).to_excel(
-                    w, sheet_name=f"1_pivot_{y}", merge_cells=False)
+            _pv.to_excel(w, sheet_name="1_投資方向pivot", merge_cells=False)
             h_comb.to_excel(w, sheet_name="2_橫向", index=False)
             v_comb.to_excel(w, sheet_name="3_縱向", index=False)
             if len(je_all) <= XLSX_LIMIT:
