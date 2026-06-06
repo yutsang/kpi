@@ -156,8 +156,24 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
         print("❌ no data"); return
 
     combined = pd.concat(frames, ignore_index=True)
+    combined["year"] = combined["year_bucket"].astype(str).str[:2]   # clean 24 / 25 for filtering
     print(f"\nCombined: {len(combined):,} rows, {combined['amount_mop'].sum()/1e6:.0f}M total")
     print(f"Cols: {list(combined.columns)}")
+
+    # ── cube: ONE small aggregated CSV = the cross-tab source (no union, no stitching) ──
+    if fmt == "cube":
+        dims = [c for c in ["entity", "year", "year_bucket", "ng_code", "ng_label",
+                            "vertical_id", "vertical_label", "horizontal_id", "horizontal_label",
+                            "ng_scope", "final_capex_opex"] if c in combined.columns]
+        cube = (combined.groupby(dims, dropna=False)["amount_mop"]
+                        .agg(amount_mop="sum", n_rows="size").reset_index())
+        _od = Path(out_dir); _od.mkdir(parents=True, exist_ok=True)
+        p = _od / "tableau_cube.csv"
+        cube.to_csv(p, index=False, encoding="utf-8-sig")
+        print(f"✓ wrote {p} — ONE file, {len(cube):,} agg rows, "
+              f"{cube['amount_mop'].sum()/1e6:.0f}M (all 6 entities × 24/25). "
+              f"Connect this single CSV in Tableau; rows=vertical_label, cols=horizontal_label.")
+        return
 
     # Default: 6 per-entity × 2 year Excels (12 files for Tableau union)
     # Write to data/{ent}/output/tableau_{yr}_{ent}.xlsx so they sit alongside
@@ -199,9 +215,10 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--format", choices=["all", "parquet", "csv", "xlsx", "per-entity-xlsx"],
+    p.add_argument("--format", choices=["cube", "all", "parquet", "csv", "xlsx", "per-entity-xlsx"],
                    default="per-entity-xlsx",
-                   help="per-entity-xlsx (default) = 6 separate Excel files for Tableau union")
+                   help="cube = ONE aggregated CSV (recommended, no union); csv = ONE row-level CSV (drill-down); "
+                        "per-entity-xlsx (default) = 12 Excels for the old union approach")
     p.add_argument("--out", default="data/tableau", help="output dir for per-entity-xlsx")
     args = p.parse_args()
     run(args.format, args.out)
