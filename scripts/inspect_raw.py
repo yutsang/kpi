@@ -71,6 +71,21 @@ def main():
             if cand:
                 lines.append(f"  {slot:14s}: {' | '.join(cand[:6])}")
 
+        # amount 欄合計 — 錢喺邊張 sheet / 邊條欄 (find comp / staff / adjustment tables)
+        amt_kw = ["金額", "amount", "crcy", "val/", "本位", "debit", "credit", "調整", "balance", "餘額", "投資"]
+        amt_cands = [c for c in df.columns if any(k.lower() in str(c).lower() for k in amt_kw)]
+        if amt_cands:
+            lines.append("\n-- amount 欄合計 (錢喺邊) --")
+            for c in amt_cands:
+                s = pd.to_numeric(df[c], errors="coerce")
+                if s.notna().sum():
+                    lines.append(f"  {str(c)[:40]:40s}: Σ={s.sum():>18,.0f}  (n={s.notna().sum():,})")
+
+        # 頭 3 行 — 睇 summary 表結構
+        lines.append("\n-- 頭 3 行 (前 10 欄) --")
+        for _, r in df.head(3).iterrows():
+            lines.append("  " + " | ".join(f"{str(c)[:14]}={str(r[c])[:20]}" for c in df.columns[:10]))
+
         if args.col:
             targets = [c for c in df.columns if any(k.lower() in str(c).lower() for k in args.col)]
         else:
