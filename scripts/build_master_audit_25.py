@@ -161,7 +161,7 @@ def _category_ref(categories: dict) -> pd.DataFrame:
     return pd.DataFrame(v_rows + h_rows)
 
 
-def build(ent: str, com: str, categories: dict) -> Path | None:
+def build(ent: str, com: str, categories: dict, combined: bool = False) -> Path | None:
     t0 = time.time()
     parquet = Path(f"data/{ent}/output/{com}_kpi_report.parquet")
     if not parquet.exists():
@@ -397,6 +397,52 @@ def build(ent: str, com: str, categories: dict) -> Path | None:
         return g.sort_values(["vertical_label", "amount_mop"] if "vertical_label" in g.columns
                              else ["amount_mop"], ascending=[True, False])
 
+    # ── --combined: ONE workbook with all 3 years grouped (project-team request; per-entity only —
+    # galaxy is too big to combine, so this is opt-in via --entity). ─────────────────────────────
+    if combined:
+        df["year"] = df["year_bucket"].astype(str).str[:2]
+        years_present = [y for y in ("25", "24", "23") if (df["year"] == y).any()]
+        allsub = df[df["year"].isin(years_present)].copy()
+
+        def _bd_combined(sub, dim_cols):
+            cc = ["year"] + [c for c in dim_cols if c in sub.columns]
+            gdf = sub[cc + ["amount_mop"]].copy()
+            for c in cc:
+                gdf[c] = gdf[c].astype(object)
+            g = gdf.groupby(cc, observed=True, dropna=False)["amount_mop"].agg(["sum", "size"]).reset_index()
+            return g.rename(columns={"sum": "amount_mop", "size": "筆數"})
+
+        h_comb = _bd_combined(allsub, ["horizontal_id", "horizontal_label", "account_code", "account_desc", "project", "subproject"])
+        v_comb = _bd_combined(allsub, ["ng_code", "ng_label", "vertical_id", "vertical_label", "project", "subproject"])
+        je_cols_present = [c for c in JE_KEEP if c in allsub.columns]
+        je_all = allsub[je_cols_present]
+        out_path = out_dir / f"{ent}_投資方向_合併.xlsx"
+        with pd.ExcelWriter(out_path, engine="xlsxwriter") as w:
+            idx = pd.DataFrame(
+                [("0_index", "This map")]
+                + [(f"1_pivot_{y}", f"V × H cross-tab matrix for year {y} (Σ amount_mop, NG header + 總計)") for y in years_present]
+                + [("2_橫向", "Horizontal drill: (year, H, account_code, account_desc, project, subproject) × Σ amount — all years"),
+                   ("3_縱向", "Vertical drill: (year, NG, V, project, subproject) × Σ amount — all years"),
+                   ("4_大表", f"ALL JE rows ({len(je_all):,}) flat, all {len(years_present)} years (year_bucket column)")],
+                columns=["sheet", "contents"])
+            idx.to_excel(w, sheet_name="0_index", index=False)
+            for y in years_present:
+                kpi = _kpi_pivot(_filter_year(df, ycol, y), categories)
+                (kpi if not kpi.empty else pd.DataFrame({"note": ["(no data)"]})).to_excel(
+                    w, sheet_name=f"1_pivot_{y}", merge_cells=False)
+            h_comb.to_excel(w, sheet_name="2_橫向", index=False)
+            v_comb.to_excel(w, sheet_name="3_縱向", index=False)
+            if len(je_all) <= XLSX_LIMIT:
+                je_all.to_excel(w, sheet_name="4_大表", index=False)
+            else:
+                n_chunks = (len(je_all) + XLSX_LIMIT - 1) // XLSX_LIMIT
+                for i in range(n_chunks):
+                    je_all.iloc[i*XLSX_LIMIT:(i+1)*XLSX_LIMIT].to_excel(
+                        w, sheet_name=f"4_大表_p{i+1}of{n_chunks}", index=False)
+        print(f"[{ent}] ✓ {out_path.name}  (combined years {years_present}, "
+              f"{len(je_all):,} rows, {time.time()-t0:.1f}s)", flush=True)
+        return [out_path]
+
     # Write one Excel per year (entities with a 23 source also get a 23 file; empty years skipped).
     for year in ("25", "24", "23"):
         gc.collect()
@@ -457,7 +503,15 @@ def build(ent: str, com: str, categories: dict) -> Path | None:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--entity", choices=list(ENTITIES), default=None)
+    p.add_argument("--combined", action="store_true",
+                   help="ONE workbook with all 3 years (23+24+25) grouped together. Per-entity ONLY "
+                        "(requires --entity) — galaxy is too big to combine.")
     args = p.parse_args()
+
+    if args.combined and not args.entity:
+        print("❌ --combined needs --entity (per-entity only; galaxy too big). "
+              "e.g. python scripts/build_master_audit_25.py --entity vml --combined", flush=True)
+        return
 
     cat = yaml.safe_load(Path("conf/base/categories.yml").read_text(encoding="utf-8"))
 
@@ -465,7 +519,7 @@ def main():
     written = []
     for ent, com in targets:
         try:
-            out = build(ent, com, cat)
+            out = build(ent, com, cat, combined=args.combined)
             if out: written.append(out)
         except Exception as e:
             print(f"❌ {ent} failed: {e}", flush=True)
