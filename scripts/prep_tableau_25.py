@@ -156,13 +156,16 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
         print("❌ no data"); return
 
     combined = pd.concat(frames, ignore_index=True)
-    combined["year"] = combined["year_bucket"].astype(str).str[:2]   # clean 24 / 25 for filtering
+    # year_bucket keeps the FULL 5 split-year buckets (24 / 24_23SY / 25 / 25_23SY / 25_24SY) as text,
+    # matching the data\review 大表's per-bucket pivots. (No numeric 'year' col — it confuses Tableau typing.)
+    combined["year_bucket"] = combined["year_bucket"].astype(str)
     print(f"\nCombined: {len(combined):,} rows, {combined['amount_mop'].sum()/1e6:.0f}M total")
+    print(f"year_bucket values: {sorted(combined['year_bucket'].unique())}")
     print(f"Cols: {list(combined.columns)}")
 
     # ── cube / cube-detail: ONE aggregated file = cross-tab source (no union, no stitching) ──
     if fmt in ("cube", "cube-detail"):
-        dims = ["entity", "year", "year_bucket", "ng_code", "ng_label",
+        dims = ["entity", "year_bucket", "ng_code", "ng_label",
                 "vertical_id", "vertical_label", "horizontal_id", "horizontal_label",
                 "ng_scope", "final_capex_opex"]
         if fmt == "cube-detail":   # keep drill-down dims (project / account / vendor)
