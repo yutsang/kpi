@@ -203,6 +203,15 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
                     print(f"✓ wrote {pc} ({pc.stat().st_size/1e6:.1f} MB, {len(chunk):,} rows)")
         return
 
+    # ── csv-per-entity: 6 row-level CSVs (every JE line + all dims incl description) ──
+    if fmt == "csv-per-entity":
+        _od = Path(out_dir); _od.mkdir(parents=True, exist_ok=True)
+        for ent, sub in combined.groupby("entity"):
+            p = _od / f"tableau_detail_{ent}.csv"
+            sub.to_csv(p, index=False, encoding="utf-8-sig")
+            print(f"✓ {p}  — {len(sub):,} rows, {sub['amount_mop'].sum()/1e6:.0f}M (Tableau → Text File)")
+        return
+
     out_base = Path("tableau_combined_25")
     if fmt in ("all","parquet"):
         combined.to_parquet(out_base.with_suffix(".parquet"), index=False)
@@ -223,10 +232,10 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--format", choices=["cube", "cube-detail", "all", "parquet", "csv", "xlsx", "per-entity-xlsx"],
+    p.add_argument("--format", choices=["cube", "cube-detail", "csv", "csv-per-entity", "all", "parquet", "xlsx", "per-entity-xlsx"],
                    default="per-entity-xlsx",
-                   help="cube = ONE tiny cross-tab CSV/xlsx; cube-detail = ONE file + project/account/vendor drill-down; "
-                        "csv = ONE row-level CSV (every JE line incl description); per-entity-xlsx (default) = old union")
+                   help="cube/cube-detail = aggregated cross-tab; csv = ONE row-level CSV (all dims incl description); "
+                        "csv-per-entity = 6 row-level CSVs (one per company, for 對數); per-entity-xlsx (default) = old union")
     p.add_argument("--out", default="data/tableau", help="output dir for per-entity-xlsx")
     args = p.parse_args()
     run(args.format, args.out)
