@@ -165,7 +165,7 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
         dims = [c for c in ["entity", "year", "year_bucket", "ng_code", "ng_label",
                             "vertical_id", "vertical_label", "horizontal_id", "horizontal_label",
                             "ng_scope", "final_capex_opex"] if c in combined.columns]
-        cube = (combined.groupby(dims, dropna=False)["amount_mop"]
+        cube = (combined.groupby(dims, dropna=False, observed=True)["amount_mop"]
                         .agg(amount_mop="sum", n_rows="size").reset_index())
         _od = Path(out_dir); _od.mkdir(parents=True, exist_ok=True)
         p = _od / "tableau_cube.csv"
