@@ -79,8 +79,23 @@ def parse_golden(p: Path):
         if not re.fullmatch(r"\d+", sn):
             continue
         out[sn.zfill(3)] = {"name": parts[1], "payroll": _num(parts[2]),
-                            "capex": _num(parts[3]), "opex": _num(parts[4]), "total": _num(parts[5])}
+                            "capex": _num(parts[3]), "opex": _num(parts[4]), "total": _num(parts[5]),
+                            "theme": parts[6].strip() if len(parts) >= 7 else ""}
     return out
+
+
+# 項目性質 (project-team theme, golden TSV col 7) → our V. The Leadsheet states each 序號's theme
+# directly, so V/NG come from it — NOT from the pipeline's amount-weighted vertical_id, which
+# collapses to V_OTHER whenever the row-level NG is blank (mgm CAPEX/payroll have no NG). Same
+# 13-value DICJ taxonomy as wynn 項目性質 / 項目分類2.
+THEME2V = {
+    "博彩娛樂場場地的優化": "V_GAMING_VENUE", "博彩設施及設備的優化": "V_GAMING_EQUIP",
+    "博彩娛樂": "V_GAMING_VENUE", "博彩": "V_GAMING_VENUE", "博彩項目": "V_GAMING_VENUE",
+    "吸引外國客源": "V_INVITE_GUEST", "會議展覽": "V_MICE", "娛樂表演": "V_CONCERT",
+    "體育盛事": "V_SPORT_EVENT", "體育賽事": "V_SPORT_EVENT",
+    "文化藝術": "V_ART_EXHIBITION", "健康養生": "V_WELLNESS", "主題遊樂": "V_THEME_PARK",
+    "美食之都": "V_RESTAURANT", "社區旅遊": "V_COMMUNITY", "海上旅遊": "V_MARITIME", "其他": "V_OTHER",
+}
 
 
 def _serial_token(pid, nm):
@@ -237,18 +252,26 @@ def main():
     # ── Allocate golden amounts using pipeline V + H proportions ──────────────────
     detail = []     # (序號, 項目, NG, V, V_label, bucket, H, H_label, amount, h_source)
     recon = []      # per 項目 tie + how V/H were sourced
+    _unmapped_themes = {}   # theme not in THEME2V → {theme: count} (so we catch byte-mismatches)
     for sn, g in sorted(golden.items()):
         d = by_sn.get(sn, {})
-        # V (→ NG): amount-weighted vertical_id, prefer non-gaming if a non-NG0 option exists
+        theme = str(g.get("theme", "")).strip()
         vid_amt = d.get("vid_amt", {})
-        vsrc = "pipeline"
-        if vid_amt:
-            non_g = {v: a for v, a in vid_amt.items() if V_TO_NG.get(v, ("NG11",))[0] != "NG0"}
+        # V (→ NG): PREFER the Leadsheet 項目性質 theme (authoritative per 序號); only fall back to the
+        # pipeline's amount-weighted vertical_id when there is no usable theme. The pipeline V collapses
+        # to V_OTHER for mgm CAPEX/payroll (blank row-level NG), so theme-first avoids that corruption.
+        if theme in THEME2V:
+            v = THEME2V[theme]; vsrc = "leadsheet-theme"
+        elif vid_amt:
+            if theme:
+                _unmapped_themes[theme] = _unmapped_themes.get(theme, 0) + 1
+            non_g = {v2: a for v2, a in vid_amt.items() if V_TO_NG.get(v2, ("NG11",))[0] != "NG0"}
             pick = max((non_g or vid_amt).items(), key=lambda kv: kv[1])[0]
             v = pick if pick and pick != "nan" else _name_v(g["name"])
-            if not non_g:
-                vsrc = "pipeline(gaming-only→kept)"
+            vsrc = "pipeline" if non_g else "pipeline(gaming-only→kept)"
         else:
+            if theme:
+                _unmapped_themes[theme] = _unmapped_themes.get(theme, 0) + 1
             v = _name_v(g["name"]); vsrc = "name-keyword" if v != "V_OTHER" else "default"
         ng, ng_lab = V_TO_NG.get(v, ("NG11", "其他"))
 
@@ -359,6 +382,13 @@ def main():
     print(f"  payroll golden={g_pay:>15,.0f}   alloc={a_pay:>15,.0f}   Δ={a_pay-g_pay:>12,.0f}")
     nfb = (rec["capex_H來源"] != "capex-rows").sum()
     print(f"  {len(rec)} 項目 | capex H fallback (no pipeline capex rows): {nfb}")
+    print("  V來源 breakdown:")
+    for s, n in rec["V來源"].value_counts().items():
+        print(f"    {s:28s} {n:>3} 項目")
+    if _unmapped_themes:
+        print(f"  ⚠️ {sum(_unmapped_themes.values())} 項目 theme NOT in THEME2V (fell back) — add byte-exact keys:")
+        for t, n in sorted(_unmapped_themes.items(), key=lambda x: -x[1]):
+            print(f"      {t!r}: {n}")
 
     # diagnostic: where the pipeline bottom-up UNDER-counts vs golden (drill via 7_JE明細)
     if p_sums:

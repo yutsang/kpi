@@ -95,6 +95,9 @@ def main():
         "capex": _cap.values,
         "opex": _opx.values,
         "total": (_pay + _cap + _opx).values,
+        # 7th col = 項目性質 (project-team theme) → build_mgm_golden maps it to V/NG directly,
+        # bypassing the pipeline V_OTHER corruption (CAPEX/payroll rows have blank NG → V_OTHER).
+        "theme": (nat.str.replace(r"[\r\n]+", " ", regex=True).str.strip().values if c_nat else ""),
     })
     out = out[out["序號"].str.contains(r"\d", na=False)]   # 序號 must have a digit (drops 合計/blank rows)
     # drop subtotal/total rows (名稱 contains 合計/小計/總)
@@ -102,10 +105,13 @@ def main():
     res = ROOT / "results"; res.mkdir(exist_ok=True)
     fpo = res / f"mgm_golden_{a.year[2:]}.tsv"
     out.to_csv(fpo, sep="\t", index=False, header=False, encoding="utf-8-sig")
-    print(f"\n✓ {len(out)} 項目 → {fpo.relative_to(ROOT)}")
+    print(f"\n✓ {len(out)} 項目 → {fpo.relative_to(ROOT)}  (7 cols incl 項目性質 theme)")
     print(f"  Σ(萬元) payroll={out['payroll'].sum():,.0f}  capex={out['capex'].sum():,.0f}  "
           f"opex={out['opex'].sum():,.0f}  total={out['total'].sum():,.0f}")
     print("  (expect ~ payroll 4,601 / capex 32,685 / opex 96,583 / total 140,418 萬)")
+    print("\n  項目性質 (theme) distinct values — confirm these are byte-exact keys in build_mgm_golden THEME2V:")
+    for v, n in out["theme"].astype(str).str.strip().replace("", "(blank)").value_counts().items():
+        print(f"    {str(v)[:32]:32s} {n:>3} 項目")
 
 
 if __name__ == "__main__":
