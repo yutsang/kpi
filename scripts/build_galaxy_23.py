@@ -140,6 +140,31 @@ def build(files, pw):
                 sub = sub[keep]; sub["Project"] = df.loc[keep, spcol].astype(str).str.strip().values
         out.append(sub)
         print(f"[{s['src']}] {len(sub):,} rows  Σ={sub['Reported Amount(MOP)'].sum():,.0f}")
+    # ── 沒有SAP Record residual: Cover Amount(I) − Σ(9 components J..R) per Cover row.
+    #    Carries Cover 'Descriptions' (F&B/Staff Costs/Hotel/Utilities/Corporate Support…)
+    #    as Account Description so H rules classify it. Ties total to Cover 3.384B. ──
+    try:
+        cv = rd(files["sap"], "Cover", 2, None)
+        covI = num(cv.iloc[:, letter_to_idx("I")]).fillna(0)
+        comp9 = sum(num(cv.iloc[:, letter_to_idx(l)]).fillna(0) for l in "JKLMNOPQR")
+        resid = covI - comp9
+        keep = resid.abs() > 1
+        ng, proj, desc = col(cv, "NG11 Category"), col(cv, "Project"), col(cv, "Descriptions")
+        nosap = pd.DataFrame({
+            "Reported Amount(MOP)": resid[keep].values,
+            "Capex/Opex": "Opex",
+            "Project": cv.loc[keep, proj].astype(str).str.replace(r"[\r\n]+", " ", regex=True).str.strip().values,
+            "NG11 Category": cv.loc[keep, ng].astype(str).str.strip().values,
+            "Account Code": "",
+            "Account Description": cv.loc[keep, desc].astype(str).str.strip().values,  # cost nature → H
+            "Description": cv.loc[keep, desc].astype(str).str.strip().values,
+            "Source": "NoSAPRecord",
+        })
+        out.append(nosap)
+        print(f"[NoSAPRecord] {len(nosap):,} rows  Σ={nosap['Reported Amount(MOP)'].sum():,.0f}")
+    except Exception as e:
+        print(f"[NoSAPRecord] residual pass failed: {e}")
+
     if not out: print("nothing built"); return
     allr = pd.concat(out, ignore_index=True)
     allr["Submit No."] = ["G23_" + str(i) for i in range(len(allr))]   # unique_id, no project name
