@@ -121,7 +121,7 @@ def main():
             sub = pd.DataFrame({
                 "Debit minus Credit": num(df[c_amt]).values,
                 "Source": "CAPEX",
-                "Project_code": "項目" + re.sub(r"\D", "", tab),
+                "Project_code": "項目" + str(int(re.sub(r"\D", "", tab)) + 200),  # 博彩 序號 +200 → match golden
                 "Section.1": "博彩娛樂場場地的優化",
                 "Ledger Account": df[c_ac].astype(str).str.strip().values if c_ac else "",
                 "Ledger Hierarchy Level 5": df[c_hi].astype(str).str.strip().values if c_hi else "",

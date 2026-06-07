@@ -80,13 +80,17 @@ def main():
     _cap = num(df[c_capx])
     _opx = num(df[c_opex])
     c_nat = pick(df, ["項目性質"])
-    # 博彩 vs 非博彩 both reuse 項目1..10 → prefix 序號 with G/N to disambiguate
     nat = df[c_nat].astype(str) if c_nat else pd.Series("", index=df.index)
-    prefix = nat.map(lambda v: "G" if "博彩" in str(v) else "N")
+    # 博彩 vs 非博彩 both reuse 項目1..10 → 博彩 序號 +200 (keeps pure-digit for parse_golden;
+    # build_mgm_23_raw gaming tabs use 項目201..210 to match).
+    def osq(no, n):
+        d = seq(no)
+        return (str(int(d) + 200) if "博彩" in str(n) else d) if d else ""
+    seqs = [osq(no, n) for no, n in zip(df[c_no], nat)]
     # NOTE: '总金额' col is buggy (= payroll + capex + 2×opex). Derive total = p+c+o.
     out = pd.DataFrame({
-        "序號": prefix.values + df[c_no].map(seq).values,
-        "名稱": (df[c_name].astype(str).str.strip().values if c_name else ""),
+        "序號": seqs,
+        "名稱": (df[c_name].astype(str).str.replace(r"[\r\n]+", " ", regex=True).str.strip().values if c_name else ""),
         "payroll": _pay.values,
         "capex": _cap.values,
         "opex": _opx.values,
