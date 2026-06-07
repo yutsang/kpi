@@ -86,17 +86,24 @@ def main():
     # ── NG (Section.1) backfill — only WD1 carries inline 'Section'; Capex/PM/WD2 tabs lack it
     #    → blank NG → step2 candidate collapse → V_OTHER (38% of 2024). Two fills:
     #    (1) PM = Patron comp → 吸引外國客源 (NG1; matches the 2025 WD5_Patron rule).
-    #    (2) propagate each Project_code's modal non-blank NG to its blank siblings — recovers
-    #        Capex/WD2 rows that share WD1's 項目 token; harmless no-op where tokens differ.
+    #    (2) modal non-blank NG by exact Project_code, then by cost-center prefix (the part before
+    #        the first '-': CAPEX '100101-23010C' shares cost-center '100101' with WD1's
+    #        '100101-23020C MGM ...'), so CAPEX rows inherit their cost-center's dominant NG.
     def _isblank(s): return s.astype(str).str.strip().isin(["", "nan", "None"])
-    allr.loc[_isblank(allr["Section.1"]) & allr["Source"].eq("PM"), "Section.1"] = "吸引外國客源"
-    _known = allr[~_isblank(allr["Section.1"])]
-    if len(_known) and "Project_code" in allr.columns:
-        _pmap = _known.groupby("Project_code")["Section.1"].agg(lambda s: s.value_counts().index[0])
+    def _modefill(key_series):
+        _known = allr[~_isblank(allr["Section.1"])]
+        if not len(_known): return
+        kmap = _known.assign(_k=key_series.loc[_known.index]).groupby("_k")["Section.1"].agg(
+            lambda s: s.value_counts().index[0])
         _bl = _isblank(allr["Section.1"])
-        _fill = allr.loc[_bl, "Project_code"].map(_pmap)
+        _fill = key_series.loc[_bl].map(kmap)
         allr.loc[_bl, "Section.1"] = _fill.where(_fill.notna(), allr.loc[_bl, "Section.1"])
-    print(f"  [NG backfill] PM→NG1 + project-modal fill; remaining NG-blank rows: "
+    allr.loc[_isblank(allr["Section.1"]) & allr["Source"].eq("PM"), "Section.1"] = "吸引外國客源"
+    if "Project_code" in allr.columns:
+        pc = allr["Project_code"].astype(str).str.strip()
+        _modefill(pc)                          # 1) exact Project_code (rarely bridges — WD has desc suffix)
+        _modefill(pc.str.split("-").str[0])    # 2) cost-center prefix (100101/553000/504002…): CAPEX↔WD1 share it
+    print(f"  [NG backfill] PM→NG1 + Project_code + cost-center-prefix modal fill; remaining NG-blank rows: "
           f"{int(_isblank(allr['Section.1']).sum()):,}")
     res = ROOT / "data" / "mgm" / "raw"; res.mkdir(parents=True, exist_ok=True)
     fpo = res / "mgm_24_raw.xlsx"
