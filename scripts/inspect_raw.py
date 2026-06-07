@@ -38,8 +38,10 @@ SLOTS = {
 def find_file(name):
     p = Path(name)
     if p.exists(): return p
-    hits = list((ROOT / "data").glob(f"*/raw/{name}")) + list((ROOT / "data").glob(f"*/raw/*{name}*"))
-    return hits[0] if hits else None
+    d = ROOT / "data"
+    hits = list(d.glob(f"*/raw/{name}")) + list(d.rglob(name)) + list(d.rglob(f"*{name}*"))
+    exact = [h for h in hits if h.name == name]
+    return (exact or hits)[0] if (exact or hits) else None
 
 
 def main():
