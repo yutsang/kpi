@@ -264,6 +264,25 @@ def main():
               f"set KPI_FORCE_STEP2=1 to re-run the LLM", flush=True)
         return
 
+    # Conf flag `skip_vertical_llm: true` — for entities whose V is fully driven by a project-team
+    # column_map applied at step4 (e.g. wynn 項目分類2, mgm Project_code). Don't load the big raw
+    # parquet or run the project LLM at all: default every untagged project to V_OTHER here; step4's
+    # row_vertical_overrides column_map sets the real V. Mirrors step3 skip_signature_llm. Manual
+    # tags (manual_vertical) are untouched and still win at step4.
+    _ent = ((cfg.get("_master") or {}).get("companies") or {}).get(company, {}) or {}
+    if bool(_ent.get("skip_vertical_llm", False)):
+        _dft = _ent.get("vertical_default", "V_OTHER")
+        if "llm_vertical" not in proj_df.columns:
+            proj_df["llm_vertical"] = ""
+        _blank = proj_df["llm_vertical"].astype("string").fillna("").str.strip().eq("")
+        proj_df.loc[_blank, "llm_vertical"] = _dft
+        proj_df["llm_status"] = "skip_llm"
+        proj_df["tag_source"] = "skip_llm"
+        proj_df.to_excel(proj_xlsx, index=False)
+        print(f"  [skip-llm] vertical LLM disabled — {int(_blank.sum()):,} projects defaulted to {_dft} "
+              f"(step4 column_map / row_vertical_overrides set final V); raw parquet NOT loaded", flush=True)
+        return
+
     df = pd.read_parquet(parquet_path)
 
     vlookup = build_vertical_lookup(cats)
