@@ -72,7 +72,7 @@ def main():
     if not out: print("nothing built"); return
     allr = pd.concat(out, ignore_index=True)
     allr["unique_id"] = ["S23_" + str(i) for i in range(len(allr))]
-    res = ROOT / "data" / "sjm" / "raw" / "2023"; res.mkdir(parents=True, exist_ok=True)
+    res = ROOT / "data" / "sjm" / "raw"; res.mkdir(parents=True, exist_ok=True)   # step0 reads from raw/
     fpo = res / "sjm_23_raw.xlsx"
     with pd.ExcelWriter(fpo, engine="openpyxl") as w:
         allr.to_excel(w, sheet_name="combine", index=False)

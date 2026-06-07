@@ -168,7 +168,7 @@ def build(files, pw):
     if not out: print("nothing built"); return
     allr = pd.concat(out, ignore_index=True)
     allr["Submit No."] = ["G23_" + str(i) for i in range(len(allr))]   # unique_id, no project name
-    res = ROOT / "data" / "galaxy" / "raw" / "2023"
+    res = ROOT / "data" / "galaxy" / "raw"   # step0 resolves yearly_sources from raw/ (NOT raw/2023/)
     res.mkdir(parents=True, exist_ok=True)
     fp_out = res / "galaxy_23_raw.xlsx"
     with pd.ExcelWriter(fp_out, engine="openpyxl") as w:
