@@ -76,13 +76,21 @@ def main():
         m = re.search(r"\d+", str(v))
         return m.group(0) if m else ""
 
+    _pay = num(df[c_pay]) if c_pay else pd.Series(0.0, index=df.index)
+    _cap = num(df[c_capx])
+    _opx = num(df[c_opex])
+    c_nat = pick(df, ["項目性質"])
+    # 博彩 vs 非博彩 both reuse 項目1..10 → prefix 序號 with G/N to disambiguate
+    nat = df[c_nat].astype(str) if c_nat else pd.Series("", index=df.index)
+    prefix = nat.map(lambda v: "G" if "博彩" in str(v) else "N")
+    # NOTE: '总金额' col is buggy (= payroll + capex + 2×opex). Derive total = p+c+o.
     out = pd.DataFrame({
-        "序號": df[c_no].map(seq),
-        "名稱": df[c_name].astype(str).str.strip() if c_name else "",
-        "payroll": num(df[c_pay]) if c_pay else 0.0,
-        "capex": num(df[c_capx]),
-        "opex": num(df[c_opex]),
-        "total": num(df[c_tot]) if c_tot else (num(df[c_opex]) + num(df[c_capx]) + (num(df[c_pay]) if c_pay else 0.0)),
+        "序號": prefix.values + df[c_no].map(seq).values,
+        "名稱": (df[c_name].astype(str).str.strip().values if c_name else ""),
+        "payroll": _pay.values,
+        "capex": _cap.values,
+        "opex": _opx.values,
+        "total": (_pay + _cap + _opx).values,
     })
     out = out[out["序號"].str.len() > 0]
     # drop subtotal/total rows (名稱 contains 合計/小計/總)
