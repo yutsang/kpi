@@ -27,6 +27,9 @@ SOURCES = {
     "melco":     dict(file="melco_2023.xlsx", sheet="明細賬", header=0,
                       amt="本位币金额", proj="項目名稱",
                       ac="ledger_account", ad="spend_category", v="項目性質", h="支出性质-mapping", capex=None),
+    "wynn":      dict(file="wynn_2023.xlsx", sheet="Capex and Opex summary", header=0,
+                      amt="Entry Voucher Amount/ Expense Amount ", proj="项目名称中文",
+                      ac="Account", ad="Nature of Expenses", v="項目性質", h="comp费用大类", capex="Capex/Opex"),
 }
 
 
