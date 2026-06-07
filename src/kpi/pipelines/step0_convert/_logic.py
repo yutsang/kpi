@@ -357,6 +357,8 @@ def main():
 
             df_y = pd.read_excel(fpath, sheet_name=raw_sheet, header=yr_header_row,
                                  dtype=object, engine="openpyxl")
+            if isinstance(df_y, dict):    # raw_sheet was a list (e.g. MGM ['combine','adjustment']) → concat
+                df_y = pd.concat(df_y.values(), ignore_index=True)
             print(f"  rows={len(df_y):,}  cols={len(df_y.columns)}")
 
             # Year-specific filters
