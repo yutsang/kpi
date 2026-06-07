@@ -19,6 +19,10 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 ENTITIES = [("galaxy", "company_1"), ("sjm", "company_2"), ("wynn", "company_3"),
             ("vml", "company_4"), ("melco", "company_5"), ("mgm", "company_6")]
+# per-entity raw amount col (tagged_rows keeps the original name)
+AMT = {"company_1": "Reported Amount(MOP)", "company_2": "Val/COArea Crcy",
+       "company_3": "Entry Voucher Amount/ Expense Amount", "company_4": "MOP Amt",
+       "company_5": "Amount - Amended", "company_6": "Debit minus Credit"}
 
 
 def pick(df, *names):
@@ -30,14 +34,14 @@ def pick(df, *names):
 def main():
     L = ["# verify_all_years — per entity × report_period (pipeline parquet)"]
     for alias, comp in ENTITIES:
-        pq = ROOT / "data" / alias / "output" / f"{comp}_kpi_report.parquet"
+        pq = ROOT / "data" / alias / "interim" / f"{comp}_tagged_rows.parquet"
         if not pq.exists():
             L.append(f"\n## {alias}: X {pq} missing"); continue
         df = pd.read_parquet(pq)
-        amt = pick(df, "amount_mop", "amount", "amount_MOP")
+        amt = AMT[comp] if AMT.get(comp) in df.columns else pick(df, "amount_mop", "amount")
         per = pick(df, "report_period", "report_year", "years")
         hid = pick(df, "horizontal_id"); vid = pick(df, "vertical_id")
-        ngc = pick(df, "ng_code", "ng_label", "ng11_category", "NG11 Category")
+        ngc = pick(df, "ng_code", "ng_label", "ng11_category", "NG11 Category", "Section.1", "項目類型", "項目性質")
         if not (amt and per):
             L.append(f"\n## {alias}: X missing amount/period cols ({list(df.columns)[:12]})"); continue
         a = pd.to_numeric(df[amt], errors="coerce").fillna(0.0)
