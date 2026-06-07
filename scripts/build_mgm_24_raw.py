@@ -83,6 +83,21 @@ def main():
         print(f"[{src}/{sheet}] {len(sub):,} rows  Σ={sub['Debit minus Credit'].sum():,.0f}")
     if not out: print("nothing built"); return
     allr = pd.concat(out, ignore_index=True)
+    # ── NG (Section.1) backfill — only WD1 carries inline 'Section'; Capex/PM/WD2 tabs lack it
+    #    → blank NG → step2 candidate collapse → V_OTHER (38% of 2024). Two fills:
+    #    (1) PM = Patron comp → 吸引外國客源 (NG1; matches the 2025 WD5_Patron rule).
+    #    (2) propagate each Project_code's modal non-blank NG to its blank siblings — recovers
+    #        Capex/WD2 rows that share WD1's 項目 token; harmless no-op where tokens differ.
+    def _isblank(s): return s.astype(str).str.strip().isin(["", "nan", "None"])
+    allr.loc[_isblank(allr["Section.1"]) & allr["Source"].eq("PM"), "Section.1"] = "吸引外國客源"
+    _known = allr[~_isblank(allr["Section.1"])]
+    if len(_known) and "Project_code" in allr.columns:
+        _pmap = _known.groupby("Project_code")["Section.1"].agg(lambda s: s.value_counts().index[0])
+        _bl = _isblank(allr["Section.1"])
+        _fill = allr.loc[_bl, "Project_code"].map(_pmap)
+        allr.loc[_bl, "Section.1"] = _fill.where(_fill.notna(), allr.loc[_bl, "Section.1"])
+    print(f"  [NG backfill] PM→NG1 + project-modal fill; remaining NG-blank rows: "
+          f"{int(_isblank(allr['Section.1']).sum()):,}")
     res = ROOT / "data" / "mgm" / "raw"; res.mkdir(parents=True, exist_ok=True)
     fpo = res / "mgm_24_raw.xlsx"
     with pd.ExcelWriter(fpo, engine="openpyxl") as w:
