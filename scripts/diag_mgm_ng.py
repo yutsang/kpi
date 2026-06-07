@@ -56,6 +56,12 @@ def dump(L, year, fname):
         filled_sample = sorted(filled_pc)[:12]
         L.append(f"   sample FILLED Project_code: {filled_sample}")
         L.append(f"   sample ORPHAN Project_code (blank-NG, no filled sibling): {orphan_pc}")
+        # orphan blank-NG |amt| concentrated in how few cost-centers? (the prefix before first '-')
+        cc = df.loc[blank, PC].astype(str).str.split("-").str[0].str.strip()
+        cc_amt = a.abs()[blank].groupby(cc).sum().sort_values(ascending=False)
+        L.append(f"   blank-NG |amt| by COST-CENTER prefix (top 15 — if concentrated, a cc→NG map fixes it):")
+        for c, s in cc_amt.head(15).items():
+            L.append(f"      {str(c)[:14]:14s} {s/atot*100:5.1f}%  ({s:,.0f})")
 
 
 def main():

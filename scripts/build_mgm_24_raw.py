@@ -103,7 +103,14 @@ def main():
         pc = allr["Project_code"].astype(str).str.strip()
         _modefill(pc)                          # 1) exact Project_code (rarely bridges — WD has desc suffix)
         _modefill(pc.str.split("-").str[0])    # 2) cost-center prefix (100101/553000/504002…): CAPEX↔WD1 share it
-    print(f"  [NG backfill] PM→NG1 + Project_code + cost-center-prefix modal fill; remaining NG-blank rows: "
+    # 3) genuine orphans: CAPEX cost-centers (e.g. 100102/110051) with NO non-blank sibling ANYWHERE
+    #    in the JE (their NG isn't recorded) → default to 其他. Honest 'unknown' bucket, not literal
+    #    blank. If the project team supplies a cost-center→項目/NG crosswalk, swap this for a real map.
+    _orphan = _isblank(allr["Section.1"])
+    _norphan = int(_orphan.sum())
+    allr.loc[_orphan, "Section.1"] = "其他"
+    print(f"  [NG backfill] PM→NG1 + Project_code + cost-center-prefix modal fill; "
+          f"{_norphan:,} orphan-CAPEX rows defaulted to 其他 (no NG anywhere in JE); NG-blank now: "
           f"{int(_isblank(allr['Section.1']).sum()):,}")
     res = ROOT / "data" / "mgm" / "raw"; res.mkdir(parents=True, exist_ok=True)
     fpo = res / "mgm_24_raw.xlsx"
