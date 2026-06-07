@@ -14,6 +14,7 @@ Outputs:
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -44,11 +45,16 @@ def main():
     # file is missing, and MERGE new signatures into the existing sig file (existing rows + their
     # step3 tags preserved; only genuinely new sigs appended). Skip the node only if ALL exist.
     _need_vend = bool((cfg["columns"] or {}).get("vendor"))
-    if (proj_path.exists() and acct_path.exists() and sig_path.exists()
+    _force = os.environ.get("KPI_FORCE_STEP1", "").strip() not in ("", "0", "false", "False")
+    if (not _force and proj_path.exists() and acct_path.exists() and sig_path.exists()
             and (vend_path.exists() or not _need_vend)):
-        print("  [skip] all step1 outputs exist — delete a specific *_unique_*.xlsx to rebuild it "
-              "(new signatures merge automatically; unique_signatures is never wiped)")
+        print("  [skip] all step1 outputs exist — set KPI_FORCE_STEP1=1 to MERGE a newly-added "
+              "year's projects/accounts/sigs in place (existing manual tags preserved), or delete "
+              "a specific *_unique_*.xlsx to rebuild just that one")
         return
+    if _force:
+        print("  [KPI_FORCE_STEP1] re-running step1 — new keys merged into existing unique files "
+              "(manual_vertical / manual_horizontal / step3 tags preserved)")
 
     cols = cfg["columns"]
     df = pd.read_parquet(src)
@@ -84,13 +90,33 @@ def main():
     _ent_cfg = ((cfg.get("_master") or {}).get("companies") or {}).get(company, {}) or {}
     sig_df = build_signatures(df, cols, _ent_cfg)
 
-    # Write whichever project/account/vendor file is missing — don't clobber an existing tagged file.
-    if not proj_path.exists():
-        proj.to_excel(proj_path, index=False)
-    if not acct_path.exists():
-        acct.to_excel(acct_path, index=False)
-    if cols.get("vendor") and not vend_path.exists():
-        vend.to_excel(vend_path, index=False)
+    # Project / account / vendor: create if missing, else MERGE (mirror the signature logic below).
+    # The OLD behaviour only wrote when the file was missing, so a newly-added year's projects/accounts
+    # never entered an existing file → those rows stayed V/H-blank. Now we keep every existing row (and
+    # its manual_vertical / manual_horizontal / llm_* tags) and only APPEND genuinely-new keys (left
+    # untagged for step2/step3). Manual classifications are never wiped.
+    def _merge_keyed(new_df, path, key_col, label):
+        if not path.exists():
+            new_df.to_excel(path, index=False)
+            print(f"  [{label}] created {path.name} with {len(new_df):,} rows")
+            return
+        _existing = pd.read_excel(path)
+        if key_col not in _existing.columns or key_col not in new_df.columns:
+            print(f"  [{label}] key {key_col!r} absent — kept existing {path.name} as-is"); return
+        _ekeys = set(_existing[key_col].astype(str))
+        _new = new_df[~new_df[key_col].astype(str).isin(_ekeys)].copy()
+        if len(_new):
+            _new = _new.reindex(columns=_existing.columns)
+            pd.concat([_existing, _new], ignore_index=True).to_excel(path, index=False)
+            print(f"  [{label}] merged {len(_new):,} NEW rows into {path.name} "
+                  f"(kept {len(_existing):,} existing + their tags)")
+        else:
+            print(f"  [{label}] no new rows ({len(_existing):,} existing kept)")
+
+    _merge_keyed(proj, proj_path, cols["project"], "proj")
+    _merge_keyed(acct, acct_path, cols["account_code"], "acct")
+    if cols.get("vendor"):
+        _merge_keyed(vend, vend_path, cols["vendor"], "vend")
     # Signatures: create if missing, else MERGE — keep every existing row (and its step3 columns /
     # tags) and only APPEND signatures not already present. So adding a year never wipes the sig file
     # nor forces a full step3 re-LLM; only the genuinely new sigs are left untagged for step3/feedback.
