@@ -26,8 +26,12 @@ AMT = {"company_1": "Reported Amount(MOP)", "company_2": "Val/COArea Crcy",
 
 
 def pick(df, *names):
+    # exact, then whitespace-tolerant (wynn amount col has a trailing space)
     for n in names:
-        if n in df.columns: return n
+        if n and n in df.columns: return n
+    norm = {str(c).strip(): c for c in df.columns}
+    for n in names:
+        if n and str(n).strip() in norm: return norm[str(n).strip()]
     return None
 
 
@@ -38,7 +42,7 @@ def main():
         if not pq.exists():
             L.append(f"\n## {alias}: X {pq} missing"); continue
         df = pd.read_parquet(pq)
-        amt = AMT[comp] if AMT.get(comp) in df.columns else pick(df, "amount_mop", "amount")
+        amt = pick(df, AMT.get(comp), "amount_mop", "amount")
         per = pick(df, "report_period", "report_year", "years")
         hid = pick(df, "horizontal_id"); vid = pick(df, "vertical_id")
         ngc = pick(df, "ng_code", "ng_label", "ng11_category", "NG11 Category", "Section.1", "項目類型", "項目性質")
