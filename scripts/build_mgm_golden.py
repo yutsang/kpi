@@ -277,17 +277,12 @@ def main():
 
         cap_props = _h_props(d.get("cap_h", {}))
         opx_props = _h_props(d.get("opx_h", {}))
-        # capex fallback chain: capex-row H prop → all-row H prop → H_CONSTRUCTION
+        # capex fallback: capex-row H prop → H_CONSTRUCTION (建設與設施). Do NOT borrow the project's
+        # opex H mix for its capex — that mislabels capital spend (a museum's 起館/藝術品) as its
+        # operating categories (餐飲/人工). Capex with no row-level H defaults to 建設.
         cap_src = "capex-rows"
         if not cap_props:
-            allh = {}
-            for src in ("cap_h", "opx_h"):
-                for h, a in d.get(src, {}).items():
-                    allh[h] = allh.get(h, 0.0) + a
-            cap_props = _h_props(allh)
-            cap_src = "all-rows" if cap_props else "default→建設"
-            if not cap_props:
-                cap_props = {"H_CONSTRUCTION": 1.0}
+            cap_props = {"H_CONSTRUCTION": 1.0}; cap_src = "default→建設"
         opx_src = "opex-rows"
         if not opx_props:
             opx_props = {"H_OTHER": 1.0}; opx_src = "default→其他"
