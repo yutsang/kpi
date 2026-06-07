@@ -92,7 +92,7 @@ def main():
         "opex": _opx.values,
         "total": (_pay + _cap + _opx).values,
     })
-    out = out[out["序號"].str.len() > 0]
+    out = out[out["序號"].str.contains(r"\d", na=False)]   # 序號 must have a digit (drops 合計/blank rows)
     # drop subtotal/total rows (名稱 contains 合計/小計/總)
     out = out[~out["名稱"].str.contains("合計|小計|總計|total", case=False, na=False)]
     res = ROOT / "results"; res.mkdir(exist_ok=True)
