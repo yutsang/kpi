@@ -72,14 +72,44 @@ def main():
         top = " | ".join(f"{v}({n})" for v, n in s[s.ne("")].value_counts().head(6).items())
         L.append(f"   {c:14s} nb{nb:5.1f}%  uniq{s[s.ne('')].nunique():>4}  {top[:110]}")
 
-    # (C) ng_label × vertical_label crosstab
-    ngc = next((c for c in ("ng_label", "ng_code") if c in df.columns), None)
-    if ngc and "vertical_label" in df.columns:
-        L.append(f"\n## (C) {ngc} × vertical_label  (Σ|amt| M) — off-diagonal = mismatch:")
-        ct = pd.crosstab(df[ngc].astype("string").fillna("(blank)"),
-                         df["vertical_label"].astype("string").fillna("(blank)"),
-                         values=a.abs(), aggfunc="sum").fillna(0) / 1e6
-        L.append(ct.round(1).to_string())
+    # (C) computed ng_code (SAME normalize_ng_code the report uses) × vertical_label crosstab
+    #     + eligibility audit: how much $ sits on a vertical NOT in its NG eligible_verticals
+    #     (= the "掛錯枝" out-of-bucket strays the step4 fix targets — should be ~0 after fix).
+    try:
+        import sys as _s; _s.path.insert(0, str(ROOT / "src"))
+        from kpi.lib.conf import load_categories
+        from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code
+        cats = load_categories()
+        ng_cats = cats.get("ng_categories") or {}
+        elig = {ng: (set(d.get("eligible_verticals") or []) | {"V_OTHER"}) for ng, d in ng_cats.items()}
+        nglab = {ng: d.get("label", ng) for ng, d in ng_cats.items()}
+        ngcol = next((c for c in ("項目類型", "項目性質", "ng11_category") if c in df.columns
+                      and df[c].astype("string").fillna("").ne("").any()), None)
+        if ngcol and "vertical_id" in df.columns:
+            s = df[ngcol].astype("string").fillna("")
+            ngc = s.map({x: (normalize_ng_code(x, cats) or "") for x in s.unique()})
+            vid = df["vertical_id"].astype("string").fillna("")
+            vlab = df["vertical_label"].astype("string").fillna("(blank)") if "vertical_label" in df.columns else vid
+            ng_disp = ngc.map(lambda n: f"{n} {nglab.get(n, '')}" if n else "(未解)")
+            L.append(f"\n## (C) computed ng_code ({ngcol}) × vertical_label  (Σ|amt| M):")
+            ct = pd.crosstab(ng_disp, vlab, values=a.abs(), aggfunc="sum").fillna(0) / 1e6
+            L.append(ct.round(1).to_string())
+            # eligibility audit
+            oob = pd.Series(False, index=df.index)
+            for ng in elig:
+                oob |= ngc.eq(ng) & vid.ne("") & ~vid.isin(elig[ng])
+            oob_amt = a.abs()[oob].sum()
+            L.append(f"\n## (C2) OUT-OF-BUCKET (V not in its NG eligible_verticals): "
+                     f"{int(oob.sum()):,} rows  Σ|amt|={oob_amt:,.0f} ({oob_amt/tot*100:.1f}% of yr)")
+            if oob.any():
+                bad = (df[oob].assign(_ng=ng_disp[oob], _amt=a.abs()[oob])
+                       .groupby(["_ng", "vertical_id"])["_amt"].sum().sort_values(ascending=False))
+                for (ng, v), x in bad.head(25).items():
+                    L.append(f"   {str(ng)[:22]:22s} {str(v):24s} {x/1e6:8.2f}M")
+        else:
+            L.append("\n## (C) no usable NG column found for computed crosstab")
+    except Exception as e:
+        L.append(f"\n## (C) computed-NG crosstab failed: {e}")
 
     # (D) 20 sample mismatched rows
     proj = next((c for c in ("Project Name", "project_name", "項目名稱") if c in df.columns), None)
