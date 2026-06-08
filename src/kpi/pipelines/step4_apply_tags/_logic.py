@@ -127,6 +127,65 @@ def _apply_row_overrides(df, rules, id_col, src_col, account_code_col, account_d
     return n_total
 
 
+def _enforce_vertical_eligibility(df, spec, cols, cats):
+    """Reset vertical_id to the row's NG canonical default when the tagged vertical is NOT in
+    that NG's eligible_verticals list.
+
+    V↔NG is many-to-many — a vertical can be eligible under several NGs (e.g. V_PROPERTY_UPGRADE
+    sits in almost every NG; V_FOOD_EVENT in NG5/NG8/NG9). So this fixes ONLY genuine out-of-bucket
+    strays (V not eligible under the row's NG); eligible cross-NG verticals are kept untouched.
+    It re-applies the same `ng_categories[NG].eligible_verticals` constraint step2 imposes on the
+    LLM — needed because project-name keyword overrides / per-project broadcast can land a vertical
+    that bypasses that constraint (e.g. a 文化藝術/NG5 row keyworded to V_THEME_PARK, NG7-only).
+
+    The row's NG is resolved from cols['ng11_category'] via the SAME normalize_ng_code the report
+    (build_master_audit) uses, so step4's NG == report's NG → the pivot becomes diagonal.
+
+    conf-gated by `vertical_enforce_eligibility: {periods: [...], ng_default: {NGn: V_*}}`.
+    `periods` (optional) restricts the fix to rows whose report_period starts with one of the
+    prefixes (e.g. ["23"]). `ng_default` (optional) sets each NG's reset target; missing NGs fall
+    back to that NG's first eligible vertical.
+    """
+    from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code
+
+    ng_cats = cats.get("ng_categories") or {}
+    if not ng_cats:
+        return 0
+    eligible = {ng: (set(d.get("eligible_verticals") or []) | {"V_OTHER"})
+                for ng, d in ng_cats.items()}
+    ng_default = dict(spec.get("ng_default") or {})
+
+    # period gate (e.g. only the "23" bucket) — leave other buckets untouched
+    gate = pd.Series(True, index=df.index)
+    periods = spec.get("periods")
+    if periods and "report_period" in df.columns:
+        rp = df["report_period"].astype("string").fillna("")
+        gate = pd.Series(False, index=df.index)
+        for p in periods:
+            gate |= rp.str.startswith(str(p))
+
+    # per-row NG — resolved exactly like the report (normalize_ng_code on the ng11_category col)
+    ng_col = df[cols["ng11_category"]].astype("string").fillna("")
+    uniq = {s: (normalize_ng_code(s, cats) or "") for s in ng_col.unique()}
+    ng_code = ng_col.map(uniq)
+    v = df["vertical_id"].astype("string").fillna("")
+
+    n_fix = 0
+    for ng, elig in eligible.items():
+        tgt = ng_default.get(ng)
+        if not tgt:
+            ev = ng_cats[ng].get("eligible_verticals") or []
+            tgt = ev[0] if ev else "V_OTHER"
+        sel = gate & ng_code.eq(ng) & v.ne("") & ~v.isin(elig)
+        if sel.any():
+            frm = df.loc[sel, "vertical_id"].value_counts().to_dict()
+            df.loc[sel, "vertical_id"] = tgt
+            df.loc[sel, "vertical_source"] = "eligibility"
+            n_fix += int(sel.sum())
+            print(f"  eligibility {ng}: {int(sel.sum()):,} out-of-bucket → {tgt}  (from {frm})", flush=True)
+    return n_fix
+
+
 def main():
     cfg = load_config()
     cats = load_categories()
@@ -226,6 +285,15 @@ def main():
                                 cols["account_code"], cols["account_desc"])
     if n_rv or n_rh:
         print(f"Row-level overrides applied: vertical={n_rv:,} rows  horizontal={n_rh:,} rows", flush=True)
+
+    # ----- Enforce vertical eligibility against the row's NG (conf-gated) -----
+    # Catch verticals that landed outside their NG's eligible set (keyword overrides / per-project
+    # broadcast bypass the step2 eligibility constraint). Many-to-many aware: only true strays move.
+    _vee = _ent_cfg.get("vertical_enforce_eligibility") if isinstance(_ent_cfg, dict) else None
+    if _vee:
+        n_ee = _enforce_vertical_eligibility(df, _vee, cols, cats)
+        if n_ee:
+            print(f"Vertical eligibility enforced: {n_ee:,} out-of-bucket rows reset", flush=True)
 
     # ----- Labels (after overrides) -----
     df["vertical_label"] = df["vertical_id"].map(lambda v: vlookup.get(v, {}).get("label", "") if v else "")
