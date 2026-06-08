@@ -141,17 +141,22 @@ def _enforce_vertical_eligibility(df, spec, cols, cats):
     The row's NG is resolved from cols['ng11_category'] via the SAME normalize_ng_code the report
     (build_master_audit) uses, so step4's NG == report's NG → the pivot becomes diagonal.
 
-    conf-gated by `vertical_enforce_eligibility: {periods: [...], ng_default: {NGn: V_*}}`.
+    conf-gated by `vertical_enforce_eligibility: {periods: [...], ng_default: {NGn: V_*},
+    demote_verticals: [V_*]}`.
     `periods` (optional) restricts the fix to rows whose report_period starts with one of the
     prefixes (e.g. ["23"]). `ng_default` (optional) sets each NG's reset target; missing NGs fall
-    back to that NG's first eligible vertical.
+    back to that NG's first eligible vertical. `demote_verticals` (optional) lists generic/fallback
+    verticals (e.g. V_PROPERTY_UPGRADE) that, although eligible_verticals lists them under many NGs,
+    should NOT be kept when a specific theme is present — they are treated as out-of-bucket and reset
+    to the NG primary (so a 海上旅遊/NG10 row tagged the generic V_PROPERTY_UPGRADE → V_MARITIME).
     """
     from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code
 
     ng_cats = cats.get("ng_categories") or {}
     if not ng_cats:
         return 0
-    eligible = {ng: (set(d.get("eligible_verticals") or []) | {"V_OTHER"})
+    demote = set(spec.get("demote_verticals") or [])
+    eligible = {ng: ((set(d.get("eligible_verticals") or []) | {"V_OTHER"}) - demote)
                 for ng, d in ng_cats.items()}
     ng_default = dict(spec.get("ng_default") or {})
 
