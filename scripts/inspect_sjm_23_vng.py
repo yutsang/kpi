@@ -113,7 +113,7 @@ def main():
 
     # (D) 20 sample mismatched rows
     proj = next((c for c in ("Project Name", "project_name", "項目名稱") if c in df.columns), None)
-    cols = [c for c in (proj, "項目性質", ngc, "vertical_id", "vertical_label") if c and c in df.columns]
+    cols = [c for c in (proj, "項目類型", "vertical_id", "vertical_label") if c and c in df.columns]
     if cols:
         L.append(f"\n## (D) 20 sample rows  [{', '.join(cols)}]:")
         for _, r in df[cols].head(20).iterrows():
