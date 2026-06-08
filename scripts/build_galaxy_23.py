@@ -57,21 +57,21 @@ def SOURCES(pw_set):
     S = [
         dict(src="SAP_opex",     fk="sap", sheet="SAP Record-non gaming", hdr=0, capex="Opex",
              amt="Reported Amount (MOP)", ac="Account Code", ad="Account Description",
-             proj="Project", ng="NG11 Category", desc="Description"),
+             proj="Project", ng="NG11 Category", desc="Description.1"),   # .1 = per-txn (8431 distinct), not coarse Description(298)
         dict(src="SAP_capex_ng", fk="sap", sheet="SAP Record-non gaming", hdr=0, capex="Capx",
              amt="Reported Amount (MOP).1", ac="Account Code.1", ad="Account Description.1",
-             proj="Project", ng="NG11 Category", desc="Description.1"),
+             proj="Project", ng="NG11 Category", desc="Description.2"),   # capex block's own desc; non-zero-amt filtered globally
         dict(src="PMS",          fk="sap", sheet="PMS", hdr=0, capex="Opex",
              amt="Amount (MOP)", ac="Account Code", ad="Account Description",
-             proj="Project", ng="NG11 Category", desc="Description"),
+             proj="Project", ng="NG11 Category", desc="Description.1"),   # 1068 distinct vs coarse Description(64)
         dict(src="VMS",          fk="sap", sheet="VMS", hdr=3, capex="Opex",
-             amt="Amount (Reported Amt) (MOP)", ac=None, ad="Descriptions",
-             proj="Project", ng="NG11 Category", desc="Voucher Discroption"),
+             amt="Amount (Reported Amt) (MOP)", ac="Profit Center", ad="Descriptions",
+             proj="Project", ng="NG11 Category", desc="Voucher Discroption"),   # ac was None→blank (sig collapse); Profit Center is the real GL cost-center
         dict(src="VR",           fk="sap", sheet="VR Record", hdr=3, capex="Opex",
-             amt="Amount", ac=None, ad="Description.1", proj="Project", ng="NG11 Category", desc="Description"),
+             amt="Amount", ac="profit center", ad="Description", proj="Project", ng="NG11 Category", desc="Description"),   # ac None→blank fixed; ad Description.1='Staff Costs'(1 val→2 sigs)→Description(198 staff roles)
         dict(src="Simulation",   fk="sap", sheet="Simulation&Pre-Opening", hdr=2, capex="Opex",
              amt="Reported Amount", ac="Account Code", ad="Account Description",
-             proj=None, ng=None, desc="Event Descriptions", filt=("Nature", "Simulation"), cat="項目類別"),
+             proj=None, ng=None, desc="Description", filt=("Nature", "Simulation")),   # desc Event Descriptions(23)→Description(886); cat 項目類別 leak removed
         dict(src="PreOpening",   fk="sap", sheet="Simulation&Pre-Opening", hdr=2, capex="Opex",
              amt="Reported Amount", ac="Account Code", ad="Account Description",
              proj=None, ng=None, desc="Description", filt=("Nature", "Pre-Opening")),
@@ -170,6 +170,14 @@ def build(files, pw):
 
     if not out: print("nothing built"); return
     allr = pd.concat(out, ignore_index=True)
+    # Drop zero/blank-amount rows. SAP_capex_ng emits one row per SAP_opex row but only ~6% carry a
+    # capex (.1) amount → ~60k zero rows that collapse to a giant blank signature. Zeros add nothing
+    # to the total (tie to Cover preserved). Also normalise nan/None text in NG/account fields.
+    _amt = pd.to_numeric(allr["Reported Amount(MOP)"], errors="coerce").fillna(0.0)
+    allr = allr[_amt != 0].reset_index(drop=True)
+    for _c in ("NG11 Category", "Account Code", "Account Description", "Description"):
+        if _c in allr.columns:
+            allr[_c] = allr[_c].astype(str).str.strip().replace({"nan": "", "None": "", "NaN": ""})
     allr["Submit No."] = ["G23_" + str(i) for i in range(len(allr))]   # unique_id, no project name
     res = ROOT / "data" / "galaxy" / "raw"   # step0 resolves yearly_sources from raw/ (NOT raw/2023/)
     res.mkdir(parents=True, exist_ok=True)
