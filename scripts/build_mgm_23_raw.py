@@ -54,15 +54,19 @@ def seq(v):
 
 
 # (file, sheet, header, amount, project_col, account, hier, source, capex, ng_const)
+# account_desc(hier) = 'Spend Category as Worktag' (the FINE GL spend category, e.g.
+# '36505 - Consultant Fees' / '12035 - Fresh Vegetable' — WD1 117 / COGS 71 / CAPEX 26 distinct).
+# The old 'Ledger Hierarchy Level 4/5' was a coarse rollup (1–12 distinct) → collapsed thousands of
+# rows onto ~131 signatures. Output column name stays 'Ledger Hierarchy Level 5' (conf reads that).
 SOURCES = [
-    ("OPEX.xlsx",       "WD#1",       0, "Amount",             "承批公司項目序號", "Ledger Account", "Ledger Hierarchy Level 4", "WD1",     "Opex", None),
-    ("OPEX.xlsx",       "WD#2",       0, "Amount",             "承批公司項目序號", "Ledger Account", "Ledger Hierarchy Level 4", "WD2",     "Opex", None),
-    ("OPEX.xlsx",       "WD#3",       0, "Amount",             "承批公司項目序號", "Ledger Account", "Ledger Hierarchy Level 4", "WD3",     "Opex", None),
-    ("OPEX.xlsx",       "PM",         0, "MOP",                "承批公司項目序號", "Item Type",      "Promotion Type",           "PM",      "Opex", None),
-    ("OPEX.xlsx",       "Data#4",     0, "Debit minus Credit", "Project Plan Task", "Ledger Account", "Ledger Hierarchy Level 5", "Payroll", "Opex", None),
-    ("OPEX.xlsx",       "Data#5",     0, "Debit minus Credit", "Project Plan Task", "Ledger Account", "Ledger Hierarchy Level 5", "Payroll", "Opex", None),
-    ("OPEX.xlsx",       "Data#6",     0, "Amount",             "Project",           "Ledger Account", "Ledger Account Summary (Level 5)", "WD4_COGS", "Opex", None),
-    ("CAPEX.xlsx",      "JL details", 0, "Debit minus Credit", "Project Code",      "Ledger Account", "Ledger Hierarchy Level 5", "CAPEX",   "Capex", None),
+    ("OPEX.xlsx",       "WD#1",       0, "Amount",             "承批公司項目序號", "Ledger Account", "Spend Category as Worktag", "WD1",     "Opex", None),
+    ("OPEX.xlsx",       "WD#2",       0, "Amount",             "承批公司項目序號", "Ledger Account", "Spend Category as Worktag", "WD2",     "Opex", None),
+    ("OPEX.xlsx",       "WD#3",       0, "Amount",             "承批公司項目序號", "Ledger Account", "Spend Category as Worktag", "WD3",     "Opex", None),
+    ("OPEX.xlsx",       "PM",         0, "MOP",                "承批公司項目序號", "Item Type",      "Promotion Type",            "PM",      "Opex", None),
+    ("OPEX.xlsx",       "Data#4",     0, "Debit minus Credit", "Project Plan Task", "Ledger Account", "Spend Category as Worktag", "Payroll", "Opex", None),
+    ("OPEX.xlsx",       "Data#5",     0, "Debit minus Credit", "Project Plan Task", "Ledger Account", "Spend Category as Worktag", "Payroll", "Opex", None),
+    ("OPEX.xlsx",       "Data#6",     0, "Amount",             "Project",           "Ledger Account", "Spend Category as Worktag", "WD4_COGS", "Opex", None),
+    ("CAPEX.xlsx",      "JL details", 0, "Debit minus Credit", "Project Code",      "Ledger Account", "Spend Category as Worktag", "CAPEX",   "Capex", None),
 ]
 GAMING_TABS = ["項目1", "項目2", "項目3", "項目5", "項目6", "項目7", "項目8", "項目9", "項目10"]
 
@@ -117,7 +121,7 @@ def main():
                 continue
             c_amt = col(df, "Debit minus Credit")
             if not c_amt: continue
-            c_ac = col(df, "Ledger Account"); c_hi = col(df, "Ledger Hierarchy Level 5")
+            c_ac = col(df, "Ledger Account"); c_hi = col(df, "Spend Category as Worktag")
             sub = pd.DataFrame({
                 "Debit minus Credit": num(df[c_amt]).values,
                 "Source": "CAPEX",
