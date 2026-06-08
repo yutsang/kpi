@@ -125,8 +125,11 @@ def build(files, pw):
             "Capex/Opex": s["capex"],
             "Project": (df[proj].astype(str).str.replace(r"[\r\n]+", " ", regex=True).str.strip().values
                         if proj else (f"{s['src']}",) * n),
-            "NG11 Category": (df[ng].astype(str).str.strip().values if ng
-                              else (df[cat].astype(str).str.strip().values if cat else ("",) * n)),
+            # NG ONLY from a real NG11 Category column. NEVER fall back to 項目類別 (a project-nature
+            # label, not an NG0–NG11 code) — that polluted the NG column. Blank NG is left for
+            # step0 ng11_fill / section_inference, not faked with a non-NG taxonomy value.
+            "NG11 Category": (df[ng].astype(str).str.strip().replace({"nan": "", "None": ""}).values
+                              if ng else ("",) * n),
             "Account Code": df[ac].astype(str).str.strip().values if ac else "",
             "Account Description": df[ad].astype(str).str.strip().values if ad else f"{s['src']}",
             "Description": df[desc].astype(str).str.strip().values if desc else f"{s['src']}",
