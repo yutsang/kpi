@@ -53,6 +53,67 @@ def seq(v):
     return "項目" + m.group(0) if m else ""
 
 
+# ── CAPEX (JL details) Project Code → NG bridge ───────────────────────────────
+# JL details carries no 承批公司項目序號, so leadsheet_ng_map() can't reach it → Section.1 blank
+# (2.65B 未分類). Assign Section.1 (NG theme) by a fallback chain: the row's own 項目性質, else the
+# 'Confirmed to include' sheet (To-Government-Grouping / CER-code → Section# 7.x), else 項目號→leadsheet,
+# else the gaming flag. Section# 7.x maps to NGx (7.1 吸引外國客源 … 7.11 其他).
+SECTION_TO_NG = {
+    "Gaming": "博彩娛樂場場地的優化", "7.1": "吸引外國客源", "7.2": "會議展覽", "7.3": "娛樂表演",
+    "7.4": "體育盛事", "7.5": "文化藝術", "7.6": "健康養生", "7.7": "主題遊樂",
+    "7.8": "美食之都", "7.9": "社區旅遊", "7.10": "海上旅遊", "7.11": "其他",
+}
+
+
+def _sec_to_ng(s):
+    s = str(s).strip()
+    if s in SECTION_TO_NG: return SECTION_TO_NG[s]
+    if s.startswith("7.8"): return "美食之都"        # 7.8-IC / 7.8-GIC variants
+    m = re.match(r"7\.(\d+)", s)
+    return SECTION_TO_NG.get(f"7.{m.group(1)}", "") if m else ""
+
+
+def confirmed_maps():
+    """CAPEX.xlsx 'Confirmed to include': Project Code → NG theme, To-Government-Grouping → NG theme."""
+    fp = find_file("CAPEX.xlsx"); code2ng, group2ng = {}, {}
+    if not fp: return code2ng, group2ng
+    try:
+        ci = pd.read_excel(fp, sheet_name="Confirmed to include", header=0, dtype=object)
+    except Exception:
+        return code2ng, group2ng
+    cer = next((c for c in ci.columns if "CER" in str(c)), None)
+    sec = next((c for c in ci.columns if "Section" in str(c)), None)
+    gov = next((c for c in ci.columns if "Government" in str(c)), None)
+    for _, r in ci.iterrows():
+        ng = _sec_to_ng(r[sec]) if sec else ""
+        if not ng: continue
+        if cer and str(r[cer]).strip() not in ("", "nan"):
+            code2ng.setdefault(str(r[cer]).strip().split()[0], ng)
+        if gov and str(r[gov]).strip() not in ("", "nan"):
+            group2ng.setdefault(str(r[gov]).strip(), ng)
+    return code2ng, group2ng
+
+
+def capex_section1(df, ngmap):
+    """Section.1 for CAPEX JL details — fallback: 項目性質 > KPMG-项目(grouping) > Project Code(Confirmed)
+    > Non-gaming项目號(leadsheet) > Gaming/non-gaming flag. Leaves '' when no signal (manual / 其他)."""
+    code2ng, group2ng = confirmed_maps()
+
+    def s(name):
+        c = col(df, name)
+        return df[c].astype(str).str.strip() if c else pd.Series("", index=df.index)
+
+    nat = s("項目性質").replace({"nan": "", "None": ""})
+    kpmg = s("KPMG-项目").map(lambda v: group2ng.get(v, ""))
+    code = s("Project Code").str.split().str[0].map(lambda v: code2ng.get(v, ""))
+    nong = s("Non-gaming项目號").map(lambda k: ngmap.get(seq(k), "") if str(k).strip() not in ("", "nan", "0") else "")
+    gn = s("Gaming/non-gaming").str.lower().map(lambda v: "博彩娛樂場場地的優化" if v == "gaming" else "")
+    ng = nat
+    for nxt in (kpmg, code, nong, gn):
+        ng = ng.where(ng.ne(""), nxt)
+    return ng
+
+
 # (file, sheet, header, amount, project_col, account, hier, source, capex, ng_const)
 # account_desc(hier) = 'Spend Category as Worktag' (the FINE GL spend category, e.g.
 # '36505 - Consultant Fees' / '12035 - Fresh Vegetable' — WD1 117 / COGS 71 / CAPEX 26 distinct).
@@ -101,6 +162,11 @@ def main():
         pj = (df[c_pr].map(seq) if (c_pr and proj in ("承批公司項目序號",)) else
               (df[c_pr].astype(str).str.strip() if c_pr else ""))
         ng = pj.map(lambda k: ngmap.get(k, "")) if hasattr(pj, "map") else ""
+        if src == "CAPEX":          # JL details: Project Code not in leadsheet → bridge via Confirmed/signals
+            ng = capex_section1(df, ngmap)
+            _nb = ng.astype(str).str.strip()
+            print(f"   [CAPEX NG bridge] {int(_nb.ne('').sum()):,}/{len(ng):,} rows got Section.1 "
+                  f"({_nb.ne('').mean()*100:.0f}%)")
         sub = pd.DataFrame({
             "Debit minus Credit": num(df[c_amt]).values,
             "Source": src,
