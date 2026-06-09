@@ -21,9 +21,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 TABS = [
     dict(sheet="項目明細賬capex", capex="Capex", amt="Val/COArea Crcy",
-         proj="Project Code with Project Name", ac="Cost Element", ad="Cost element descr.", v="項目性質"),
+         proj="Project Code with Project Name", ac="Cost Element", ad="Cost element descr.", v="項目性質",
+         desc="Description", vendor="AC1 Vendor Name", wbs="CO object name"),
     dict(sheet="項目明細賬opex", capex="Opex", amt="Amount in local currency",
-         proj="项目名称", ac="G/L Account", ad="GL account description", v="項目性質"),
+         proj="项目名称", ac="G/L Account", ad="GL account description", v="項目性質",
+         desc="Description", vendor="AC1 vendor name", wbs="WBS Name"),
 ]
 
 
@@ -57,12 +59,17 @@ def main():
         except Exception as e:
             print(f"[{t['sheet']}] read failed: {e}"); continue
         amt, proj, ac, ad, v = (col(df, t[k]) for k in ("amt", "proj", "ac", "ad", "v"))
+        de, ve, wb = (col(df, t.get(k, "")) for k in ("desc", "vendor", "wbs"))
         if not amt: print(f"[{t['sheet']}] amount {t['amt']!r} missing"); continue
+        _clean = lambda c: df[c].astype(str).str.replace(r"[\r\n]+", " ", regex=True).str.strip().values
         sub = pd.DataFrame({
             "Val/COArea Crcy": num(df[amt]).values,
-            "Project Name": df[proj].astype(str).str.replace(r"[\r\n]+", " ", regex=True).str.strip().values if proj else "",
+            "Project Name": _clean(proj) if proj else "",
             "Cost Element": df[ac].astype(str).str.strip().values if ac else "",
             "Cost element descr.": df[ad].astype(str).str.strip().values if ad else "",
+            "Description": _clean(de) if de else "",            # 摘要（推廣費可按此 row 拆）
+            "AC1 Vendor Name": df[ve].astype(str).str.strip().values if ve else "",  # 供應商
+            "WBS Name": _clean(wb) if wb else "",               # 用途明細（opex WBS Name / capex CO object name）
             "項目性質": df[v].astype(str).str.strip().values if v else "",
             "Capex/Opex": t["capex"],
             "Fiscal Year": 2023,
