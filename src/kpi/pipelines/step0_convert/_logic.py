@@ -88,9 +88,31 @@ def _combine_cols(df: pd.DataFrame, source_cols: list[str], target_col: str, lab
     return df
 
 
+def _coalesce_into(df: pd.DataFrame, target_col: str, fallback_cols: list[str], label: str) -> pd.DataFrame:
+    """Where target_col is BLANK, fill from the first non-blank fallback col (coalesce, NOT concat).
+    Used e.g. Melco: a WD/capex block has blank ledger_account_id but the real account is in
+    'WD Ledger Account' — so account_code is recovered without overwriting populated rows."""
+    if target_col not in df.columns:
+        df[target_col] = ""
+    avail = [c for c in fallback_cols if c in df.columns]
+    if not avail:
+        print(f"  WARNING: {label}_fallback_cols {fallback_cols!r} — none found, keeping '{target_col}'")
+        return df
+    _blanks = ["", "nan", "None", "NaN", "<NA>", "NaT"]
+    n0 = int(df[target_col].astype("string").fillna("").str.strip().isin(_blanks).sum())
+    for c in avail:
+        blank = df[target_col].astype("string").fillna("").str.strip().isin(_blanks)
+        if not blank.any():
+            break
+        df.loc[blank, target_col] = df.loc[blank, c].astype("string").fillna("").str.strip().values
+    n1 = int(df[target_col].astype("string").fillna("").str.strip().isin(_blanks).sum())
+    print(f"  Coalesced {label} ← {avail}: filled {n0 - n1:,} blank '{target_col}' rows ({n1:,} still blank)")
+    return df
+
+
 def _apply_col_combinations(df: pd.DataFrame, cols: dict) -> pd.DataFrame:
     """Apply project_name_cols / description_cols / account_code_cols / amount_cols
-    to a single DataFrame using the given (possibly year-specific) cols dict."""
+    + account_code_fallback_cols / account_desc_fallback_cols (coalesce) using the cols dict."""
     project_name_cols = cols.get("project_name_cols") or []
     if project_name_cols:
         df = _combine_cols(df, project_name_cols, cols.get("project", "project"), "project")
@@ -100,6 +122,12 @@ def _apply_col_combinations(df: pd.DataFrame, cols: dict) -> pd.DataFrame:
     account_code_cols = cols.get("account_code_cols") or []
     if account_code_cols:
         df = _combine_cols(df, account_code_cols, cols.get("account_code", "account_code"), "account_code")
+    acc_fb = cols.get("account_code_fallback_cols") or []
+    if acc_fb:
+        df = _coalesce_into(df, cols.get("account_code", "account_code"), acc_fb, "account_code")
+    ad_fb = cols.get("account_desc_fallback_cols") or []
+    if ad_fb:
+        df = _coalesce_into(df, cols.get("account_desc", "account_desc"), ad_fb, "account_desc")
     amount_cols = cols.get("amount_cols") or []
     if amount_cols:
         available = [c for c in amount_cols if c in df.columns]
