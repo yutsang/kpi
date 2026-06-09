@@ -269,7 +269,13 @@ def main():
             # step0.5 split audit columns (present when year_split configured)
             "report_period", "split_ratio", "split_source", "original_amount",
         ]
-        all_row_cols = base_cols + extra_cols_appended + tag_cols
+        # audit_detail_cols raw columns → keep them in kpi_report so the deliverable / Tableau can
+        # expose the uniform detail layers (科目層級/科目明細/發票號/PO號/成本中心/WBS子項/憑證號).
+        # They live in tagged_rows but aren't in `cols`, so step5 used to trim them away.
+        _ent = ((cfg.get("_master") or {}).get("companies") or {}).get(company, {}) or {}
+        _adc = cfg.get("audit_detail_cols") or _ent.get("audit_detail_cols") or {}
+        _detail_raw = [r for v in _adc.values() for r in (v if isinstance(v, list) else [v]) if r]
+        all_row_cols = base_cols + extra_cols_appended + _detail_raw + tag_cols
         all_row_cols = [c for c in all_row_cols if c and c in df.columns]
         # Dedupe (preserve order) — pandas to_parquet fails on duplicate col names
         seen = set()
