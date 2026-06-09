@@ -134,6 +134,22 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
                 df[tgt] = df[src].astype(str).str.strip().str.replace(r"[\r\n]+", " ", regex=True)
                 keep.append(tgt)
 
+        # ── UNIFORM extra detail layers (audit_detail_cols) — same set as the audit 大表 so Tableau can
+        #    drill每條數 at consistent granularity (科目層級/科目明細/發票號/PO號/成本中心/WBS子項/憑證號).
+        _adc = cfg.get("audit_detail_cols") or {}
+        for _name in ("科目層級", "科目明細", "發票號", "PO號", "成本中心", "WBS子項", "憑證號"):
+            _raws = _adc.get(_name, "")
+            _raws = _raws if isinstance(_raws, list) else ([_raws] if _raws else [])
+            _ser = pd.Series("", index=df.index, dtype=object)
+            for _r in _raws:
+                _src = (_r if _r in df.columns
+                        else next((c for c in df.columns if str(c).strip() == str(_r).strip()), None))
+                if _src:
+                    _v = df[_src].astype(str).str.strip().str.replace(r"[\r\n]+", " ", regex=True)
+                    _ser = _ser.where(~_ser.isin(["", "nan", "None"]), _v)
+            df[_name] = _ser.replace({"nan": "", "None": ""})
+            keep.append(_name)
+
         # Add merged project_full = "project | subproject | description" for Tableau display
         merge_parts = []
         for c in ("project", "subproject", "description"):
