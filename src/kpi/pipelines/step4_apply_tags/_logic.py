@@ -334,7 +334,21 @@ def main():
     if _cf:
         _allow = set(_cf.get("allow") or ["H_CONSTRUCTION", "H_EQUIP", "H_LABOR"])
         _to = _cf.get("to", "H_CONSTRUCTION")
-        _force = (df["final_capex_opex"].eq("Capex") & df["horizontal_id"].notna()
+        _is_capex = df["final_capex_opex"].eq("Capex")
+        # (1) per-vertical capex routing — for capex rows of these verticals, set H by the project's
+        # nature regardless of the generic deposit-account default (e.g. V_GAMING_EQUIP 博彩設備→設施採購;
+        # 娛樂表演/體育/會展 場地優化改造→活動場地). Runs on CAPEX rows only → never touches opex 廣告.
+        _routed = pd.Series(False, index=df.index)
+        _tbv = _cf.get("to_by_vertical") or {}
+        for _vid, _h in _tbv.items():
+            _m = _is_capex & df["vertical_id"].astype("string").fillna("").eq(_vid)
+            if _m.any():
+                df.loc[_m, "horizontal_id"] = _h
+                df.loc[_m, "horizontal_label"] = hlookup.get(_h, {}).get("label", "")
+                _routed |= _m
+                print(f"capex_force[{_vid}] → {_h}: {int(_m.sum()):,} rows", flush=True)
+        # (2) generic: any OTHER capex row whose H is not in allow → `to` (default 建設)
+        _force = (_is_capex & ~_routed & df["horizontal_id"].notna()
                   & df["horizontal_id"].ne("") & ~df["horizontal_id"].isin(_allow))
         if _force.any():
             print(f"capex_force → {_to}: {int(_force.sum()):,} rows "
