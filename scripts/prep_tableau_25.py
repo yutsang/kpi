@@ -70,13 +70,14 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
             for c in df.columns:
                 if c.strip()==amt_cfg.strip(): amt_cfg=c; break
 
-        # Filter to year 24 + 25 buckets (both years for Tableau)
+        # Filter to year 23 + 24 + 25 buckets (all three delivery years for Tableau)
         ycol = next((c for c in ("report_period","report_year","Yr related","years") if c in df.columns), None)
         if ycol:
             s = df[ycol].astype(str)
-            df = df[s.str.startswith("24") | s.str.startswith("25") | (s == "Yr 2024") | (s == "Yr 2025")].copy()
+            df = df[s.str.startswith("23") | s.str.startswith("24") | s.str.startswith("25")
+                    | (s == "Yr 2023") | (s == "Yr 2024") | (s == "Yr 2025")].copy()
         if len(df)==0:
-            print(f"⚠️  {ent}: 0 rows for year 24/25 — skip"); continue
+            print(f"⚠️  {ent}: 0 rows for year 23/24/25 — skip"); continue
 
         # Add columns
         df["entity"] = ent
