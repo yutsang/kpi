@@ -67,6 +67,11 @@ SUBPROJECT_CANDIDATES = (
 )
 YEAR_CANDIDATES = ("report_period", "report_year", "Yr related", "years")
 
+# Uniform EXTRA identifying layers appended to every entity's flat 大表 (same column set for all 6,
+# blank where an entity lacks a layer). Base account_code/account_desc/description/vendor are already
+# in JE_KEEP; each entity's conf maps these via `audit_detail_cols: {<這裡的名>: <raw col>}`.
+DETAIL_EXTRA = ["科目層級", "科目明細", "發票號", "PO號", "成本中心", "WBS子項", "憑證號"]
+
 
 def _cn_kw(s) -> str:
     """Robust 中文 項目性質 → NG (keyword; label variants). '' if none. 博彩 before 娛樂; 非博彩 = noise."""
@@ -268,6 +273,23 @@ def build(ent: str, com: str, categories: dict, combined: bool = False) -> Path 
         if tgt not in df.columns:
             df[tgt] = ""
 
+    # ── UNIFORM extra detail layers (audit_detail_cols) — same canonical column set for ALL 6
+    #    entities so the project team can identify each JE row at consistent granularity. The base 4
+    #    (account_code/account_desc/description/vendor) are already above; this adds the deeper layers
+    #    (科目層級 / 科目明細 / 發票號 / PO號 / 成本中心 / WBS子項 / 憑證號). Each entity's conf maps the ones
+    #    it has via `audit_detail_cols: {<統一名>: <raw col>}`; unmapped → blank (column still present).
+    _adc = cfg.get("audit_detail_cols") or {}
+    for _name in DETAIL_EXTRA:
+        _raws = _adc.get(_name, "")
+        _raws = _raws if isinstance(_raws, list) else ([_raws] if _raws else [])
+        _ser = pd.Series("", index=df.index, dtype=object)
+        for _r in _raws:           # coalesce first non-blank — raw col names differ by year within an entity
+            _src = _fuzzy_col(df, _r)
+            if _src and _src in df.columns:
+                _v = df[_src].astype(str).str.strip().str.replace(r"[\r\n]+", " ", regex=True)
+                _ser = _ser.where(~_ser.isin(["", "nan", "None"]), _v)
+        df[_name] = _ser.replace({"nan": "", "None": ""})
+
     # ── SJM only: internal-resource (admin) comp ─────────────────────────────────
     # subproject = WBS element + CO object name; drop 是否計入內部資源=Y from main and
     # re-inject the comp from Admin Comp summary v2 (BKD + combined) — runs INSIDE the
@@ -332,14 +354,14 @@ def build(ent: str, com: str, categories: dict, combined: bool = False) -> Path 
     written = []
     XLSX_LIMIT = 1_048_574  # Excel max rows per sheet
 
-    # Flat JE-row column order
+    # Flat JE-row column order (+ uniform extra detail layers so the project team can identify每條數)
     JE_KEEP = ["entity", "year_bucket", "amount_mop",
                "ng_code", "ng_label", "ng_scope",
                "vertical_id", "vertical_label",
                "horizontal_id", "horizontal_label",
                "final_capex_opex", "row_type",
                "unique_id", "project", "subproject",
-               "account_code", "account_desc", "description", "vendor"]
+               "account_code", "account_desc", "description", "vendor"] + DETAIL_EXTRA
 
     df["entity"] = ent
     if "ng_scope" not in df.columns:
