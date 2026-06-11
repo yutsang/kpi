@@ -91,17 +91,24 @@ def main():
             df.columns = [str(c).strip() for c in df.columns]
             ac, ad = _s(df, "account_code"), _s(df, "account_desc")
             dn = _s(df, "description").map(normalize_description)
+            # code-core: melco unified account_code = "621710 : Contract Performers" but the OLD
+            # key was the bare ledger id — strip the " : name" suffix so acct-level can match.
+            ac_core = ac.str.split(" : ").str[0].str.split("：").str[0].str.strip()
             sig = ac + "|" + ad + "|" + dn
             sig_dash = ac.str.replace("-", " ", regex=False) + "|" + ad + "|" + dn
+            sig_core = ac_core + "|" + ad + "|" + dn
             akey = ac + "|" + ad
             akey_dash = ac.str.replace("-", " ", regex=False) + "|" + ad
+            akey_core = ac_core + "|" + ad
             amt = _amt(df).abs()
             n, a = len(df), float(amt.sum())
             tot_rows += n; tot_amt += a
             m_full = sig.isin(old_keys)
-            m_dash = m_full | sig_dash.isin(old_keys)
-            m_tag = sig.isin(old_tagged_keys) | sig_dash.isin(old_tagged_keys)
-            m_acct = m_dash | akey.isin(acct_unanimous) | akey_dash.isin(acct_unanimous)
+            m_dash = m_full | sig_dash.isin(old_keys) | sig_core.isin(old_keys)
+            m_tag = (sig.isin(old_tagged_keys) | sig_dash.isin(old_tagged_keys)
+                     | sig_core.isin(old_tagged_keys))
+            m_acct = (m_dash | akey.isin(acct_unanimous) | akey_dash.isin(acct_unanimous)
+                      | akey_core.isin(acct_unanimous))
             for key, m in (("full", m_full), ("dash", m_dash), ("tagged", m_tag), ("acct", m_acct)):
                 cov[key][0] += int(m.sum()); cov[key][1] += float(amt[m].sum())
             L.append(f"   {f.name:22s} rows={n:>7,}  new-sigs={sig[~m_dash].nunique():>6,}  "
