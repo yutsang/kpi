@@ -31,7 +31,15 @@ from kpi.lib.text import normalize_description  # noqa: E402  (same normalizer a
 RAW_DIR = ROOT / "data" / "raw"
 ENTITIES = {"galaxy": "company_1", "sjm": "company_2", "wynn": "company_3",
             "vml": "company_4", "melco": "company_5", "mgm": "company_6"}
-NEED = ["account_code", "account_desc", "description", "amount_mop", "adjusted_amount"]
+# unified name first; native fallbacks (sjm tie file keeps SAP col names)
+CANDS = {
+    "account_code": ["account_code", "Cost Element", "GL account", "G/L Account"],
+    "account_desc": ["account_desc", "Cost element descr.", "GL account description"],
+    "description": ["description", "Description"],
+    "amount_mop": ["amount_mop", "Val/COArea Crcy", "Amount in local currency"],
+    "adjusted_amount": ["adjusted_amount"],
+    "adjustment_amount": ["adjustment_amount", "調整金額"],
+}
 
 
 def _amt(df):
@@ -82,13 +90,26 @@ def main():
         uncovered = []
         for f in files:
             try:
-                hdr = pd.read_excel(f, nrows=0) if f.suffix != ".csv" else pd.read_csv(f, nrows=0)
-                use = [c for c in NEED if c in [str(x).strip() for x in hdr.columns]]
-                df = (pd.read_excel(f, dtype=str, usecols=use) if f.suffix != ".csv"
+                if f.suffix != ".csv":
+                    _sheets = pd.ExcelFile(f).sheet_names
+                    _sh = next((s for s in _sheets if str(s).strip().lower() == "data"), 0)
+                    hdr = pd.read_excel(f, sheet_name=_sh, nrows=0)
+                else:
+                    _sh = None
+                    hdr = pd.read_csv(f, nrows=0)
+                _cols = [str(x).strip() for x in hdr.columns]
+                ren = {}
+                for canon, cands in CANDS.items():
+                    src = next((c for c in cands if c in _cols), None)
+                    if src:
+                        ren[src] = canon
+                use = list(ren.keys())
+                df = (pd.read_excel(f, sheet_name=_sh, dtype=str, usecols=use) if f.suffix != ".csv"
                       else pd.read_csv(f, dtype=str, usecols=use))
+                df.columns = [str(c).strip() for c in df.columns]
+                df = df.rename(columns=ren)
             except Exception as e:
                 L.append(f"   !! {f.name}: read error {e}"); continue
-            df.columns = [str(c).strip() for c in df.columns]
             ac, ad = _s(df, "account_code"), _s(df, "account_desc")
             dn = _s(df, "description").map(normalize_description)
             # code-core: melco unified account_code = "621710 : Contract Performers" but the OLD
