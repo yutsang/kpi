@@ -393,6 +393,13 @@ def main():
             df_y = _apply_row_filter(df_y, ycfg.get("exclude_where"), mode="exclude")
             df_y = _apply_row_filter(df_y, ycfg.get("include_where"), mode="include")
 
+            # Optional exact-duplicate drop (conf-gated per yearly source) — e.g. sjm tie
+            # workbook's data tab stacked the 25年項目 rows twice (13,996 exact dups).
+            if ycfg.get("drop_exact_duplicates"):
+                _b = len(df_y)
+                df_y = df_y.drop_duplicates()
+                print(f"  drop_exact_duplicates: {_b:,} → {len(df_y):,} rows", flush=True)
+
             # Build effective cols = root + per-year override
             year_cols = {**root_cols, **(ycfg.get("columns_override") or {})}
 
