@@ -66,8 +66,20 @@ def main():
             ren[src] = canon
     df = df.rename(columns=ren)
     L.append(f"sheet={sh!r}  rows={len(df):,}  renamed: {ren}")
+    L.append(f"ALL columns: {list(df.columns)}")
     missing = [k for k in CMAP if k not in df.columns and k != "adjusted_amount"]
     L.append(f"canonical missing: {missing}")
+
+    # ── duplication check (project totals ≈ 2× old → suspect stacked rows) ───
+    uid = _s(df, "unique_id")
+    L.append(f"\n## dup check: unique_id non-blank={int(uid.ne('').sum()):,} distinct={uid[uid.ne('')].nunique():,}")
+    vc = uid[uid.ne("")].value_counts()
+    dup_ids = vc[vc > 1]
+    L.append(f"   unique_id 出現>1次: {len(dup_ids):,} ids / {int(dup_ids.sum()):,} rows")
+    for i, (k, n) in enumerate(dup_ids.head(5).items()):
+        L.append(f"      e.g. id={str(k)[:30]} ×{n}")
+    full_dup = df.duplicated(keep=False)
+    L.append(f"   exact full-row duplicates: {int(full_dup.sum()):,} rows")
 
     mop = _num(_s(df, "amount_mop")).fillna(0.0)
     adj = _num(_s(df, "adjustment_amount")).fillna(0.0)
@@ -128,12 +140,22 @@ def main():
                            "amt": oa[rp.eq("25")]}).groupby("p")["amt"].sum()
         # new side: 25 bucket = whichever year-values the golden check says — show ALL for now
         ng = pd.DataFrame({"p": pc.replace("", "(blank)"), "amt": fin}).groupby("p")["amt"].sum()
-        j = pd.concat([og.rename("old25"), ng.rename("new_all")], axis=1).fillna(0.0)
-        j["delta"] = j["new_all"] - j["old25"]
-        j = j.reindex(j["delta"].abs().sort_values(ascending=False).index)
-        L.append("\n## project_code delta (old bucket25 vs NEW全檔 — 等 bucket map 落實先細分):")
+        # dedup view: drop exact-duplicate rows, recompute per-code
+        d2 = df.drop_duplicates()
+        mop2 = _num(_s(d2, "amount_mop")).fillna(0.0)
+        adj2 = _num(_s(d2, "adjustment_amount")).fillna(0.0)
+        fin2 = mop2 + adj2
+        pc2 = _s(d2, "project_code").str.replace(r"\.0$", "", regex=True)
+        ng2 = pd.DataFrame({"p": pc2.replace("", "(blank)"), "amt": fin2}).groupby("p")["amt"].sum()
+        L.append(f"\n   dedup: {len(df):,} → {len(d2):,} rows  Σ後 {fin.sum()/1e6:,.2f}M → {fin2.sum()/1e6:,.2f}M")
+        j = pd.concat([og.rename("old25"), ng.rename("new_all"), ng2.rename("new_dedup")], axis=1).fillna(0.0)
+        j["ratio"] = j["new_all"] / j["old25"].where(j["old25"] != 0)
+        j["delta_dedup"] = j["new_dedup"] - j["old25"]
+        j = j.reindex(j["new_all"].abs().sort_values(ascending=False).index)
+        L.append("\n## project_code: old25 vs new vs new-dedup (ratio≈2 → stacked twice):")
         for p, r in j.head(15).iterrows():
-            L.append(f"   code={str(p)[:12]:12s} old25={r['old25']/1e6:9.2f}M  new={r['new_all']/1e6:9.2f}M  Δ={r['delta']/1e6:9.2f}M")
+            L.append(f"   code={str(p)[:8]:8s} old25={r['old25']/1e6:9.2f}M  new={r['new_all']/1e6:9.2f}M "
+                     f"(×{r['ratio']:.3f})  dedup={r['new_dedup']/1e6:9.2f}M  Δdedup={r['delta_dedup']/1e6:8.2f}M")
         L.append(f"   matched codes(兩邊都有數): {int(((j['old25']!=0)&(j['new_all']!=0)).sum())} / old {int((j['old25']!=0).sum())} / new {int((j['new_all']!=0).sum())}")
     else:
         L.append("   (old 承批公司項目序號 col not found — project-level skip)")
