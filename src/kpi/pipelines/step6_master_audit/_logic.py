@@ -25,6 +25,14 @@ if str(_SCRIPTS) not in sys.path:
 
 
 def main():
+    # DEFAULT: skip the heavy 投資方向 xlsx build (parquet from step5 is the canonical output).
+    # Set KPI_EXPORT_XLSX=1 when the Excel deliverables are actually needed.
+    import os
+    if not os.environ.get("KPI_EXPORT_XLSX", "").strip():
+        print("  [skip] master-audit xlsx (default parquet-only). Set KPI_EXPORT_XLSX=1 to "
+              "generate 投資方向 Excel deliverables.", flush=True)
+        return
+
     cfg = load_config()
     folder = cfg["company"]["folder"]      # e.g. galaxy
     com = cfg["company"]["code"]           # e.g. company_1

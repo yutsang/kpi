@@ -222,18 +222,27 @@ def main():
                 amount_col="amount", count_by_index=per_period_counts,
             )
 
-    with pd.ExcelWriter(out_kpi_only, engine="xlsxwriter") as kpi_writer:
-        master.to_excel(kpi_writer, sheet_name="1_master_pivot_all")
-        for p, pv in period_pivots.items():
-            pv.to_excel(kpi_writer, sheet_name=f"1_master_pivot_{p}")
-    print(f"  Wrote {out_kpi_only.name}  ({out_kpi_only.stat().st_size/1e3:.0f} KB)")
+    # DEFAULT: parquet only — no Excel. Set KPI_EXPORT_XLSX=1 to also write kpi_only.xlsx
+    # + kpi_report.xlsx pivots (and step6 master-audit 投資方向 xlsx).
+    import os
+    import contextlib
+    _export_xlsx = bool(os.environ.get("KPI_EXPORT_XLSX", "").strip())
+    if _export_xlsx:
+        with pd.ExcelWriter(out_kpi_only, engine="xlsxwriter") as kpi_writer:
+            master.to_excel(kpi_writer, sheet_name="1_master_pivot_all")
+            for p, pv in period_pivots.items():
+                pv.to_excel(kpi_writer, sheet_name=f"1_master_pivot_{p}")
+        print(f"  Wrote {out_kpi_only.name}  ({out_kpi_only.stat().st_size/1e3:.0f} KB)")
+    else:
+        print("  [step5] kpi_only.xlsx SKIPPED (parquet only). Set KPI_EXPORT_XLSX=1 for Excel.", flush=True)
 
-    with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
-        # ----- Sheet 1: Master pivot (all periods combined) -----
-        master.to_excel(writer, sheet_name="1_master_pivot_all")
-        # Per-period pivots (one sheet each)
-        for p, pv in period_pivots.items():
-            pv.to_excel(writer, sheet_name=f"1_master_pivot_{p}")
+    with (pd.ExcelWriter(out_path, engine="xlsxwriter") if _export_xlsx else contextlib.nullcontext()) as writer:
+        if _export_xlsx:
+            # ----- Sheet 1: Master pivot (all periods combined) -----
+            master.to_excel(writer, sheet_name="1_master_pivot_all")
+            # Per-period pivots (one sheet each)
+            for p, pv in period_pivots.items():
+                pv.to_excel(writer, sheet_name=f"1_master_pivot_{p}")
 
         # (top-500 audit sheet removed — the full 大表 / parquet below already hold every row.)
 
@@ -275,7 +284,9 @@ def main():
         _ent = ((cfg.get("_master") or {}).get("companies") or {}).get(company, {}) or {}
         _adc = cfg.get("audit_detail_cols") or _ent.get("audit_detail_cols") or {}
         _detail_raw = [r for v in _adc.values() for r in (v if isinstance(v, list) else [v]) if r]
-        all_row_cols = base_cols + extra_cols_appended + _detail_raw + tag_cols
+        # unified-raw reference cols (項目組 own labels — reference only, OUR taxonomy is canonical)
+        _ref_cols = [c for c in ("pt_class_H", "pt_class_V") if c in df.columns]
+        all_row_cols = base_cols + extra_cols_appended + _detail_raw + _ref_cols + tag_cols
         all_row_cols = [c for c in all_row_cols if c and c in df.columns]
         # Dedupe (preserve order) — pandas to_parquet fails on duplicate col names
         seen = set()
@@ -325,7 +336,6 @@ def main():
         # DEFAULT: skip per-year all_rows xlsx (heavy I/O during iteration).
         # parquet (above) is always written and is the canonical source.
         # For delivery, set KPI_GENERATE_ALL_ROWS_XLSX=1 to generate xlsx files.
-        import os
         if not os.environ.get("KPI_GENERATE_ALL_ROWS_XLSX", "").strip():
             print(f"  [step5] all_rows xlsx SKIPPED (parquet only). Set KPI_GENERATE_ALL_ROWS_XLSX=1 for delivery.", flush=True)
             return
@@ -373,7 +383,8 @@ def main():
             except Exception as e:
                 print(f"  [warn] xlsx write failed for {yr}: {e}", flush=True)
 
-    print(f"\nWrote {out_path}  ({out_path.stat().st_size/1e6:.1f} MB)")
+    if out_path.exists():
+        print(f"\nWrote {out_path}  ({out_path.stat().st_size/1e6:.1f} MB)")
     print(f"  Total amount: {grand_total:,.0f}  rows: {n_rows:,}")
     print(f"\nFor PowerBI: use {src.name} as fact table.")
     print(f"  Matrix visual: rows=vertical_label, columns=horizontal_label, values=Sum(Reported Amount(MOP))")

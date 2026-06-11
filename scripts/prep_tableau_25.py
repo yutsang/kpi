@@ -138,8 +138,9 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
         # ── UNIFORM extra detail layers (audit_detail_cols) — same set as the audit 大表 so Tableau can
         #    drill每條數 at consistent granularity (科目層級/科目明細/發票號/PO號/成本中心/WBS子項/憑證號).
         _adc = cfg.get("audit_detail_cols") or {}
-        for _name in ("科目層級", "科目明細", "發票號", "PO號", "成本中心", "WBS子項", "憑證號"):
-            _raws = _adc.get(_name, "")
+        _default_raw = {"項目組H": "pt_class_H", "項目組V": "pt_class_V"}   # unified-raw reference labels
+        for _name in ("科目層級", "科目明細", "發票號", "PO號", "成本中心", "WBS子項", "憑證號", "項目組H", "項目組V"):
+            _raws = _adc.get(_name, "") or _default_raw.get(_name, "")
             _raws = _raws if isinstance(_raws, list) else ([_raws] if _raws else [])
             _ser = pd.Series("", index=df.index, dtype=object)
             for _r in _raws:
