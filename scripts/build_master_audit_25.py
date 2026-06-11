@@ -70,7 +70,10 @@ YEAR_CANDIDATES = ("report_period", "report_year", "Yr related", "years")
 # Uniform EXTRA identifying layers appended to every entity's flat 大表 (same column set for all 6,
 # blank where an entity lacks a layer). Base account_code/account_desc/description/vendor are already
 # in JE_KEEP; each entity's conf maps these via `audit_detail_cols: {<這裡的名>: <raw col>}`.
-DETAIL_EXTRA = ["科目層級", "科目明細", "發票號", "PO號", "成本中心", "WBS子項", "憑證號"]
+DETAIL_EXTRA = ["科目層級", "科目明細", "發票號", "PO號", "成本中心", "WBS子項", "憑證號", "項目組H", "項目組V"]
+# unified-raw reference labels (項目組 own H/V — reference only); same col name for every entity,
+# so no per-entity conf mapping needed (conf audit_detail_cols can still override).
+DETAIL_DEFAULT_RAW = {"項目組H": "pt_class_H", "項目組V": "pt_class_V"}
 
 
 def _cn_kw(s) -> str:
@@ -280,7 +283,7 @@ def build(ent: str, com: str, categories: dict, combined: bool = False) -> Path 
     #    it has via `audit_detail_cols: {<統一名>: <raw col>}`; unmapped → blank (column still present).
     _adc = cfg.get("audit_detail_cols") or {}
     for _name in DETAIL_EXTRA:
-        _raws = _adc.get(_name, "")
+        _raws = _adc.get(_name, "") or DETAIL_DEFAULT_RAW.get(_name, "")
         _raws = _raws if isinstance(_raws, list) else ([_raws] if _raws else [])
         _ser = pd.Series("", index=df.index, dtype=object)
         for _r in _raws:           # coalesce first non-blank — raw col names differ by year within an entity

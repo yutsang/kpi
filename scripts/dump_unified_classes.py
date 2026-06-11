@@ -31,7 +31,7 @@ EXPECTED = ["unique_id", "entity", "year", "capex_opex", "account_code", "accoun
             "pt_class_H", "pt_class_V", "vendor", "source", "comp_type", "is_labor",
             "is_internal", "take_flag2", "netoff_flag", "remark"]
 KEY_CATS = ["year", "entity", "capex_opex", "ng_theme", "source", "comp_type",
-            "is_labor", "is_internal", "take_flag2", "netoff_flag"]
+            "is_labor", "is_internal", "take_flag2", "take_flag", "netoff_flag"]
 SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".tsv")
 
 
