@@ -28,8 +28,8 @@ EXPECTED = ["unique_id", "entity", "year", "capex_opex", "account_code", "accoun
             "amount_mop", "adjustment_amount", "adjusted_amount", "adjust_lv1", "adjust_lv2",
             "pt_class_H", "pt_class_V", "vendor", "source", "comp_type", "is_labor",
             "is_internal", "take_flag2", "netoff_flag", "remark"]
-KEY_CATS = ["capex_opex", "ng_theme", "pt_class_H", "pt_class_V", "source", "comp_type",
-            "is_labor", "is_internal", "take_flag2", "netoff_flag"]
+KEY_CATS = ["year", "entity", "capex_opex", "ng_theme", "pt_class_H", "pt_class_V", "source",
+            "comp_type", "is_labor", "is_internal", "take_flag2", "netoff_flag"]
 
 
 def _read(path, sheet):
@@ -57,6 +57,7 @@ def main():
     if a.entity and "entity" in df.columns:
         df = df[df["entity"].astype("string").str.strip().str.lower() == a.entity.lower()]
     ent = a.entity or (df["entity"].dropna().iloc[0] if "entity" in df.columns and len(df) else "unified")
+    stem = Path(a.file).stem + (f"_{a.entity}" if a.entity else "")   # per-file output names (3 files/entity must not overwrite)
     L = [f"# dump_unified_classes — {ent}  rows={len(df):,}  file={a.file}"]
 
     miss = [c for c in EXPECTED if c not in df.columns]
@@ -90,7 +91,7 @@ def main():
             L.append(f"   {str(k)[:34]:34s} {int(r['n']):>7} rows  {r['amt']/1e6:>10.3f}M")
 
     # small TSV for mapping (distinct pt_class_H / pt_class_V / ng_theme)
-    out = ROOT / "results" / f"unified_{ent}_classes.tsv"; out.parent.mkdir(exist_ok=True)
+    out = ROOT / "results" / f"unified_{stem}_classes.tsv"; out.parent.mkdir(exist_ok=True)
     rows = []
     for axis in ("pt_class_V", "pt_class_H", "ng_theme"):
         if axis not in df.columns: continue
@@ -99,7 +100,7 @@ def main():
         for v, r in g.sort_values("amt", key=lambda x: x.abs(), ascending=False).iterrows():
             rows.append({"axis": axis, "value": v, "rows": int(r["n"]), "amount_mop": round(r["amt"]), "our_tag": ""})
     pd.DataFrame(rows).to_csv(out, sep="\t", index=False)
-    txt = ROOT / "results" / f"unified_{ent}_profile.txt"
+    txt = ROOT / "results" / f"unified_{stem}_profile.txt"
     txt.write_text("\n".join(L), encoding="utf-8")
     print("\n".join(L)); print(f"\nwrote {txt.relative_to(ROOT)}  +  {out.relative_to(ROOT)} (paste this one back)")
 
