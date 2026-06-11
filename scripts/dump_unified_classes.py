@@ -1,19 +1,20 @@
-"""Profile the NEW unified raw (one file, same 27 cols for every entity) and dump the SMALL
-things needed to (a) sanity-check the manual build and (b) build the pt_class → our-taxonomy map
-WITHOUT re-running the LLM. Output is tiny (distinct values only) → never hits the 2MB email cap.
+"""Profile the NEW unified raw (same 27 cols for every entity) and dump the SMALL things
+needed to (a) sanity-check the manual build and (b) plan the conf/tagging — WITHOUT moving
+the data. Outputs are tiny (text + distinct values only) → never hits the 2MB email cap.
 
-What it prints / writes:
-  • columns present vs expected (missing / extra)
-  • per key-col: blank% + distinct count + top values (rows + Σadjusted_amount)
-  • unique_id: rows vs distinct (flags if NOT row-unique — repeats = document-level)
-  • amount tie: Σamount_mop vs Σadjusted_amount, and rows where adjusted ≠ amount_mop+adjustment
-  • take_flag2 / netoff_flag value distribution (Σ amount each) — which rows are INCLUDED
-  • results/unified_<ent>_classes.tsv : distinct pt_class_H / pt_class_V / ng_theme + count + Σamt
-        (THIS is the file I use to write the column_map; paste it back — it is < ~100 KB)
+DEFAULT: loops EVERY data file in data/raw (xlsx/csv/tsv, skips ~$ temp files) and writes
+TWO combined outputs:
+  results/unified_ALL_profile.txt   ← per file: sheet names, cols missing/extra, blank%,
+                                       year/entity/take_flag2/netoff distributions,
+                                       unique_id dup check, amount tie
+  results/unified_ALL_classes.tsv   ← per file: distinct pt_class_H / pt_class_V / ng_theme
+                                       + rows + Σ adjusted (reference-mapping + 對數)
+Paste BOTH back.
 
 Run (Windows):
-  python scripts/dump_unified_classes.py --file data\unified\vml.xlsx
-  python scripts/dump_unified_classes.py --file data\unified\all.csv --entity vml   # filter one entity from a combined file
+  python scripts/dump_unified_classes.py                      # loop data\raw
+  python scripts/dump_unified_classes.py --file data\raw\vml_u_2025.xlsx   # just one
+  python scripts/dump_unified_classes.py --entity vml         # loop, filter entity col
 """
 from __future__ import annotations
 import argparse, sys
@@ -23,86 +24,110 @@ except Exception: pass
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
+RAW_DIR = ROOT / "data" / "raw"
 EXPECTED = ["unique_id", "entity", "year", "capex_opex", "account_code", "account_desc",
             "description", "project_code", "dicj_code", "project", "subproject", "ng_theme",
             "amount_mop", "adjustment_amount", "adjusted_amount", "adjust_lv1", "adjust_lv2",
             "pt_class_H", "pt_class_V", "vendor", "source", "comp_type", "is_labor",
             "is_internal", "take_flag2", "netoff_flag", "remark"]
-KEY_CATS = ["year", "entity", "capex_opex", "ng_theme", "pt_class_H", "pt_class_V", "source",
-            "comp_type", "is_labor", "is_internal", "take_flag2", "netoff_flag"]
-
-
-def _read(path, sheet):
-    p = Path(path)
-    if p.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
-        return pd.read_excel(p, sheet_name=sheet or 0, dtype=str)
-    return pd.read_csv(p, sep="\t" if p.suffix.lower() == ".tsv" else ",", dtype=str)
+KEY_CATS = ["year", "entity", "capex_opex", "ng_theme", "source", "comp_type",
+            "is_labor", "is_internal", "take_flag2", "netoff_flag"]
+SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".tsv")
 
 
 def _amt(df, col):
     if col not in df.columns:
         return pd.Series(0.0, index=df.index)
-    return pd.to_numeric(df[col].astype("string").str.replace(",", "", regex=False), errors="coerce").fillna(0.0)
+    return pd.to_numeric(df[col].astype("string").str.replace(",", "", regex=False),
+                         errors="coerce").fillna(0.0)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--file", required=True)
-    ap.add_argument("--sheet", default=None)
-    ap.add_argument("--entity", default=None)
-    ap.add_argument("--top", type=int, default=40)
-    a = ap.parse_args()
-    df = _read(a.file, a.sheet)
+def profile_one(path: Path, sheet, entity, top):
+    """Returns (lines, classes_rows)."""
+    L = [f"\n{'='*76}\n## FILE: {path.name}"]
+    sheets = None
+    if path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        try:
+            sheets = pd.ExcelFile(path).sheet_names
+            L.append(f"   sheets: {sheets}  (reading {sheet or sheets[0]!r})")
+        except Exception as e:
+            L.append(f"   !! cannot open: {e}"); return L, []
+        df = pd.read_excel(path, sheet_name=sheet or 0, dtype=str)
+    else:
+        df = pd.read_csv(path, sep="\t" if path.suffix.lower() == ".tsv" else ",", dtype=str)
     df.columns = [str(c).strip() for c in df.columns]
-    if a.entity and "entity" in df.columns:
-        df = df[df["entity"].astype("string").str.strip().str.lower() == a.entity.lower()]
-    ent = a.entity or (df["entity"].dropna().iloc[0] if "entity" in df.columns and len(df) else "unified")
-    stem = Path(a.file).stem + (f"_{a.entity}" if a.entity else "")   # per-file output names (3 files/entity must not overwrite)
-    L = [f"# dump_unified_classes — {ent}  rows={len(df):,}  file={a.file}"]
+    if entity and "entity" in df.columns:
+        df = df[df["entity"].astype("string").str.strip().str.lower() == entity.lower()]
+    L.append(f"   rows={len(df):,}")
 
     miss = [c for c in EXPECTED if c not in df.columns]
     extra = [c for c in df.columns if c not in EXPECTED]
-    L.append(f"\n## columns: {len(df.columns)} present")
-    L.append(f"   MISSING ({len(miss)}): {miss}")
-    L.append(f"   EXTRA   ({len(extra)}): {extra}")
+    L.append(f"   MISSING cols ({len(miss)}): {miss}")
+    L.append(f"   EXTRA   cols ({len(extra)}): {extra}")
 
     adj = _amt(df, "adjusted_amount")
-    L.append("\n## unique_id traceability:")
-    if "unique_id" in df.columns:
-        nun = df["unique_id"].astype('string').fillna("").ne("").sum()
-        dis = df["unique_id"].nunique(dropna=True)
-        L.append(f"   rows={len(df):,}  non-blank={nun:,}  distinct={dis:,}  "
-                 f"→ {'ROW-UNIQUE ✓' if dis >= len(df) else f'NOT row-unique (repeats; document-level)'}")
-    L.append("\n## amount tie:")
     am, ad = _amt(df, "amount_mop"), _amt(df, "adjustment_amount")
-    L.append(f"   Σamount_mop={am.sum():,.0f}  Σadjustment={ad.sum():,.0f}  Σadjusted_amount={adj.sum():,.0f}")
-    bad = ((am + ad) - adj).abs() > 1
-    L.append(f"   rows where adjusted ≠ amount_mop+adjustment: {int(bad.sum()):,}")
+    if "unique_id" in df.columns:
+        s = df["unique_id"].astype("string").fillna("").str.strip()
+        L.append(f"   unique_id: non-blank={s.ne('').sum():,}  distinct={s[s.ne('')].nunique():,}"
+                 f"  → {'ROW-UNIQUE' if s[s.ne('')].nunique() >= s.ne('').sum() else 'document-level (repeats)'}")
+    L.append(f"   Σamount_mop={am.sum():,.0f}  Σadjustment={ad.sum():,.0f}  Σadjusted={adj.sum():,.0f}"
+             f"  | rows adjusted≠mop+adj: {int((((am+ad)-adj).abs() > 1).sum()):,}")
 
     for c in KEY_CATS:
         if c not in df.columns:
-            L.append(f"\n## {c}: MISSING"); continue
+            L.append(f"   -- {c}: MISSING"); continue
         s = df[c].astype("string").fillna("").str.strip()
-        blank = s.eq("").mean() * 100
         vc = pd.DataFrame({"k": s.replace("", "(blank)"), "amt": adj}).groupby("k").agg(
             n=("amt", "size"), amt=("amt", "sum")).sort_values("amt", key=lambda x: x.abs(), ascending=False)
-        L.append(f"\n## {c}: blank={blank:.0f}%  distinct={s.nunique()} ")
-        for k, r in vc.head(a.top).iterrows():
-            L.append(f"   {str(k)[:34]:34s} {int(r['n']):>7} rows  {r['amt']/1e6:>10.3f}M")
+        tops = "  ".join(f"{k}={int(r['n'])}r/{r['amt']/1e6:.1f}M" for k, r in vc.head(8).iterrows())
+        L.append(f"   -- {c}: blank={s.eq('').mean()*100:.0f}%  distinct={s.nunique()}  | {tops}")
 
-    # small TSV for mapping (distinct pt_class_H / pt_class_V / ng_theme)
-    out = ROOT / "results" / f"unified_{stem}_classes.tsv"; out.parent.mkdir(exist_ok=True)
     rows = []
     for axis in ("pt_class_V", "pt_class_H", "ng_theme"):
         if axis not in df.columns: continue
         s = df[axis].astype("string").fillna("").str.strip().replace("", "(blank)")
         g = pd.DataFrame({"v": s, "amt": adj}).groupby("v").agg(n=("amt", "size"), amt=("amt", "sum"))
         for v, r in g.sort_values("amt", key=lambda x: x.abs(), ascending=False).iterrows():
-            rows.append({"axis": axis, "value": v, "rows": int(r["n"]), "amount_mop": round(r["amt"]), "our_tag": ""})
-    pd.DataFrame(rows).to_csv(out, sep="\t", index=False)
-    txt = ROOT / "results" / f"unified_{stem}_profile.txt"
+            rows.append({"file": path.name, "axis": axis, "value": v,
+                         "rows": int(r["n"]), "amount": round(r["amt"])})
+    return L, rows
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dir", default=str(RAW_DIR))
+    ap.add_argument("--file", default=None, help="profile just this one file")
+    ap.add_argument("--sheet", default=None)
+    ap.add_argument("--entity", default=None)
+    ap.add_argument("--top", type=int, default=40)
+    a = ap.parse_args()
+
+    if a.file:
+        files = [Path(a.file)]
+    else:
+        d = Path(a.dir)
+        files = sorted(p for p in d.iterdir()
+                       if p.suffix.lower() in SUFFIXES and not p.name.startswith("~$"))
+        if not files:
+            print(f"X no data files found in {d}"); return
+    L = [f"# dump_unified_classes — {len(files)} file(s) from {a.dir}"]
+    all_rows = []
+    for p in files:
+        try:
+            lines, rows = profile_one(p, a.sheet, a.entity, a.top)
+        except Exception as e:
+            lines, rows = [f"\n{'='*76}\n## FILE: {p.name}\n   !! ERROR: {e}"], []
+        L += lines; all_rows += rows
+
+    outdir = ROOT / "results"; outdir.mkdir(exist_ok=True)
+    txt = outdir / "unified_ALL_profile.txt"
+    tsv = outdir / "unified_ALL_classes.tsv"
     txt.write_text("\n".join(L), encoding="utf-8")
-    print("\n".join(L)); print(f"\nwrote {txt.relative_to(ROOT)}  +  {out.relative_to(ROOT)} (paste this one back)")
+    pd.DataFrame(all_rows).to_csv(tsv, sep="\t", index=False)
+    print("\n".join(L))
+    print(f"\nwrote {txt.relative_to(ROOT)}  ({txt.stat().st_size/1e3:.0f} KB)")
+    print(f"wrote {tsv.relative_to(ROOT)}  ({tsv.stat().st_size/1e3:.0f} KB)   ← paste BOTH back")
 
 
 if __name__ == "__main__":
