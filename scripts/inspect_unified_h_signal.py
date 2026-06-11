@@ -73,7 +73,7 @@ def main():
         df.columns = [str(c).strip() for c in df.columns]
         ac, ad, de = _s(df, "account_code"), _s(df, "account_desc"), _s(df, "description")
         dn = de.map(normalize_description)
-        informative = dn.map(_informative)
+        informative = dn.map(_informative).astype(bool)   # .map on string dtype keeps string dtype → mean() blows up
         amt = _amt(df).abs()
         tot_a = float(amt.sum()) or 1.0
 
