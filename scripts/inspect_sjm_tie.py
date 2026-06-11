@@ -24,6 +24,8 @@ NEW = ROOT / "data" / "raw" / "sjm_2025.xlsx"
 TR = ROOT / "data" / "sjm" / "interim" / "company_2_tagged_rows.parquet"
 CONF = ROOT / "conf" / "company_2" / "parameters.yml"
 Y2B = {"2025": "25", "2024": "25_24SY", "2023": "25_23SY"}
+# 項目組 golden (user 2026-06-12, 單位萬 MOP → ×1e4)
+GOLDEN = {"25": 124661e4, "25_24SY": 63594e4, "25_23SY": 7971e4}
 
 
 def _num(s):
@@ -44,9 +46,20 @@ def main():
     if not NEW.exists():
         L.append(f"X {NEW} missing"); _w(L); return
     xls = pd.ExcelFile(NEW)
-    L.append(f"sheets: {xls.sheet_names} (reading first)")
-    df = pd.read_excel(NEW, sheet_name=0, dtype=str)
-    df.columns = [str(c).strip() for c in df.columns]
+    # prefer the 'data' sheet; else first sheet that has rows AND a 'year' column
+    # (Sheet1 is an empty header-only tab; '25'/'24'/'23' are pivot tabs)
+    order = ([s for s in xls.sheet_names if str(s).strip().lower() == "data"]
+             + [s for s in xls.sheet_names if str(s).strip().lower() != "data"])
+    df, used = None, None
+    for sh in order:
+        cand = pd.read_excel(NEW, sheet_name=sh, dtype=str)
+        cand.columns = [str(c).strip() for c in cand.columns]
+        if len(cand) and "year" in cand.columns:
+            df, used = cand, sh
+            break
+    if df is None:
+        L.append(f"X no sheet with rows + 'year' col (sheets={xls.sheet_names})"); _w(L); return
+    L.append(f"sheets: {xls.sheet_names}  → reading {used!r}")
     L.append(f"rows={len(df):,}  cols={len(df.columns)}")
     L.append(f"columns: {list(df.columns)}")
 
@@ -60,14 +73,17 @@ def main():
     blankf = fin.isna()
     L.append(f"   調整後空白行: {int(blankf.sum()):,}  (若全空=2025 慣例用調整前)")
 
-    yr = _s(df, "year")
-    L.append("\n## bucket 拆分 (year→bucket) — Σ調整前 / Σ調整 / Σ調整後 / rows:")
+    yr = _s(df, "year").str.replace(r"\.0$", "", regex=True)
+    L.append("\n## bucket 拆分 (year→bucket) — Σ調整前 / Σ調整 / Σ調整後 vs GOLDEN:")
     for y, b in Y2B.items():
         m = yr.eq(y)
+        gold = GOLDEN.get(b, 0.0)
         if not int(m.sum()):
-            L.append(f"   {b:8s} (year={y}): 0 rows"); continue
+            L.append(f"   {b:8s} (year={y}): 0 rows   golden={gold/1e6:,.2f}M"); continue
+        nf = float(fin[m].fillna(mop[m]).sum())
         L.append(f"   {b:8s} (year={y}): {int(m.sum()):>7,}r  前={mop[m].sum()/1e6:10.2f}M  "
-                 f"調={adj[m].sum()/1e6:10.2f}M  後={fin[m].sum()/1e6:10.2f}M")
+                 f"調={adj[m].sum()/1e6:10.2f}M  後={nf/1e6:10.2f}M  "
+                 f"golden={gold/1e6:9.2f}M  Δ={(nf-gold)/1e6:8.2f}M")
     oth = ~yr.isin(list(Y2B))
     if int(oth.sum()):
         L.append(f"   !! year 出 Y2B 範圍: {int(oth.sum())} rows  values={sorted(yr[oth].unique())[:8]}")
@@ -98,12 +114,13 @@ def main():
     oa = pd.to_numeric(old[amt_col], errors="coerce").fillna(0.0)
     rp = old["report_period"].astype("string").fillna("")
     L.append(f"   old rows={len(old):,}  (admin-comp 69.4M 喺 audit 先注入,唔喺呢度)")
-    L.append(f"   {'bucket':8s} {'OLD Σ':>12s} {'NEW Σ調整後':>12s} {'delta':>12s}")
+    L.append(f"   {'bucket':8s} {'OLD Σ':>12s} {'NEW Σ調整後':>12s} {'old-vs-new':>12s} {'OLDΔgolden':>12s}")
     for y, b in Y2B.items():
         o = float(oa[rp.eq(b)].sum())
         nm = yr.eq(y)
         n = float(fin[nm].fillna(mop[nm]).sum())
-        L.append(f"   {b:8s} {o/1e6:>11.2f}M {n/1e6:>11.2f}M {(n-o)/1e6:>11.2f}M")
+        g = GOLDEN.get(b, 0.0)
+        L.append(f"   {b:8s} {o/1e6:>11.2f}M {n/1e6:>11.2f}M {(n-o)/1e6:>11.2f}M {(o-g)/1e6:>11.2f}M")
     # project-level deltas (25 bucket only)
     if pj_col:
         op = _normproj(old.loc[rp.eq("25"), pj_col])
