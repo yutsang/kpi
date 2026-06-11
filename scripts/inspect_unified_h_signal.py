@@ -63,11 +63,16 @@ def main():
          "# S1=acct_desc有 S2=淨code S3=淨desc S4=★乜都冇(分唔到H)"]
     for f in files:
         try:
-            hdr = pd.read_excel(f, nrows=0) if f.suffix != ".csv" else pd.read_csv(f, nrows=0)
-            cols = [str(c).strip() for c in hdr.columns]
-            use = [c for c in NEED if c in cols]
-            df = (pd.read_excel(f, dtype=str, usecols=use) if f.suffix != ".csv"
-                  else pd.read_csv(f, dtype=str, usecols=use))
+            if f.suffix != ".csv":
+                _sheets = pd.ExcelFile(f).sheet_names
+                _sh = next((s for s in _sheets if str(s).strip().lower() == "data"), 0)
+                hdr = pd.read_excel(f, sheet_name=_sh, nrows=0)
+                use = [c for c in NEED if c in [str(x).strip() for x in hdr.columns]]
+                df = pd.read_excel(f, sheet_name=_sh, dtype=str, usecols=use)
+            else:
+                hdr = pd.read_csv(f, nrows=0)
+                use = [c for c in NEED if c in [str(x).strip() for x in hdr.columns]]
+                df = pd.read_csv(f, dtype=str, usecols=use)
         except Exception as e:
             L.append(f"\n## {f.name}: read error {e}"); continue
         df.columns = [str(c).strip() for c in df.columns]
