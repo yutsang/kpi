@@ -23,7 +23,8 @@ ROOT = Path(__file__).resolve().parent.parent
 NEW = ROOT / "data" / "raw" / "sjm_2025.xlsx"
 TR = ROOT / "data" / "sjm" / "interim" / "company_2_tagged_rows.parquet"
 CONF = ROOT / "conf" / "company_2" / "parameters.yml"
-Y2B = {"2025": "25", "2024": "25_24SY", "2023": "25_23SY"}
+Y2B = {"2025": "25", "2024": "25_24SY", "2023": "25_23SY",
+       "25": "25", "24": "25_24SY", "23": "25_23SY"}   # 項目期間 may hold 2025 or 25 forms
 # 項目組 golden (user 2026-06-12, 單位萬 MOP → ×1e4)
 GOLDEN = {"25": 124661e4, "25_24SY": 63594e4, "25_23SY": 7971e4}
 
@@ -54,11 +55,14 @@ def main():
     for sh in order:
         cand = pd.read_excel(NEW, sheet_name=sh, dtype=str)
         cand.columns = [str(c).strip() for c in cand.columns]
-        if len(cand) and "year" in cand.columns:
+        ycol = next((c for c in ("year", "項目期間", "年份") if c in cand.columns), None)
+        if len(cand) and ycol:
+            if ycol != "year":
+                cand = cand.rename(columns={ycol: "year"})   # sjm uses 項目期間 as the year col
             df, used = cand, sh
             break
     if df is None:
-        L.append(f"X no sheet with rows + 'year' col (sheets={xls.sheet_names})"); _w(L); return
+        L.append(f"X no sheet with rows + year/項目期間 col (sheets={xls.sheet_names})"); _w(L); return
     L.append(f"sheets: {xls.sheet_names}  → reading {used!r}")
     L.append(f"rows={len(df):,}  cols={len(df.columns)}")
     L.append(f"columns: {list(df.columns)}")
