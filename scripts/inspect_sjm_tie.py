@@ -159,6 +159,27 @@ def main():
         L.append(f"   matched codes(兩邊都有數): {int(((j['old25']!=0)&(j['new_all']!=0)).sum())} / old {int((j['old25']!=0).sum())} / new {int((j['new_all']!=0).sum())}")
     else:
         L.append("   (old 承批公司項目序號 col not found — project-level skip)")
+
+    # ── other sheets: where do golden 24SY 635.94M / 23SY 79.71M live? ───────
+    L.append("\n## other sheets in workbook (搵 24SY/23SY 數據):")
+    for shx in xls.sheet_names:
+        if shx == sh:
+            continue
+        try:
+            t = pd.read_excel(NEW, sheet_name=shx, dtype=str)
+        except Exception as e:
+            L.append(f"   {shx!r}: read error {e}"); continue
+        t.columns = [str(c).strip() for c in t.columns]
+        if not len(t):
+            L.append(f"   {shx!r}: 0 rows"); continue
+        sums = []
+        for c in t.columns:
+            v = _num(t[c].astype("string"))
+            if v.notna().sum() > 2 and abs(float(v.sum() or 0)) > 1e4:
+                sums.append((str(c), float(v.sum()), int(v.notna().sum())))
+        sums.sort(key=lambda x: -abs(x[1]))
+        top = "  ".join(f"{c[:20]}:Σ{s/1e6:,.1f}M({n})" for c, s, n in sums[:3]) or "(no numeric cols)"
+        L.append(f"   {shx!r}: rows={len(t):,} cols={len(t.columns)} | {top}")
     _w(L)
 
 

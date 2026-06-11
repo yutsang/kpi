@@ -209,7 +209,9 @@ def build_rows(admin_comp_path="data/sjm/raw/Admin Comp summary v2.xlsx",
             sub = " | ".join(x for x in [str(r.get(c_wbs, "")).strip(), str(r.get(c_co, "")).strip()] if x and x != "nan")
             rows.append([v, "H_ADVERTISING", sub, round(float(amt), 2), "BKD_補充"])
             n_bkd += 1
-        print(f"BKD_補充: {n_bkd} rows  (sheet={bkd_name!r}, header row={_hdr}, 項目類型={c_theme!r}, amt={c_amt!r}, raw {len(b)} rows)")
+        _bkd_sum = sum(r[3] for r in rows if r[4] == "BKD_補充")
+        print(f"BKD_補充: {n_bkd} rows  Σ={_bkd_sum:,.0f} (target ≈1,091,000)  "
+              f"(sheet={bkd_name!r}, header row={_hdr}, 項目類型={c_theme!r}, amt={c_amt!r}, raw {len(b)} rows)")
         if n_bkd == 0:
             print(f"  [debug] BKD columns = {list(b.columns)[:25]}")
             if c_theme:
@@ -228,7 +230,14 @@ def build_rows(admin_comp_path="data/sjm/raw/Admin Comp summary v2.xlsx",
         c_guest = _col(d, "guest_full") or _col(d, "guest")
         c_comptype = _col(d, "comp type")
         c_trx = _col(d, "trx_desc")
-        if c_flag:
+        # take filter = sheet column H (8th col) == 'Y' (project team 2026-06-13).
+        # The old 是否包括在25年 flag over-took ~2× (69.4M vs 取數 34,354k).
+        if len(d.columns) >= 8:
+            c_h = d.columns[7]
+            d = d[d[c_h].astype(str).str.strip().str.upper().eq("Y")]
+            print(f"combined: column-H take filter {str(c_h)[:30]!r}=Y → {len(d):,} rows "
+                  f"(target Σ≈34,354k)")
+        elif c_flag:
             d = d[d[c_flag].astype(str).str.strip().str.upper().eq("Y")]
 
         # project-team ground truth: GUEST_FULL_NAME → 表1 Description → that row's vertical_id.
@@ -260,7 +269,8 @@ def build_rows(admin_comp_path="data/sjm/raw/Admin Comp summary v2.xlsx",
                 v = "V_OTHER"; src = "combined:other"
             rows.append([v, h, guest[:60], round(float(amt), 2), src])
             n_comb += 1
-        print(f"combined (25-flag=Y): {n_comb} rows  "
+        _comb_sum = sum(r[3] for r in rows if str(r[4]).startswith("combined"))
+        print(f"combined (col-H=Y): {n_comb} rows  Σ={_comb_sum:,.0f} (target ≈34,354,000)  "
               f"(V via 表1 match: {n_je}, SJM rule: {n_rule}, keyword: {n_kw}, V_OTHER: {n_comb - n_je - n_rule - n_kw})")
 
     return rows, unmapped
