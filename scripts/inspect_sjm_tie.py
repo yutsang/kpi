@@ -117,6 +117,20 @@ def main():
                                 for yv in sorted(yr[m].unique()))
             L.append(f"      {str(v)[:24]:24s} {int(m.sum()):>6,}r  Σ後={fin[m].sum()/1e6:>10,.2f}M  [{yrsplit}]")
 
+    # 跨年 3-col split check — bucket = 直接三類 + 跨年行按 25跨年/24跨年/23跨年 拆
+    # (targets: 25部分 21.46M / 24部分 406.80M / 23部分 55.33M, Σ=483.58M=跨年Σ前)
+    if "25跨年" in df.columns:
+        kn = yr.eq("跨年項目")
+        tot3 = pd.Series(0.0, index=df.index)
+        L.append("\n## 跨年 split cols (target 25:21.46M  24:406.80M  23:55.33M):")
+        for c in ("25跨年", "24跨年", "23跨年"):
+            v = _num(_s(df, c)).fillna(0.0)
+            tot3 = tot3 + v
+            L.append(f"   {c}: nonblank={int(_s(df,c).ne('').sum()):,}  Σ(跨年行)={v[kn].sum()/1e6:,.2f}M"
+                     f"  Σ(非跨年行)={v[~kn].sum()/1e6:,.2f}M")
+        bad3 = (tot3[kn] - mop[kn]).abs() > 1
+        L.append(f"   跨年行 3欄加總 ≠ Σ前 嘅行: {int(bad3.sum()):,} / {int(kn.sum()):,}")
+
     for c in ("project_code", "project", "subproject", "ng_theme", "capex_opex"):
         s = _s(df, c)
         L.append(f"   {c}: fill={s.ne('').mean()*100:.0f}%  distinct={s.nunique()}")
