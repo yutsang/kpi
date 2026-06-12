@@ -416,6 +416,13 @@ def main():
                         else:
                             print(f"  WARNING: amount_add_cols col {_c!r} not in xlsx (ignored)", flush=True)
                     df_y[_amt_col] = _base
+                    # When the override amount col differs from the ROOT amount col AND both exist,
+                    # the later rename is skipped (dup-name) and downstream reads the root col —
+                    # so write the result into the root col too (melco 24: 本位幣金額 vs Amount - Amended).
+                    _root_amt = root_cols.get("amount")
+                    if _root_amt and _root_amt != _amt_col:
+                        df_y[_root_amt] = _base
+                        print(f"  amount_add_cols: result also → root amount col {_root_amt!r}", flush=True)
                 else:
                     print(f"  WARNING: amount_add_cols base {_amt_col!r} missing (skipped)", flush=True)
 

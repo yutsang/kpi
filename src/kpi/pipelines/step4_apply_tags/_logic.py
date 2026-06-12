@@ -218,12 +218,14 @@ def main():
     # ----- Project → vertical lookup -----
     # unique_projects.xlsx keeps the project col name from BUILD time — after a conf
     # columns.project rename (e.g. galaxy 'Project'→'project') resolve it fuzzily.
+    # NB: only the PROJ-FILE side uses the resolved name; the raw df keeps cols['project'].
+    proj_key_col = project_col
     if project_col not in proj_df.columns:
         _cand = next((c for c in proj_df.columns
                       if str(c).strip().lower() == str(project_col).strip().lower()), None)
         _cand = _cand or str(proj_df.columns[0])
-        print(f"  [step4] project col {project_col!r} not in unique_projects — using {_cand!r}", flush=True)
-        project_col = _cand
+        print(f"  [step4] project col {project_col!r} not in unique_projects — file side uses {_cand!r}", flush=True)
+        proj_key_col = _cand
     if "manual_vertical" not in proj_df.columns:
         proj_df["manual_vertical"] = ""
     if "llm_vertical" not in proj_df.columns:
@@ -235,8 +237,8 @@ def main():
     proj_df["_vertical_source"] = has_manual_v.map({True: "manual", False: ""}).where(
         has_manual_v, proj_df["tag_source"].astype("string").fillna("")
     )
-    proj_to_v = dict(zip(proj_df[project_col].astype("string").fillna(""), proj_df["_final_vertical"]))
-    proj_to_v_src = dict(zip(proj_df[project_col].astype("string").fillna(""), proj_df["_vertical_source"]))
+    proj_to_v = dict(zip(proj_df[proj_key_col].astype("string").fillna(""), proj_df["_final_vertical"]))
+    proj_to_v_src = dict(zip(proj_df[proj_key_col].astype("string").fillna(""), proj_df["_vertical_source"]))
 
     # ----- Signature → horizontal lookup -----
     if "manual_horizontal" not in sig_df.columns:
