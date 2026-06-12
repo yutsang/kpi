@@ -400,6 +400,25 @@ def main():
                 df_y = df_y.drop_duplicates()
                 print(f"  drop_exact_duplicates: {_b:,} → {len(df_y):,} rows", flush=True)
 
+            # Optional 調整後 = 取數 + Σ(調整欄) — conf `amount_add_cols` per yearly source
+            # (wynn 24: Entry Voucher + 調整金額; melco 24: 本位幣金額 + 調整金額). Runs on RAW
+            # col names BEFORE the rename, so reference the year's own column names.
+            _add = ycfg.get("amount_add_cols") or []
+            if _add:
+                _amt_col = (ycfg.get("columns_override") or {}).get("amount") or root_cols.get("amount")
+                if _amt_col in df_y.columns:
+                    _base = pd.to_numeric(df_y[_amt_col], errors="coerce").fillna(0.0)
+                    for _c in _add:
+                        if _c in df_y.columns:
+                            _v = pd.to_numeric(df_y[_c], errors="coerce").fillna(0.0)
+                            _base = _base + _v
+                            print(f"  amount_add_cols: {_amt_col!r} += {_c!r} (Σ{_v.sum():,.0f})", flush=True)
+                        else:
+                            print(f"  WARNING: amount_add_cols col {_c!r} not in xlsx (ignored)", flush=True)
+                    df_y[_amt_col] = _base
+                else:
+                    print(f"  WARNING: amount_add_cols base {_amt_col!r} missing (skipped)", flush=True)
+
             # Build effective cols = root + per-year override
             year_cols = {**root_cols, **(ycfg.get("columns_override") or {})}
 
