@@ -302,6 +302,12 @@ def build(ent: str, com: str, categories: dict, combined: bool = False) -> Path 
         _co = next((c for c in df.columns if "CO object" in str(c)), None)
         if _wbs and _co:
             df["subproject"] = (df[_wbs].astype(str).str.strip() + " | " + df[_co].astype(str).str.strip()).str.strip(" |")
+    # 2026-06-12: new tie raw KEEPS 內部資源=Y rows in the data (golden includes their 31.4M) —
+    # the old drop+inject swap would DOUBLE-count. conf `sjm_admin_comp_inject: false` disables it;
+    # the Admin Comp summary is then reference-only (H mapping for those rows, later).
+    if com == "company_2" and not (cfg.get("sjm_admin_comp_inject", True)):
+        print("[sjm] admin-comp drop+inject DISABLED (conf sjm_admin_comp_inject: false — 內部資源行已在 data 內)", flush=True)
+    elif com == "company_2":
         # 表1 for GUEST_FULL_NAME → Description → V match — capture BEFORE dropping AN=Y so
         # comp guests described on internal-comp rows still resolve their project's V.
         _je_full = df
