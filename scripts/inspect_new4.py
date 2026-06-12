@@ -53,7 +53,7 @@ RULES = {
     ("vml", "2025"): dict(amount="MOP Amt", ycol="Yr related",
                           map={"Yr 2025": "25", "Yr 2024": "25_24SY", "Yr 2023": "25_23SY"}, basis="前"),
     ("vml", "2024"): dict(amount="MOP Amt", adjust="調整金額", adjusted="調整後金額",
-                          bucket="24", basis="後"),
+                          ycol="Yr related", map={"Yr 2024": "24", "Yr 2023": "24_23SY"}, basis="後"),
     ("vml", "2023"): dict(amount="MOP Amt", adjust="調整金額", adjusted="調整後金額",
                           bucket="23", basis="後"),
     ("melco", "2025"): dict(amount="Amount - Amended", ycol="years",
@@ -183,12 +183,16 @@ def main():
         files = sorted(p for p in rawdir.glob("*.xls*")
                        if not p.name.startswith("~$") and "copy" not in p.name.lower())
         L.append("   files: " + ", ".join(f"{p.name}({p.stat().st_size//1024}KB)" for p in files))
-        for p in files:
+        for i, p in enumerate(files, 1):
             yr = next((y for y in ("2025", "2024", "2023") if y in p.name), None)
             if not yr:
                 continue
+            print(f"  [{ent} {i}/{len(files)}] reading {p.name} ({p.stat().st_size//1024//1024}MB)...",
+                  flush=True)   # progress echo — big xlsx reads are slow
+            t0 = time.time()
             try:
                 inspect_file(L, ent, p, yr, codes)
+                print(f"  [{ent} {i}/{len(files)}] done in {time.time()-t0:.0f}s", flush=True)
             except Exception as e:
                 L.append(f"   !! {p.name}: {type(e).__name__}: {e}")
 
@@ -209,14 +213,19 @@ def main():
                 xl = pd.ExcelFile(p)
                 shn = next((s for s in xl.sheet_names if "database" in str(s).lower()
                             or "分項目數據簿" in str(s)), xl.sheet_names[0])
-                # header = the row that contains 清單序號
+                print(f"  [清單] reading {p.name[:40]}...", flush=True)
+                # header = the row containing 清單序號 / 承批公司項目序號
                 probe = pd.read_excel(p, sheet_name=shn, header=None, dtype=str, nrows=15)
                 hdr = next((i for i in range(len(probe))
-                            if probe.iloc[i].astype("string").fillna("").str.strip().eq("清單序號").any()), 0)
+                            if probe.iloc[i].astype("string").fillna("").str.strip()
+                            .isin(["清單序號", "承批公司項目序號"]).any()), 0)
                 t = pd.read_excel(p, sheet_name=shn, header=hdr, dtype=str)
                 t.columns = [str(c).strip() for c in t.columns]
+                t = t.loc[:, ~t.columns.duplicated()]     # dup col names → .str crash (MGM file)
                 L.append(f"\n   FILE {p.name[:40]} [{shn}] header_row={hdr} rows={len(t):,}")
                 L.append(f"      cols: {[str(c)[:18] for c in t.columns][:18]}")
+                # MATCH on 承批公司項目序號 (entity codes A001/CA001/項目N live here), 清單序號 as fallback
+                pc = find_col(t, "承批公司項目序號")
                 cc = find_col(t, "清單序號") or find_col(t, "序號")
                 nc = find_col(t, "項目名稱") or find_col(t, "名稱")
                 if cc:
@@ -224,11 +233,14 @@ def main():
                     pairs = [(c_, str(n_)[:22]) for c_, n_ in
                              zip(cv, _s(t, nc) if nc else [""] * len(t)) if c_][:8]
                     L.append(f"      清單序號 sample: {pairs}")
-                    lset = {v for v in cv.unique() if v}
+                if pc:
+                    pv = _s(t, pc).str.replace(r"\.0$", "", regex=True)
+                    L.append(f"      承批公司項目序號 sample: {[v for v in pv.unique() if v][:10]}")
+                    lset = {v for v in pv.unique() if v}
                     if ent and codes.get(ent):
                         inter = codes[ent] & lset
-                        L.append(f"      ★ match {ent}: {len(inter)}/{len(codes[ent])} entity-codes in 清單"
-                                 f" (清單 n={len(lset)})  e.g. {sorted(list(inter))[:6]}")
+                        L.append(f"      ★ match {ent} on 承批公司項目序號: {len(inter)}/{len(codes[ent])}"
+                                 f" entity-codes in 清單 (清單 n={len(lset)})  e.g. {sorted(list(inter))[:6]}")
                 # 金額欄 sums (golden 對數用)
                 sums = []
                 for c in t.columns:
