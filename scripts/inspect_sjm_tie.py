@@ -22,7 +22,9 @@ import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-NEW = ROOT / "data" / "raw" / "sjm_2025.xlsx"
+NEW = next((p for p in (ROOT / "data" / "sjm" / "raw" / "sjm_2025.xlsx",
+                        ROOT / "data" / "raw" / "sjm_2025.xlsx") if p.exists()),
+           ROOT / "data" / "sjm" / "raw" / "sjm_2025.xlsx")   # 新位置優先 (2026-06-12 user 換檔)
 TR = ROOT / "data" / "sjm" / "interim" / "company_2_tagged_rows.parquet"
 CONF = ROOT / "conf" / "company_2" / "parameters.yml"
 GOLDEN = {"25": 124661e4, "25_24SY": 63594e4, "25_23SY": 7971e4}   # 萬 → MOP
@@ -106,6 +108,14 @@ def main():
     L.append(f"   netoff rows: {int(net.ne('').sum()):,} (Σ後={fin[net.ne('')].sum()/1e6:,.2f}M)   "
              f"內部資源=Y rows: {int(internal.str.upper().eq('Y').sum()):,} "
              f"(Σ後={fin[internal.str.upper().eq('Y')].sum()/1e6:,.2f}M)")
+    # 內部資源 col 全值分佈 (admin-comp 邏輯設計用) — 每值 rows + Σ後 + per year-value 切片
+    if "internal" in df.columns:
+        L.append("   內部資源 col 值分佈:")
+        for v in internal.replace("", "(blank)").unique():
+            m = internal.replace("", "(blank)").eq(v)
+            yrsplit = "  ".join(f"{yv}:{fin[m & yr.eq(yv)].sum()/1e6:,.2f}M"
+                                for yv in sorted(yr[m].unique()))
+            L.append(f"      {str(v)[:24]:24s} {int(m.sum()):>6,}r  Σ後={fin[m].sum()/1e6:>10,.2f}M  [{yrsplit}]")
 
     for c in ("project_code", "project", "subproject", "ng_theme", "capex_opex"):
         s = _s(df, c)
