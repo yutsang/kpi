@@ -1,4 +1,4 @@
-"""Generic tie-file inspector for the NEW per-entity raw files (data/<ent>/raw or data/raw).
+r"""Generic tie-file inspector for the NEW per-entity raw files (data/<ent>/raw or data/raw).
 Reads ONLY the 'data' tab. Shows columns, picks the year/period col, sums each bucket vs golden
 (reference_golden_buckets), checks dup unique_id + amount-tie, and lists 調整/remark-like cols.
 
@@ -81,6 +81,31 @@ def main():
     L.append(f"Σ amount = {amt.sum()/1e6:,.2f}M   blank amount rows = {int(_num(_s(df,amt_c)).eq(0).sum()):,}")
 
     gold = {k: v * 1e4 for k, v in (GOLDEN_WAN.get((a.entity or '').lower()) or {}).items()}
+
+    # ── per-bucket amount columns (sjm 24/23: 2024年度金額+2024年度調整; mgm 25: 25_Amt/24_Amt/23_Amt) ──
+    BUCKET_COLS = {  # bucket → (amount col substrings, adjust col substrings)
+        "25": (["25_Amt"], []), "25_24SY": (["24_Amt"], []), "25_23SY": (["23_Amt"], []),
+        "24": (["2024年度金額", "2024年度調整后"], ["2024年度調整"]),
+        "24_23SY": (["2023年度金額"], ["2023年度調整"]),
+        "23": (["2023年度調整后", "2023年度金額"], []),
+    }
+    found_bucket = False
+    L.append("\n## per-bucket amount-col sums (vs golden):")
+    for bk, (acands, adjcands) in BUCKET_COLS.items():
+        ac = _find(df, acands)
+        if not ac: continue
+        found_bucket = True
+        s = _num(_s(df, ac))
+        adc = _find(df, adjcands) if adjcands else None
+        if adc and adc != ac:
+            s = s + _num(_s(df, adc))
+        g = gold.get(bk)
+        star = f"  golden={g/1e6:,.2f}M  Δ={(s.sum()-g)/1e6:,.2f}M" if g is not None else ""
+        nb = int((s != 0).sum())
+        L.append(f"   {bk:8s} = {ac!r}{('+'+adc) if adc and adc!=ac else ''}: Σ={s.sum()/1e6:>11,.2f}M  ({nb} nonzero rows){star}")
+    if not found_bucket:
+        L.append("   (no per-bucket amount cols found)")
+
     if yr_c:
         yv = _s(df, yr_c)
         L.append(f"\n## by {yr_c!r} value (vs golden, report={a.report}):")
