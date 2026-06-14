@@ -285,7 +285,14 @@ def main():
         _adc = cfg.get("audit_detail_cols") or _ent.get("audit_detail_cols") or {}
         _detail_raw = [r for v in _adc.values() for r in (v if isinstance(v, list) else [v]) if r]
         # unified-raw reference cols (項目組 own labels — reference only, OUR taxonomy is canonical)
-        _ref_cols = [c for c in ("pt_class_H", "pt_class_V") if c in df.columns]
+        # unified-raw extra cols — carry through so the 大表 / Tableau keep EVERY column the
+        # project team put in the tied raw (user 2026-06-14: "take care of any column 包括 remarks").
+        _UNIFIED_EXTRA = ["unique_id", "entity", "year", "project_code", "dicj_code", "subproject",
+                          "ng_theme", "amount_mop", "adjustment_amount", "adjusted_amount",
+                          "adjust_lv1", "adjust_lv2", "pt_class_H", "pt_class_V", "source",
+                          "comp_type", "is_labor", "is_internal", "take_flag", "take_flag2",
+                          "netoff_flag", "internal", "remark", "25跨年", "24跨年", "23跨年"]
+        _ref_cols = [c for c in _UNIFIED_EXTRA if c in df.columns and c not in base_cols]
         all_row_cols = base_cols + extra_cols_appended + _detail_raw + _ref_cols + tag_cols
         all_row_cols = [c for c in all_row_cols if c and c in df.columns]
         # Dedupe (preserve order) — pandas to_parquet fails on duplicate col names

@@ -152,6 +152,13 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
             df[_name] = _ser.replace({"nan": "", "None": ""})
             keep.append(_name)
 
+        # unified-raw extra cols (user 2026-06-14: carry every column incl remarks into Tableau)
+        for _u in ("project_code", "dicj_code", "adjustment_amount", "adjusted_amount",
+                   "adjust_lv1", "adjust_lv2", "source", "comp_type", "is_labor", "is_internal",
+                   "take_flag", "take_flag2", "netoff_flag", "internal", "remark"):
+            if _u in df.columns and _u not in keep:
+                keep.append(_u)
+
         # Add merged project_full = "project | subproject | description" for Tableau display
         merge_parts = []
         for c in ("project", "subproject", "description"):
