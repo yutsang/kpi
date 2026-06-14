@@ -211,6 +211,56 @@ def _do_direct_filter(df: pd.DataFrame, ys: dict, cfg: dict):
     return df, audit
 
 
+def _do_bucket_amount_cols(df: pd.DataFrame, ys: dict, cfg: dict):
+    """Each row holds per-bucket amounts in SEPARATE columns; explode into one row per non-zero
+    bucket and set the canonical amount = that bucket's column (+ optional adjust col).
+
+    YAML (per-year rule):
+        - report_year: 2024
+          mode: bucket_amount_cols
+          buckets:
+            "24":      {amount: "2024年度金額", adjust: "2024年度調整"}
+            "24_23SY": {amount: "2023年度金額", adjust: "2023年度調整"}
+        - report_year: 2025                 # mgm 25 — already-final per-bucket cols, no adjust
+          mode: bucket_amount_cols
+          buckets:
+            "25": {amount: "25_Amt"}
+            "25_24SY": {amount: "24_Amt"}
+            "25_23SY": {amount: "23_Amt"}
+    A row contributing to 2 buckets is duplicated (one per bucket) — fine for a fact table; the
+    H-join is on signature, not unique_id.
+    """
+    amt_col = cfg["columns"]["amount"]
+    buckets = ys.get("buckets") or {}
+    parts = []
+    audit = {"mode": "bucket_amount_cols", "buckets": {}}
+    for bk, spec in buckets.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"bucket_amount_cols['{bk}'] must be a mapping with 'amount' (got {spec!r})")
+        a_name = spec.get("amount")
+        adj_name = spec.get("adjust")
+        if a_name not in df.columns:
+            print(f"  [bucket_amount_cols] {bk}: amount col {a_name!r} not in raw — skipped", flush=True)
+            continue
+        a = pd.to_numeric(df[a_name], errors="coerce").fillna(0.0)
+        if adj_name and adj_name in df.columns:
+            a = a + pd.to_numeric(df[adj_name], errors="coerce").fillna(0.0)
+        nz = a != 0.0
+        sub = df[nz].copy()
+        sub[amt_col] = a[nz].values
+        sub["report_period"] = bk
+        sub["split_source"] = "bucket_amount_cols"
+        sub["split_ratio"] = 1.0
+        sub["original_amount"] = a[nz].values
+        parts.append(sub)
+        audit["buckets"][bk] = {"rows": int(nz.sum()), "sum": float(a[nz].sum()),
+                                "amount_col": a_name, "adjust_col": adj_name}
+        print(f"  [bucket_amount_cols] {bk}: {int(nz.sum()):,} rows  "
+              f"Σ={a[nz].sum()/1e6:,.2f}M  ({a_name!r}{'+'+adj_name if adj_name else ''})", flush=True)
+    out = pd.concat(parts, ignore_index=True) if parts else df.iloc[0:0].copy()
+    return out, audit
+
+
 def _do_direct_filter_multi_year(df: pd.DataFrame, ys: dict, cfg: dict):
     """Multi-year direct filter — per-(report_year, filter_col) rules → 6 buckets.
 
@@ -393,6 +443,8 @@ def _do_per_year_mode(df: pd.DataFrame, ys: dict, cfg: dict,
             sub_out, sub_audit = _do_hybrid(sub, synthetic_ys, cfg, interim, company)
         elif rule_mode == "ratio_with_fallback":
             sub_out, sub_audit = _do_ratio_fallback(sub, synthetic_ys, cfg, interim, company)
+        elif rule_mode == "bucket_amount_cols":
+            sub_out, sub_audit = _do_bucket_amount_cols(sub, synthetic_ys, cfg)
         else:
             raise ValueError(f"Unknown per-year mode: {rule_mode!r} for year {rule_year}")
 
