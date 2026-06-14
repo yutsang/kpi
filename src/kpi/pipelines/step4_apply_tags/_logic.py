@@ -61,6 +61,11 @@ def _apply_row_overrides(df, rules, id_col, src_col, account_code_col, account_d
       column_nonempty <col>             the column has a non-blank value
       column_nonzero  <col>             the column's numeric value is non-blank AND != 0
 
+    Any rule (column_map or when/set) may carry `only_if_blank: true` — it then fires ONLY on
+    rows whose id_col is still empty after the project/sig lookup (and earlier overrides). Lets a
+    project-team column fill the GAPS without clobbering an already-assigned label (e.g. adopt
+    pt_class_V for the new 23-bucket subprojects while leaving 25/24's project-name V intact).
+
     Rows set by an earlier rule are not touched again. Returns rows overridden.
     """
     if not rules:
@@ -73,16 +78,26 @@ def _apply_row_overrides(df, rules, id_col, src_col, account_code_col, account_d
             return df[name].astype("string").fillna("")
         return pd.Series("", index=df.index, dtype="string")
 
+    _BLANKS = ["", "nan", "NaN", "<NA>", "None", "NaT"]
+
+    def _blank_guard(flag):
+        if not flag:
+            return pd.Series(True, index=df.index)
+        cur = df[id_col].astype("string").fillna("").str.strip()
+        return cur.isin(_BLANKS)
+
     done = pd.Series(False, index=df.index)
     n_total = 0
     for rule in rules:
+        oib = bool(rule.get("only_if_blank"))
         # column_map: set id_col from a {column_value: ID} dict (self-contained rule,
         # no separate `set`). Used to adopt a project-team category column wholesale.
         cm = rule.get("column_map")
         if cm:
             col = _col(cm["col"]).str.strip()
+            guard = _blank_guard(oib)
             for val, target in (cm.get("map") or {}).items():
-                sub = (~done) & col.eq(str(val).strip())
+                sub = (~done) & guard & col.eq(str(val).strip())
                 df.loc[sub, id_col] = target
                 df.loc[sub, src_col] = source_tag
                 done |= sub
@@ -92,7 +107,7 @@ def _apply_row_overrides(df, rules, id_col, src_col, account_code_col, account_d
         setval = rule.get("set")
         if not setval:
             continue
-        mask = ~done
+        mask = (~done) & _blank_guard(oib)
         if "account_code" in when:
             mask &= acc.eq(str(when["account_code"]).strip())
         if "account_code_prefix" in when:
