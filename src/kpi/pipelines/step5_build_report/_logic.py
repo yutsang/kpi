@@ -327,6 +327,7 @@ def main():
                        "調整二級": ["adjust_lv2", "調整事項"]},
         }
         _BLNK = ["", "nan", "None", "NaN", "<NA>", "NaT"]
+        _NUM_TGT = {"調整金額", "調整後金額"}   # amounts → numeric (Tableau '#' measure); lv1/lv2 stay text
         _adjust_names: list[str] = []
         for _tgt, _spec in (ADJUST_MAP.get(_alias) or {}).items():
             _cols = _spec.get("cols", []) if isinstance(_spec, dict) else _spec
@@ -342,7 +343,12 @@ def main():
                 if _f in df.columns:
                     _isY = df[_f].astype("string").fillna("").str.strip().str.upper().eq("Y")
                     _out = _out.mask(_out.isin(_BLNK) & _isY, _f)
-            df[_tgt] = _out.replace({"nan": "", "None": ""})
+            if _tgt in _NUM_TGT:
+                # numeric so Tableau treats it as a measure (#), not text (Abc); blank → NaN
+                df[_tgt] = pd.to_numeric(_out.astype(str).str.replace(",", "", regex=False),
+                                         errors="coerce")
+            else:
+                df[_tgt] = _out.replace({"nan": "", "None": ""})
             _adjust_names.append(_tgt)
         if _adjust_names:
             print(f"  [adjust] coalesced {_adjust_names} for {_alias}", flush=True)
