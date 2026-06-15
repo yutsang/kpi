@@ -294,29 +294,54 @@ def main():
         _ALIAS = {"company_1": "galaxy", "company_2": "sjm", "company_3": "wynn",
                   "company_4": "vml", "company_5": "melco", "company_6": "mgm"}
         _alias = cfg.get("alias") or _ALIAS.get(company, "")
+        # A target maps to either a list of value cols (coalesce first non-blank), or a dict
+        # {"cols": [...], "flags": [...]}: after coalescing `cols`, fall back to flag columns —
+        # each flag col holds 'Y' when the row IS that adjustment type, so the col's NAME becomes
+        # the lv1 value (user-confirmed 24/25 layouts: vml-24 & sjm-25 use the multi-flag form).
         ADJUST_MAP = {
             "galaxy": {"調整金額": ["adjustment_amount"], "調整後金額": ["adjusted_amount"],
                        "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
             "wynn":   {"調整金額": ["adjustment_amount", "調整金額"],
-                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+                       "調整一級": ["adjust_lv1", "調整項目名稱-調整數不重合"],
+                       "調整二級": ["adjust_lv2", "事項備註"]},
             "vml":    {"調整金額": ["adjustment_amount", "調整金額"], "調整後金額": ["調整後金額"],
-                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+                       "調整一級": {"cols": ["adjust_lv1"], "flags": [
+                           "商業性會展項目支出", "其他日常營運支出",
+                           "與投資項目無關的贈房支出、免費餐飲支出及贈票支出",
+                           "不符合“吸引外國客源”定義的相關投資支出",
+                           "未在原投資計劃明確列示且其後未被認可的新增項目投資支出",
+                           "未完全實現投資目的的投資支出",
+                           "計入報告投資金額的2025年投資計劃獲批後的支出",
+                           "編制報告投資金額過程中的取數差錯", "不被認可的支出"]},
+                       "調整二級": ["adjust_lv2"]},
             "melco":  {"調整金額": ["adjustment_amount", "調整金額"],
-                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+                       "調整一級": ["adjust_lv1", "初步識別調整類型", "調整類別"],
+                       "調整二級": ["adjust_lv2", "初步識別調整事項", "調整事項"]},
             "sjm":    {"調整金額": ["調整金額", "2024年度調整", "2023年度調整"],
                        "調整後金額": ["2023年度調整后"],
-                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+                       "調整一級": {"cols": ["adjust_lv1"], "flags": [
+                           "用於計算酒店贈房支出的贈房單價超過ADR部分的支出", "酒店客房改造支出",
+                           "不符合“吸引外國客源”定義的相關投資支出", "未完全實現投資目的的投資支出",
+                           "與投資項目無關的贈房及餐飲支出",
+                           "2025年度計劃與2023年度計劃期後調整之間的報告投資金額跨期調整"]},
+                       "調整二級": ["adjust_lv2", "調整事項"]},
         }
         _BLNK = ["", "nan", "None", "NaN", "<NA>", "NaT"]
         _adjust_names: list[str] = []
-        for _tgt, _cands in (ADJUST_MAP.get(_alias) or {}).items():
-            _avail = [c for c in _cands if c in df.columns]
-            if not _avail:
+        for _tgt, _spec in (ADJUST_MAP.get(_alias) or {}).items():
+            _cols = _spec.get("cols", []) if isinstance(_spec, dict) else _spec
+            _flags = _spec.get("flags", []) if isinstance(_spec, dict) else []
+            if not any(c in df.columns for c in _cols) and not any(f in df.columns for f in _flags):
                 continue
             _out = pd.Series("", index=df.index, dtype="object")
-            for _c in _avail:
-                _s = df[_c].astype("string").fillna("").str.strip()
-                _out = _out.mask(_out.isin(_BLNK), _s)
+            for _c in _cols:
+                if _c in df.columns:
+                    _s = df[_c].astype("string").fillna("").str.strip()
+                    _out = _out.mask(_out.isin(_BLNK), _s)
+            for _f in _flags:
+                if _f in df.columns:
+                    _isY = df[_f].astype("string").fillna("").str.strip().str.upper().eq("Y")
+                    _out = _out.mask(_out.isin(_BLNK) & _isY, _f)
             df[_tgt] = _out.replace({"nan": "", "None": ""})
             _adjust_names.append(_tgt)
         if _adjust_names:
