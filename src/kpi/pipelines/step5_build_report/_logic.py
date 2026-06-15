@@ -299,12 +299,12 @@ def main():
         # each flag col holds 'Y' when the row IS that adjustment type, so the col's NAME becomes
         # the lv1 value (user-confirmed 24/25 layouts: vml-24 & sjm-25 use the multi-flag form).
         ADJUST_MAP = {
-            "galaxy": {"調整金額": ["adjustment_amount"], "調整後金額": ["adjusted_amount"],
+            "galaxy": {"調整金額": ["adjustment_amount"],
                        "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
             "wynn":   {"調整金額": ["adjustment_amount", "調整金額"],
                        "調整一級": ["adjust_lv1", "調整項目名稱-調整數不重合"],
                        "調整二級": ["adjust_lv2", "事項備註"]},
-            "vml":    {"調整金額": ["adjustment_amount", "調整金額"], "調整後金額": ["調整後金額"],
+            "vml":    {"調整金額": ["adjustment_amount", "調整金額"],
                        "調整一級": {"cols": ["adjust_lv1"], "flags": [
                            "商業性會展項目支出", "其他日常營運支出",
                            "與投資項目無關的贈房支出、免費餐飲支出及贈票支出",
@@ -318,7 +318,6 @@ def main():
                        "調整一級": ["adjust_lv1", "初步識別調整類型", "調整類別"],
                        "調整二級": ["adjust_lv2", "初步識別調整事項", "調整事項"]},
             "sjm":    {"調整金額": ["調整金額", "2024年度調整", "2023年度調整"],
-                       "調整後金額": ["2023年度調整后"],
                        "調整一級": {"cols": ["adjust_lv1"], "flags": [
                            "用於計算酒店贈房支出的贈房單價超過ADR部分的支出", "酒店客房改造支出",
                            "不符合“吸引外國客源”定義的相關投資支出", "未完全實現投資目的的投資支出",
@@ -352,6 +351,21 @@ def main():
             _adjust_names.append(_tgt)
         if _adjust_names:
             print(f"  [adjust] coalesced {_adjust_names} for {_alias}", flush=True)
+        # 調整後金額 — UNIFORM computed across ALL 6 entities (incl wynn/melco/mgm with no native col).
+        # `amount` is pre-adjustment ONLY on the 25-report buckets; the 24/23 buckets already carry the
+        # post figure (amount = 取數+調整). So add 調整金額 only on 25 → 調整後金額 = 調整前 + 調整金額 in
+        # every case, no double-count, ties golden on 24/23. mgm has no 調整金額 → 調整後金額 = amount.
+        _amt_col = cols.get("amount")
+        if _amt_col and _amt_col in df.columns:
+            _base = pd.to_numeric(df[_amt_col], errors="coerce")
+            _delta = (pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0)
+                      if "調整金額" in df.columns else pd.Series(0.0, index=df.index))
+            _rp = (df["report_period"].astype("string").fillna("")
+                   if "report_period" in df.columns else pd.Series("", index=df.index))
+            df["調整後金額"] = _base + _delta.where(_rp.str.startswith("25"), 0.0)
+            if "調整後金額" not in _adjust_names:
+                _adjust_names.append("調整後金額")
+            print(f"  [adjust] 調整後金額 = amount + 調整金額(25 only) for {_alias}", flush=True)
         # unified-raw reference cols (項目組 own labels — reference only, OUR taxonomy is canonical)
         # unified-raw extra cols — carry through so the 大表 / Tableau keep EVERY column the
         # project team put in the tied raw (user 2026-06-14: "take care of any column 包括 remarks").
