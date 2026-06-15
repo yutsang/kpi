@@ -155,7 +155,8 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
         # unified-raw extra cols (user 2026-06-14: carry every column incl remarks into Tableau)
         for _u in ("project_code", "dicj_code", "adjustment_amount", "adjusted_amount",
                    "adjust_lv1", "adjust_lv2", "source", "comp_type", "is_labor", "is_internal",
-                   "take_flag", "take_flag2", "netoff_flag", "internal", "remark"):
+                   "take_flag", "take_flag2", "netoff_flag", "internal", "remark",
+                   "調整金額", "調整後金額", "調整一級", "調整二級"):
             if _u in df.columns and _u not in keep:
                 keep.append(_u)
 

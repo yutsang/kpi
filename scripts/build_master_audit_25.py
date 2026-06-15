@@ -367,7 +367,9 @@ def build(ent: str, com: str, categories: dict, combined: bool = False) -> Path 
     # unified-raw extra cols → carry into the 大表 so 項目組 see every column (user 2026-06-14)
     UNIFIED_EXTRA = ["project_code", "dicj_code", "adjustment_amount", "adjusted_amount",
                      "adjust_lv1", "adjust_lv2", "source", "comp_type", "is_labor", "is_internal",
-                     "take_flag", "take_flag2", "netoff_flag", "internal", "remark"]
+                     "take_flag", "take_flag2", "netoff_flag", "internal", "remark",
+                     # step5-coalesced adjustment dims (per-entity English+Chinese variants merged)
+                     "調整金額", "調整後金額", "調整一級", "調整二級"]
     JE_KEEP = ["entity", "year_bucket", "amount_mop",
                "ng_code", "ng_label", "ng_scope",
                "vertical_id", "vertical_label",
