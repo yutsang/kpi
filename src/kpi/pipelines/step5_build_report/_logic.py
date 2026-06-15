@@ -284,6 +284,43 @@ def main():
         _ent = ((cfg.get("_master") or {}).get("companies") or {}).get(company, {}) or {}
         _adc = cfg.get("audit_detail_cols") or _ent.get("audit_detail_cols") or {}
         _detail_raw = [r for v in _adc.values() for r in (v if isinstance(v, list) else [v]) if r]
+
+        # ── Adjustment dimensions (調整金額 / 調整後金額 / 調整一級 / 調整二級) ────────────────────
+        # The project team's adjustment cols are named inconsistently per entity & year: English
+        # canon in the unified 23-tie files (adjustment_amount/adjusted_amount/adjust_lv1/lv2), Chinese
+        # in the native 24/25 files (調整金額/調整後金額/2024年度調整/…). Coalesce each entity's variants
+        # (first non-blank wins) into 4 stable Chinese-named cols so 大表 + Tableau expose them
+        # uniformly across ALL years. mgm omitted — its data tab carries no adjustment cols.
+        _ALIAS = {"company_1": "galaxy", "company_2": "sjm", "company_3": "wynn",
+                  "company_4": "vml", "company_5": "melco", "company_6": "mgm"}
+        _alias = cfg.get("alias") or _ALIAS.get(company, "")
+        ADJUST_MAP = {
+            "galaxy": {"調整金額": ["adjustment_amount"], "調整後金額": ["adjusted_amount"],
+                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+            "wynn":   {"調整金額": ["adjustment_amount", "調整金額"],
+                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+            "vml":    {"調整金額": ["adjustment_amount", "調整金額"], "調整後金額": ["調整後金額"],
+                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+            "melco":  {"調整金額": ["adjustment_amount", "調整金額"],
+                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+            "sjm":    {"調整金額": ["調整金額", "2024年度調整", "2023年度調整"],
+                       "調整後金額": ["2023年度調整后"],
+                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+        }
+        _BLNK = ["", "nan", "None", "NaN", "<NA>", "NaT"]
+        _adjust_names: list[str] = []
+        for _tgt, _cands in (ADJUST_MAP.get(_alias) or {}).items():
+            _avail = [c for c in _cands if c in df.columns]
+            if not _avail:
+                continue
+            _out = pd.Series("", index=df.index, dtype="object")
+            for _c in _avail:
+                _s = df[_c].astype("string").fillna("").str.strip()
+                _out = _out.mask(_out.isin(_BLNK), _s)
+            df[_tgt] = _out.replace({"nan": "", "None": ""})
+            _adjust_names.append(_tgt)
+        if _adjust_names:
+            print(f"  [adjust] coalesced {_adjust_names} for {_alias}", flush=True)
         # unified-raw reference cols (項目組 own labels — reference only, OUR taxonomy is canonical)
         # unified-raw extra cols — carry through so the 大表 / Tableau keep EVERY column the
         # project team put in the tied raw (user 2026-06-14: "take care of any column 包括 remarks").
@@ -292,7 +329,7 @@ def main():
                           "adjust_lv1", "adjust_lv2", "pt_class_H", "pt_class_V", "source",
                           "comp_type", "is_labor", "is_internal", "take_flag", "take_flag2",
                           "netoff_flag", "internal", "remark", "25跨年", "24跨年", "23跨年"]
-        _ref_cols = [c for c in _UNIFIED_EXTRA if c in df.columns and c not in base_cols]
+        _ref_cols = [c for c in (_UNIFIED_EXTRA + _adjust_names) if c in df.columns and c not in base_cols]
         all_row_cols = base_cols + extra_cols_appended + _detail_raw + _ref_cols + tag_cols
         all_row_cols = [c for c in all_row_cols if c and c in df.columns]
         # Dedupe (preserve order) — pandas to_parquet fails on duplicate col names
