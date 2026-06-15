@@ -351,9 +351,31 @@ def main():
             _adjust_names.append(_tgt)
         if _adjust_names:
             print(f"  [adjust] coalesced {_adjust_names} for {_alias}", flush=True)
-        # 調整後金額: NOT computed in-pipeline — user derives it in Tableau (calc field = [amount_mop] +
-        # [調整金額], applied on the 25-buckets where amount is pre-adjustment). Keeping it out avoids a
-        # column that double-counts or clashes with the user's own Tableau calc.
+        # 調整後金額: KEEP the project team's native post-adjustment col where a row has one, ELSE COMPUTE
+        # = amount + 調整金額 (added on 25-buckets only — 24/23 amount is already post-adjustment, so
+        # adding would double-count). Native per entity: galaxy adjusted_amount / vml 調整後金額 /
+        # sjm 2023年度調整后. Numeric → Tableau treats it as a '#' measure. wynn/melco/mgm have no native
+        # col → fully computed (mgm has no 調整金額 → 調整後金額 = amount).
+        _amt_col = cols.get("amount")
+        if _amt_col and _amt_col in df.columns:
+            _NATIVE_POST = {"galaxy": ["adjusted_amount"], "vml": ["調整後金額"], "sjm": ["2023年度調整后"]}
+            _native = pd.Series("", index=df.index, dtype="object")
+            for _c in _NATIVE_POST.get(_alias, []):
+                if _c in df.columns:
+                    _s = df[_c].astype("string").fillna("").str.strip()
+                    _native = _native.mask(_native.isin(_BLNK), _s)
+            _native_num = pd.to_numeric(_native.astype(str).str.replace(",", "", regex=False),
+                                        errors="coerce")
+            _base = pd.to_numeric(df[_amt_col], errors="coerce")
+            _delta = (pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0)
+                      if "調整金額" in df.columns else pd.Series(0.0, index=df.index))
+            _rp = (df["report_period"].astype("string").fillna("")
+                   if "report_period" in df.columns else pd.Series("", index=df.index))
+            _computed = _base + _delta.where(_rp.str.startswith("25"), 0.0)
+            df["調整後金額"] = _native_num.where(_native_num.notna(), _computed)
+            if "調整後金額" not in _adjust_names:
+                _adjust_names.append("調整後金額")
+            print(f"  [adjust] 調整後金額 = native(if any) else amount+調整金額(25) for {_alias}", flush=True)
         # unified-raw reference cols (項目組 own labels — reference only, OUR taxonomy is canonical)
         # unified-raw extra cols — carry through so the 大表 / Tableau keep EVERY column the
         # project team put in the tied raw (user 2026-06-14: "take care of any column 包括 remarks").
