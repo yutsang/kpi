@@ -383,6 +383,17 @@ def main():
                 print(f"  [skip] {fpath} not found")
                 continue
 
+            # resolve sheet name case-insensitively — new tie files may use 'data' where conf says 'Data'
+            if isinstance(raw_sheet, str):
+                try:
+                    _names = pd.ExcelFile(fpath, engine="openpyxl").sheet_names
+                    if raw_sheet not in _names:
+                        _ci = next((s for s in _names if str(s).strip().lower() == raw_sheet.strip().lower()), None)
+                        if _ci:
+                            print(f"  sheet {raw_sheet!r} → {_ci!r} (case-insensitive)")
+                            raw_sheet = _ci
+                except Exception:
+                    pass
             df_y = pd.read_excel(fpath, sheet_name=raw_sheet, header=yr_header_row,
                                  dtype=object, engine="openpyxl")
             if isinstance(df_y, dict):    # raw_sheet was a list (e.g. MGM ['combine','adjustment']) → concat
@@ -525,6 +536,14 @@ def main():
         df, cols, ent.get("section_inference_by_project") or {}
     )
     df = _fill_ng_within_project(df, cols, bool(ent.get("ng11_fill_within_project")))
+
+    # ── DICJ code: coalesce per-entity candidate cols → 'dicj_code' (project-level golden key) ──
+    # Raw DICJ 欄名逐家逐年唔同 (galaxy dicj_code / mgm Project_code=項目N / vml 項目編號（for 20xx…）/
+    # sjm project_code+項目). Coalesce first-non-blank → 'dicj_code', which step5 _UNIFIED_EXTRA carries
+    # → 大表 + Tableau 多咗呢個 project 級維度 (我哋 project = subproject, DICJ = roll-up project).
+    _dicj_srcs = ent.get("dicj_source_cols") or []
+    if _dicj_srcs:
+        df = _coalesce_into(df, "dicj_code", _dicj_srcs, "dicj")
 
     # ── Required-column check ─────────────────────────────────────────────────────
     missing_required = []
