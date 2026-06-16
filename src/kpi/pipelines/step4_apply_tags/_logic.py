@@ -335,7 +335,7 @@ def main():
     _co_unmatched = _ent_cfg.get("capex_opex_unmatched") if isinstance(_ent_cfg, dict) else None
     def _norm_co(s: str) -> str:
         ls = s.strip().lower()
-        if ls == "capex" or ls.startswith("capital"):
+        if ls.startswith("capex") or ls.startswith("capital"):   # 'capex' / 'Capex-Gaming' / 'Capex-Non-Gaming' (MGM 23 Source)
             return "Capex"
         if ls == "opex" or ls.startswith("operat"):
             return "Opex"
