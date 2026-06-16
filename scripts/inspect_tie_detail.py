@@ -28,6 +28,14 @@ NAME2ALIAS = [(["galaxy", "銀河"], "galaxy"), (["wynn", "永利"], "wynn"), ([
               (["sjm", "澳娛", "葡京", "回力", "上葡京"], "sjm"),
               (["威尼斯", "金沙", "sands", "londoner", "倫敦人", "parisian", "巴黎人", "venetian", "vml"], "vml")]
 DICJ_CANDS = ["dicj_code", "DICJ Code", "DICJ", "dicj"]
+# 預設: 25-buckets 對「報告」, 其餘對「調整後」。例外 (我哋 data 係調整前) → 用「報告」tie:
+AMT_TYPE_OVERRIDE = {("vml", "24"): "報告"}   # vml 24 確認係調整前 (user 2026-06-16)
+
+
+def _etype(alias, bucket):
+    b = str(bucket)
+    if (alias, b) in AMT_TYPE_OVERRIDE: return AMT_TYPE_OVERRIDE[(alias, b)]
+    return "報告" if b.startswith("25") else "調整後"
 
 
 def _alias(s):
@@ -111,7 +119,7 @@ def main():
         j["調整後"] = gp["調整後"].reindex(idx).fillna(0.0)
         j["ours"] = ours.reindex(idx).fillna(0.0)
         j = j.reset_index().rename(columns={"_d": "項目", "_p": "bucket"})
-        j["expected"] = j.apply(lambda r: r["報告"] if str(r["bucket"]).startswith("25") else r["調整後"], axis=1)
+        j["expected"] = j.apply(lambda r: r[_etype(alias, r["bucket"])], axis=1)
         j["Δ_vs_expected"] = j["ours"] - j["expected"]
         # 我哋最似 golden 邊個 type
         def _best(r):
