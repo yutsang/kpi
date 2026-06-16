@@ -97,14 +97,19 @@ def main():
         com = ENT.get(alias)
         if not com: continue
         L.append(f"\n{'='*70}\n## {alias}")
+        from collections import defaultdict as _dd
         ga = g[g["_a"] == alias]
-        gname2d = {}
-        for _, r in ga[["_d", "_n"]].drop_duplicates().iterrows():
-            nn = _norm(r["_n"])
-            if nn and nn not in gname2d: gname2d[nn] = r["_d"]
+        # golden 中文名 → DICJ: 分 unambiguous(唯一) vs ambiguous(同名多DICJ=年份變體,唔填)
+        _byname, _rawbyname = _dd(set), {}
+        for _, r in ga[["_n", "_d"]].iterrows():
+            _raw = str(r["_n"]).strip(); _n = _norm(_raw); _d = str(r["_d"]).strip()
+            if _n and _d and _d != "nan":
+                _byname[_n].add(_d); _rawbyname.setdefault(_n, _raw)
+        gname2d = {n: next(iter(ds)) for n, ds in _byname.items() if len(ds) == 1}   # 只信唯一名
+        amb = {n: ds for n, ds in _byname.items() if len(ds) > 1}                     # 歧義名 → 唔填
         gnames = sorted(gname2d.keys(), key=len, reverse=True)
-        gdset = sorted(set(d for d in ga["_d"].unique() if d and d != "nan"), key=len, reverse=True)
-        gdnorm = {_norm(d): d for d in gdset}
+        _amt_by_n = ga.assign(_nn=ga["_n"].map(_norm)).groupby("_nn")["_amt"].sum()
+        amb_amt = float(sum(abs(_amt_by_n.get(n, 0.0)) for n in amb))
         p = ROOT / "data" / alias / "output" / f"{com}_kpi_report.parquet"
         if not p.exists():
             L.append("   (no kpi_report)"); continue
@@ -115,30 +120,17 @@ def main():
         w = pd.to_numeric(df[amtc], errors="coerce").fillna(0.0) / 1e4 if amtc else pd.Series(0.0, index=df.index)
         rp = df["report_period"].astype(str) if "report_period" in df.columns else pd.Series("", index=df.index)
 
-        # resolve per distinct subproject (cache)
-        cache = {}
-        def resolve(name, exi):
-            if exi: return exi, "existing"
-            key = name
-            if key in cache: return cache[key]
-            nn = _norm(name); out = ("", "unmatched")
-            for gd in gdset:                                  # 2. golden DICJ code = prefix of name
-                if nn.startswith(_norm(gd)):
-                    out = (gd, "code_prefix"); break
-            else:
-                if nn in gname2d: out = (gname2d[nn], "name_exact")
-                else:
-                    for gn in gnames:
-                        if gn and gn in nn: out = (gname2d[gn], "name_substr"); break
-            cache[key] = out
-            return out
-
-        filled, how = [], []
-        for _i in range(len(df)):
-            d, h = resolve(nm.iat[_i], ex.iat[_i])
-            filled.append(d); how.append(h)
-        fd = pd.Series(filled, index=df.index)
-        hw = pd.Series(how, index=df.index)
+        # substring 反填 (= step0 機制): 最長 unambiguous 中文名做子字串 → DICJ; per-distinct-name cache
+        _sub_cache = {}
+        def _sub(name):
+            if name in _sub_cache: return _sub_cache[name]
+            _nn = _norm(name); _hit = ""
+            for gn in gnames:
+                if gn in _nn: _hit = gname2d[gn]; break
+            _sub_cache[name] = _hit; return _hit
+        sub_pred = nm.map(_sub)                       # 純子字串預測 (唔理 existing)
+        fd = ex.where(ex.ne(""), sub_pred)            # name-filled = existing 優先, 否則子字串
+        hw = pd.Series("unmatched", index=df.index).mask(sub_pred.ne(""), "name_substr").mask(ex.ne(""), "existing")
 
         tot = w.abs().sum()
         cov_ex = w.abs()[ex.ne("")].sum()
@@ -146,6 +138,21 @@ def main():
         L.append(f"   amount={amtc!r}  Σ|amt|={tot:,.0f}萬")
         L.append(f"   coverage by amount: existing dicj {cov_ex/max(tot,1)*100:.0f}%  →  name-filled {cov_fd/max(tot,1)*100:.0f}%")
         L.append(f"   resolve how: {hw.value_counts().to_dict()}")
+
+        # ── 驗證: 用 existing dicj 做 ground-truth, 量 namemap 子字串預測一致率 (填得啱唔啱) ──
+        _same = pd.Series(sub_pred.values == ex.values, index=df.index)
+        _gt = ex.ne("") & sub_pred.ne("")             # 有真值 且 namemap 有預測
+        _ag = _gt & _same
+        n_gt, n_pred, a_cnt = int(ex.ne("").sum()), int(_gt.sum()), int(_ag.sum())
+        wp, wa = w.abs()[_gt].sum(), w.abs()[_ag].sum()
+        L.append(f"   namemap: {len(gname2d)} 唯一名 | {len(amb)} 歧義名(唔填) 涉 {amb_amt:,.0f}萬")
+        if n_pred:
+            L.append(f"   ✅ 驗證(existing真值): namemap 命中 {n_pred:,}/{n_gt:,} 行; 一致 {a_cnt:,}={a_cnt/n_pred*100:.1f}% (金額 {wa/max(wp,1)*100:.1f}%)  mismatch→dicj_verify_{alias}.tsv")
+            _mm = _gt & ~_same
+            if int(_mm.sum()):
+                pd.DataFrame({"name": nm[_mm].values, "existing": ex[_mm].values, "namemap_pred": sub_pred[_mm].values}).drop_duplicates().head(200).to_csv(outdir / f"dicj_verify_{alias}.tsv", sep="\t", index=False)
+        else:
+            L.append(f"   驗證: existing 行 namemap 零命中 (existing 用 code-prefix 名 / 全自映, namemap 唔覆蓋 = 正常)")
 
         # tie vs golden (報告 25 / 調整後 24·23), before(existing) vs after(filled)
         gg = ga[ga["_t"].isin(["報告", "調整後"])].copy()
@@ -180,9 +187,9 @@ def main():
         gap.head(200).to_csv(outdir / f"dicj_goldgap_{alias}.tsv", sep="\t", index=False)
 
         # golden 中文名→DICJ map (供 step0 dicj_name_substr_map_file 反填用, e.g. wynn)
-        nmap = ga[["_n", "_d"]].copy()
-        nmap = nmap[(nmap["_n"].astype(str).str.strip() != "") & (nmap["_d"].astype(str).str.strip() != "")]
-        nmap.drop_duplicates().to_csv(outdir / f"dicj_namemap_{alias}.tsv", sep="\t", index=False, header=False)
+        # 只出 UNAMBIGUOUS 名 (歧義名唔出 → step0 唔會填錯年份變體)
+        pd.DataFrame([(_rawbyname[n], gname2d[n]) for n in gname2d]).to_csv(
+            outdir / f"dicj_namemap_{alias}.tsv", sep="\t", index=False, header=False)
 
         # write lookup + unmatched
         lk = pd.DataFrame({"subproject": nm, "dicj": fd, "how": hw}).drop_duplicates("subproject")
