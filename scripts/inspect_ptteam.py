@@ -26,7 +26,7 @@ ENT = {"galaxy": "company_1", "sjm": "company_2", "wynn": "company_3",
 NAME2ALIAS = [(["galaxy", "銀河"], "galaxy"), (["wynn", "永利"], "wynn"), (["mgm", "美高梅"], "mgm"),
               (["melco", "新濠", "摩珀斯", "影匯", "影滙", "studio city", "city of dreams"], "melco"),
               (["sjm", "澳娛", "葡京", "回力", "上葡京"], "sjm"),
-              (["威尼斯", "金沙", "sands", "londoner", "倫敦人", "parisian", "巴黎人", "venetian"], "vml")]
+              (["威尼斯", "金沙", "sands", "londoner", "倫敦人", "parisian", "巴黎人", "venetian", "vml"], "vml")]
 
 
 def _alias(s):
