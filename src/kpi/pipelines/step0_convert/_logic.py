@@ -560,6 +560,53 @@ def main():
         _nf = int(df["dicj_code"].astype("string").fillna("").str.strip().ne("").sum())
         print(f"  dicj_code ← coalesce {_avail} (overwrite + 項目零正規化): {_nf:,}/{len(df):,} filled", flush=True)
 
+    # ── DICJ name-fill: 對仲 blank 嘅 dicj_code，用 golden中文名→DICJ 子字串反填 ──────
+    # wynn unified 24/25 冇填 dicj，但項目名 = "<Eng desc> <golden中文名>" → 抽中文名對返 DICJ。
+    # map file 由 scripts/build_dicj_fill.py 出 (dicj_namemap_<ent>.tsv: 中文名 \t DICJ)。
+    _nm_file = ent.get("dicj_name_substr_map_file")
+    if _nm_file:
+        from pathlib import Path as _P
+        import unicodedata as _ud, re as _re2
+        _mp = _P(_nm_file) if _P(_nm_file).is_absolute() else _P.cwd() / _nm_file
+        if not _mp.exists():
+            print(f"  [warn] dicj_name_substr_map_file 揾唔到: {_mp}", flush=True)
+        else:
+            def _nn(s):                                  # 同 build_dicj_fill 一致嘅正規化
+                s = _ud.normalize("NFKC", str(s)).strip()
+                for _a in "“”‘’\"'（）()「」[]":
+                    s = s.replace(_a, "")
+                return _re2.sub(r"[\s\-–—_、,，.。/|]+", "", s).lower()
+            _pairs = []
+            for _ln in _mp.read_text(encoding="utf-8").splitlines():
+                _t = _ln.rstrip("\n").split("\t")
+                if len(_t) >= 2 and _t[0].strip() and _t[1].strip() and _t[0].strip().lower() != "name":
+                    _k = _nn(_t[0])
+                    if _k:
+                        _pairs.append((_k, _t[1].strip()))
+            _pairs.sort(key=lambda x: len(x[0]), reverse=True)   # 最長中文名先 match
+            _mcol = ent.get("dicj_name_match_col") or cols.get("project")
+            if "dicj_code" not in df.columns:
+                df["dicj_code"] = ""
+            if _mcol and _mcol in df.columns and _pairs:
+                _dc = df["dicj_code"].astype("string").fillna("").str.strip()
+                _blank = _dc.eq("")
+                _names = df.loc[_blank, _mcol].astype("string").fillna("").str.strip()
+                _cache = {}
+                def _resolve(_raw):
+                    if _raw in _cache:
+                        return _cache[_raw]
+                    _n = _nn(_raw); _hit = ""
+                    for _k, _v in _pairs:
+                        if _k in _n:
+                            _hit = _v; break
+                    _cache[_raw] = _hit
+                    return _hit
+                _filled = _names.map(_resolve)
+                df.loc[_blank, "dicj_code"] = _filled.values
+                _added = int((_filled.astype(str).str.strip() != "").sum())
+                _tot = int(df["dicj_code"].astype("string").fillna("").str.strip().ne("").sum())
+                print(f"  dicj_code ← name-substr fill [{_mcol}] via {_nm_file}: +{_added:,} → {_tot:,}/{len(df):,} filled", flush=True)
+
     # ── Required-column check ─────────────────────────────────────────────────────
     missing_required = []
     for k in REQUIRED_COL_KEYS:
