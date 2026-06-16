@@ -70,13 +70,13 @@ def main():
 
     for alias in want:
         L.append(f"\n{'='*72}\n## {alias}")
-        ptdir = ROOT / "data" / alias / "raw" / "project_team"
+        ptdir = ROOT / "data" / alias / "raw"      # 掃成個 raw (含源文件 + project_team 子資料夾)
         if not ptdir.exists():
             L.append(f"   (冇 {ptdir.relative_to(ROOT)} — 跳過)")
             continue
         gset = _golden_dicj(g, alias) if g is not None else set()
         L.append(f"   golden DICJ set: {len(gset)} codes")
-        files = sorted(list(ptdir.glob("*.xlsx")) + list(ptdir.glob("*.xls")))
+        files = sorted(list(ptdir.glob("**/*.xlsx")) + list(ptdir.glob("**/*.xls")))
         if not files:
             L.append("   (folder 入面冇 xlsx)")
             continue

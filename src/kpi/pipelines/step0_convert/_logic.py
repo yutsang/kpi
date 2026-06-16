@@ -560,6 +560,20 @@ def main():
         _nf = int(df["dicj_code"].astype("string").fillna("").str.strip().ne("").sum())
         print(f"  dicj_code ← coalesce {_avail} (overwrite + 項目零正規化): {_nf:,}/{len(df):,} filled", flush=True)
 
+    # ── DICJ normalize: 對齊 golden code scheme (sjm bare「37」→項目37; vml「NG013/GM002」→項目13/項目2) ──
+    _dnorm = ent.get("dicj_normalize") or []
+    if _dnorm and "dicj_code" in df.columns:
+        import re as _re3  # noqa: F401  (regex 經 pandas str.replace)
+        _s = df["dicj_code"].astype("string").fillna("")
+        _before = _s.copy()
+        for _rule in _dnorm:
+            _pat = _rule.get("pattern")
+            if _pat:
+                _s = _s.str.replace(_pat, _rule.get("repl", ""), regex=True)
+        df["dicj_code"] = _s
+        _chg = int((_before != _s).sum())
+        print(f"  dicj_code ← normalize {len(_dnorm)} rule(s): {_chg:,} 行改寫 (對齊 golden code)", flush=True)
+
     # ── DICJ name-fill: 對仲 blank 嘅 dicj_code，用 golden中文名→DICJ 子字串反填 ──────
     # wynn unified 24/25 冇填 dicj，但項目名 = "<Eng desc> <golden中文名>" → 抽中文名對返 DICJ。
     # map file 由 scripts/build_dicj_fill.py 出 (dicj_namemap_<ent>.tsv: 中文名 \t DICJ)。
