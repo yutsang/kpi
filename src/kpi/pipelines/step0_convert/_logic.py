@@ -115,7 +115,13 @@ def _apply_col_combinations(df: pd.DataFrame, cols: dict) -> pd.DataFrame:
     + account_code_fallback_cols / account_desc_fallback_cols (coalesce) using the cols dict."""
     project_name_cols = cols.get("project_name_cols") or []
     if project_name_cols:
-        df = _combine_cols(df, project_name_cols, cols.get("project", "project"), "project")
+        _pcol = cols.get("project", "project")
+        _snap = cols.get("snapshot_project_to")
+        if _snap and _pcol in df.columns and any(c in df.columns for c in project_name_cols):
+            # snapshot 原始 project 欄 (e.g. wynn 'Name of Investment Project'=DICJ code) before combine overwrites
+            df[_snap] = df[_pcol]
+            print(f"  snapshot '{_pcol}' → '{_snap}' (保留原值供 dicj_source_cols)")
+        df = _combine_cols(df, project_name_cols, _pcol, "project")
     description_cols = cols.get("description_cols") or []
     if description_cols:
         df = _combine_cols(df, description_cols, cols.get("description", "description"), "description")
