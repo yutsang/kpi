@@ -574,6 +574,22 @@ def main():
         _chg = int((_before != _s).sum())
         print(f"  dicj_code ← normalize {len(_dnorm)} rule(s): {_chg:,} 行改寫 (對齊 golden code)", flush=True)
 
+    # ── DICJ from name-prefix: 源文件 project 名 = "CODE_中文名 | Eng" → 抽開頭 code 做 dicj (wynn 24/25) ──
+    _pfx_col = ent.get("dicj_name_prefix_col")
+    if _pfx_col and _pfx_col in df.columns:
+        if "dicj_code" not in df.columns:
+            df["dicj_code"] = ""
+        _dc = df["dicj_code"].astype("string").fillna("").str.strip()
+        _blank = _dc.eq("")
+        # 開頭 token (split 第一個 _ / 空格 / |), 只收似 golden code (字母2-6 + 數字2-4), 唔會誤抽中文/英文短語
+        _pfx = (df.loc[_blank, _pfx_col].astype("string").fillna("").str.strip()
+                .str.split(r"[_\s|]", n=1).str[0])
+        _pfx = _pfx.where(_pfx.str.match(r"^[A-Za-z]{2,6}\d{2,4}$"), "")
+        df.loc[_blank, "dicj_code"] = _pfx.values
+        _added = int((_pfx.astype(str).str.strip() != "").sum())
+        _tot = int(df["dicj_code"].astype("string").fillna("").str.strip().ne("").sum())
+        print(f"  dicj_code ← name-prefix [{_pfx_col}]: +{_added:,} → {_tot:,}/{len(df):,} filled", flush=True)
+
     # ── DICJ name-fill: 對仲 blank 嘅 dicj_code，用 golden中文名→DICJ 子字串反填 ──────
     # wynn unified 24/25 冇填 dicj，但項目名 = "<Eng desc> <golden中文名>" → 抽中文名對返 DICJ。
     # map file 由 scripts/build_dicj_fill.py 出 (dicj_namemap_<ent>.tsv: 中文名 \t DICJ)。
