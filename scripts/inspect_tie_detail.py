@@ -67,7 +67,15 @@ def main():
     g["_a"] = g[next(c for c in g.columns if "承批" in c)].map(_alias)
     g["_d"] = g[next(c for c in g.columns if c.strip() in ("DICJ Code", "DICJ"))].astype(str).str.strip()
     g["_p"] = g[next(c for c in g.columns if c.strip() == "Period")].astype(str).str.strip()
-    g["_t"] = g[next(c for c in g.columns if "Amount Type" in c)].astype(str).str.strip()
+    def _ntype(t):                                   # 簡繁/英文 amount-type 容錯 → canonical
+        t = str(t).strip()
+        cmap = {"報告": ["報告", "报告", "report", "actual", "實際", "实际"],
+                "計劃": ["計劃", "计划", "plan", "budget", "預算", "预算"],
+                "調整後": ["調整後", "调整后", "adjust", "adj"]}
+        for canon, kws in cmap.items():
+            if any(k.lower() in t.lower() for k in kws): return canon
+        return t
+    g["_t"] = g[next(c for c in g.columns if "Amount Type" in c)].astype(str).str.strip().map(_ntype)
     g["_amt"] = pd.to_numeric(g[next(c for c in g.columns if c.strip() == "Amount")].astype(str).str.replace(",", "", regex=False), errors="coerce").fillna(0.0)
     outdir = ROOT / "results"; outdir.mkdir(exist_ok=True)
 
@@ -76,6 +84,9 @@ def main():
         if not com: continue
         L.append(f"\n{'='*72}\n## {alias}")
         ga = g[g["_a"] == alias]
+        L.append(f"   golden: {len(ga):,} 行  Σ_amt={ga['_amt'].sum():,.0f}  Period={sorted(ga['_p'].unique())}  Type={sorted(ga['_t'].unique())}")
+        if len(ga) == 0:
+            L.append("   !! golden 0 行 (alias 對唔到承批公司) — 睇 g['承批公司'].unique() 同 NAME2ALIAS"); continue
         # golden pivot: (dicj, period) × type → amount
         gp = ga.groupby(["_d", "_p", "_t"])["_amt"].sum().unstack("_t").fillna(0.0)
         for t in ("報告", "計劃", "調整後"):
