@@ -52,9 +52,40 @@ V_TO_NG = {
     "V_OTHER": ("NG11", "其他"),
 }
 
-def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
-    """Build Tableau files. per-entity-xlsx → out_dir/tableau_{yr}_{ent}.xlsx (default data/tableau).
-    Importable so the `generate` kedro pipeline can call it (no argparse)."""
+
+def _cn_kw(s) -> str:
+    """中文 範疇 → NG keyword fallback (mirrors build_master_audit). 博彩 before 娛樂; 非博彩 = noise."""
+    s = str(s)
+    if "非博彩" in s:
+        return ""
+    for kws, ng in [(["博彩", "gaming"], "NG0"), (["海上"], "NG10"),
+                    (["外國", "客源", "國際客"], "NG1"), (["會議", "會展", "mice"], "NG2"),
+                    (["娛樂", "演唱", "表演"], "NG3"), (["體育", "賽事"], "NG4"),
+                    (["文化", "藝術", "文藝"], "NG5"), (["健康", "養生"], "NG6"),
+                    (["主題", "遊樂"], "NG7"), (["美食", "餐飲"], "NG8"),
+                    (["社區"], "NG9"), (["其他"], "NG11")]:
+        if any(k in s or k in s.lower() for k in kws):
+            return ng
+    return ""
+
+
+def _fuzzy_col(df, name):
+    if not name:
+        return None
+    if name in df.columns:
+        return name
+    for c in df.columns:
+        if str(c).strip() == str(name).strip():
+            return c
+    return None
+
+
+def run(fmt="csv", out_dir="data/tableau"):
+    """Build Tableau files. DEFAULT = csv (one combined tableau_combined_25.csv). Other formats kept
+    for the kedro generate/tableau pipelines. Importable so they can call it (no argparse)."""
+    from kpi.lib.conf import load_categories
+    from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code
+    cats = load_categories()
     frames = []
     for ent, com in ENTITIES.items():
         parquet = Path(f"data/{ent}/output/{com}_kpi_report.parquet")
@@ -110,14 +141,39 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
         for c in ["amount_mop", "horizontal_id", "horizontal_label", "vertical_id",
                   "vertical_label", "ng_scope", "final_capex_opex", "row_type"]:
             if c in df.columns: keep.append(c)
-        # NG0-NG11 + Chinese label derived from vertical_id via canonical V→NG mapping.
-        # This gives consistent NG codes across all 6 entities (raw data for non-Galaxy
-        # entities only has binary gaming/non_gaming — we derive granular NG from V).
-        if "vertical_id" in df.columns:
-            df["ng_code"] = df["vertical_id"].map(lambda v: V_TO_NG.get(str(v), ("NG11", "其他"))[0])
-            df["ng_label"] = df["vertical_id"].map(lambda v: V_TO_NG.get(str(v), ("NG11", "其他"))[1])
-            keep.append("ng_code")
-            keep.append("ng_label")
+        # NG — ALWAYS the project team's databook 範疇 column (項目性質/項目類型/ng_theme/Section.1/NG11
+        # Category), NEVER derived from V. Mirrors build_master_audit so 大表 + Tableau NG match exactly.
+        # (Only V + H are OUR classification work; NG must stay the project team's.) Unmapped → (未分類).
+        _ng_cols = []
+        for _nm in ([cfg.get("columns", {}).get("ng11_category", "")]
+                    + [(ys.get("columns_override") or {}).get("ng11_category")
+                       for ys in (cfg.get("yearly_sources") or [])]):
+            _fc = _fuzzy_col(df, _nm)
+            if _fc and _fc not in _ng_cols:
+                _ng_cols.append(_fc)
+        for _c in df.columns:
+            if _c not in _ng_cols and any(k in str(_c) for k in
+                    ("項目性質", "項目類型", "項目分類", "範疇", "NG11 Category", "NG Category")):
+                _ng_cols.append(_c)
+
+        def _resolve_ng(x):
+            for cand in (x, str(x).upper().replace(" ", "")):
+                r = normalize_ng_code(cand, cats) or ""
+                if r[:2] == "NG" and r[2:].isdigit():
+                    return r
+            return _cn_kw(x)
+        _ngc = pd.Series("", index=df.index, dtype="object")
+        for _fc in _ng_cols:
+            _m = {x: _resolve_ng(x) for x in set(df[_fc].astype(str).unique())}
+            _r = df[_fc].astype(str).map(_m).fillna("")
+            _r = _r.where(_r.str.fullmatch(r"NG\d+").fillna(False), "")
+            _ngc = _ngc.mask(_ngc.eq(""), _r)
+        df["ng_code"] = _ngc
+        _nglab = {ng: lbl for ng, lbl in V_TO_NG.values()}
+        df["ng_label"] = df["ng_code"].map(lambda n: _nglab.get(str(n), "(未分類)"))
+        keep.append("ng_code"); keep.append("ng_label")
+        _mp = int(_ngc.str.fullmatch(r"NG\d+").fillna(False).sum())
+        print(f"  [{ent}] NG from databook {_ng_cols}: {_mp:,}/{len(df):,} mapped (NG=項目組, 非V)")
         # Per-entity native cols (preserve project + subproject + acct for drill-down)
         proj_col = cfg.get("columns",{}).get("project","")
         ac_col = cfg.get("columns",{}).get("account_code","")
@@ -262,9 +318,9 @@ def run(fmt="per-entity-xlsx", out_dir="data/tableau"):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--format", choices=["cube", "cube-detail", "csv", "csv-per-entity", "all", "parquet", "xlsx", "per-entity-xlsx"],
-                   default="per-entity-xlsx",
-                   help="cube/cube-detail = aggregated cross-tab; csv = ONE row-level CSV (all dims incl description); "
-                        "csv-per-entity = 6 row-level CSVs (one per company, for 對數); per-entity-xlsx (default) = old union")
+                   default="csv",
+                   help="DEFAULT csv = ONE row-level tableau_combined_25.csv (all dims incl 調整/remark). "
+                        "Others kept but rarely needed: cube=aggregated; csv-per-entity=6 files; per-entity-xlsx=old union")
     p.add_argument("--out", default="data/tableau", help="output dir for per-entity-xlsx")
     args = p.parse_args()
     run(args.format, args.out)

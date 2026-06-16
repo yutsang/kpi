@@ -33,7 +33,7 @@ ENTITIES = {"galaxy": "company_1", "sjm": "company_2", "wynn": "company_3",
 
 def main():
     import build_master_audit_25 as bma   # noqa: E402  (scripts/ on sys.path)
-    import prep_tableau_25 as tab          # noqa: E402
+    import prep_tableau as tab          # noqa: E402
 
     cats = yaml.safe_load((_ROOT / "conf" / "base" / "categories.yml").read_text(encoding="utf-8"))
 

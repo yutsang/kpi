@@ -19,7 +19,7 @@ if str(_SCRIPTS) not in sys.path:
 
 
 def main():
-    import prep_tableau_25 as tab   # noqa: E402  (scripts/ on sys.path)
+    import prep_tableau as tab   # noqa: E402  (scripts/ on sys.path)
 
     print("=== tableau → data/tableau ===", flush=True)
     tab.run("per-entity-xlsx", "data/tableau")
