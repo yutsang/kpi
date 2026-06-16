@@ -22,6 +22,10 @@ try: sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=T
 except Exception: pass
 import pandas as pd
 import yaml
+try:
+    from tqdm import tqdm
+except Exception:
+    def tqdm(x, **k): return x
 
 ROOT = Path(__file__).resolve().parent.parent
 GCAND = [ROOT / "HQ 投資方向_audit_0616.xlsx", ROOT / "data" / "HQ 投資方向_audit_0616.xlsx",
@@ -99,17 +103,26 @@ def main():
         L.append(f"\n{'='*70}\n## {alias}")
         from collections import defaultdict as _dd
         ga = g[g["_a"] == alias]
-        # golden 中文名 → DICJ: 分 unambiguous(唯一) vs ambiguous(同名多DICJ=年份變體,唔填)
-        _byname, _rawbyname = _dd(set), {}
-        for _, r in ga[["_n", "_d"]].iterrows():
-            _raw = str(r["_n"]).strip(); _n = _norm(_raw); _d = str(r["_d"]).strip()
+        # golden 報告/調整後 視角 (25→報告, 其餘→調整後): 反填同對數都用呢個
+        gg = ga[ga["_t"].isin(["報告", "調整後"])].copy()
+        gg["_use"] = gg["_p"].map(lambda b: "報告" if str(b).startswith("25") else "調整後")
+        gsel = gg[gg["_t"] == gg["_use"]].copy()
+        gsel["_nn"] = gsel["_n"].map(_norm); gsel["_pp"] = gsel["_p"].astype(str).str.strip()
+
+        # ── PERIOD-AWARE golden map: (中文名, period) → DICJ (用行自己年份解 generic「其他」桶歧義) ──
+        combo, rawbyname = _dd(set), {}
+        for _, r in gsel.iterrows():
+            _n, _d = r["_nn"], str(r["_d"]).strip()
             if _n and _d and _d != "nan":
-                _byname[_n].add(_d); _rawbyname.setdefault(_n, _raw)
-        gname2d = {n: next(iter(ds)) for n, ds in _byname.items() if len(ds) == 1}   # 只信唯一名
-        amb = {n: ds for n, ds in _byname.items() if len(ds) > 1}                     # 歧義名 → 唔填
-        gnames = sorted(gname2d.keys(), key=len, reverse=True)
-        _amt_by_n = ga.assign(_nn=ga["_n"].map(_norm)).groupby("_nn")["_amt"].sum()
-        amb_amt = float(sum(abs(_amt_by_n.get(n, 0.0)) for n in amb))
+                combo[(_n, r["_pp"])].add(_d); rawbyname.setdefault(_n, str(r["_n"]).strip())
+        pa = {k: next(iter(v)) for k, v in combo.items() if len(v) == 1}     # (名,period) 唯一 → 填
+        amb_pa = {k: v for k, v in combo.items() if len(v) > 1}              # 連 period 都歧義 → 唔填
+        names_by_p = _dd(list)
+        for (n, pp) in pa: names_by_p[pp].append(n)
+        for pp in names_by_p: names_by_p[pp].sort(key=len, reverse=True)
+        _gamt = gsel.groupby(["_nn", "_pp"])["_amt"].sum()
+        amb_pa_amt = float(sum(abs(_gamt.get(k, 0.0)) for k in amb_pa))
+
         p = ROOT / "data" / alias / "output" / f"{com}_kpi_report.parquet"
         if not p.exists():
             L.append("   (no kpi_report)"); continue
@@ -118,86 +131,72 @@ def main():
         ex = df[dcol].astype("string").fillna("").str.strip() if dcol else pd.Series("", index=df.index)
         nm = df[pcol].astype("string").fillna("").str.strip() if pcol else pd.Series("", index=df.index)
         w = pd.to_numeric(df[amtc], errors="coerce").fillna(0.0) / 1e4 if amtc else pd.Series(0.0, index=df.index)
-        rp = df["report_period"].astype(str) if "report_period" in df.columns else pd.Series("", index=df.index)
+        rp = (df["report_period"].astype(str) if "report_period" in df.columns else pd.Series("", index=df.index)).str.strip()
 
-        # substring 反填 (= step0 機制): 最長 unambiguous 中文名做子字串 → DICJ; per-distinct-name cache
-        _sub_cache = {}
-        def _sub(name):
-            if name in _sub_cache: return _sub_cache[name]
-            _nn = _norm(name); _hit = ""
-            for gn in gnames:
-                if gn in _nn: _hit = gname2d[gn]; break
-            _sub_cache[name] = _hit; return _hit
-        sub_pred = nm.map(_sub)                       # 純子字串預測 (唔理 existing)
-        fd = ex.where(ex.ne(""), sub_pred)            # name-filled = existing 優先, 否則子字串
+        # period-aware 子字串反填: 行 period 嗰組 golden 中文名, 最長 substring → DICJ (cache per (name,period))
+        _cache = {}
+        def _subpa(name, period):
+            k = (name, period)
+            if k in _cache: return _cache[k]
+            nn = _norm(name); hit = ""
+            for gn in names_by_p.get(period, ()):
+                if gn in nn: hit = pa[(gn, period)]; break
+            _cache[k] = hit; return hit
+        _keys = list(zip(nm.values, rp.values))
+        for k in tqdm(set(_keys), desc=f"{alias} period-aware fill", leave=False):
+            _subpa(k[0], k[1])
+        sub_pred = pd.Series([_cache[k] for k in _keys], index=df.index)
+        fd = ex.where(ex.ne(""), sub_pred)
         hw = pd.Series("unmatched", index=df.index).mask(sub_pred.ne(""), "name_substr").mask(ex.ne(""), "existing")
 
-        tot = w.abs().sum()
-        cov_ex = w.abs()[ex.ne("")].sum()
-        cov_fd = w.abs()[fd.ne("")].sum()
+        tot = w.abs().sum(); cov_ex = w.abs()[ex.ne("")].sum(); cov_fd = w.abs()[fd.ne("")].sum()
         L.append(f"   amount={amtc!r}  Σ|amt|={tot:,.0f}萬")
-        L.append(f"   coverage by amount: existing dicj {cov_ex/max(tot,1)*100:.0f}%  →  name-filled {cov_fd/max(tot,1)*100:.0f}%")
+        L.append(f"   PERIOD-AWARE map: {len(pa):,} (名,期)→唯一DICJ | 連period都仲歧義 {len(amb_pa)} 涉 {amb_pa_amt:,.0f}萬")
+        L.append(f"   coverage by amount: existing {cov_ex/max(tot,1)*100:.0f}%  →  period-aware filled {cov_fd/max(tot,1)*100:.0f}%")
         L.append(f"   resolve how: {hw.value_counts().to_dict()}")
 
-        # ── 驗證: 用 existing dicj 做 ground-truth, 量 namemap 子字串預測一致率 (填得啱唔啱) ──
+        # ── 驗證: existing 真值 vs period-aware 預測一致率 (填得啱唔啱) ──
         _same = pd.Series(sub_pred.values == ex.values, index=df.index)
-        _gt = ex.ne("") & sub_pred.ne("")             # 有真值 且 namemap 有預測
-        _ag = _gt & _same
+        _gt = ex.ne("") & sub_pred.ne(""); _ag = _gt & _same
         n_gt, n_pred, a_cnt = int(ex.ne("").sum()), int(_gt.sum()), int(_ag.sum())
         wp, wa = w.abs()[_gt].sum(), w.abs()[_ag].sum()
-        L.append(f"   namemap: {len(gname2d)} 唯一名 | {len(amb)} 歧義名(唔填) 涉 {amb_amt:,.0f}萬")
         if n_pred:
-            L.append(f"   ✅ 驗證(existing真值): namemap 命中 {n_pred:,}/{n_gt:,} 行; 一致 {a_cnt:,}={a_cnt/n_pred*100:.1f}% (金額 {wa/max(wp,1)*100:.1f}%)  mismatch→dicj_verify_{alias}.tsv")
+            L.append(f"   ✅ 驗證(existing真值): 命中 {n_pred:,}/{n_gt:,}; 一致 {a_cnt:,}={a_cnt/n_pred*100:.1f}% (金額 {wa/max(wp,1)*100:.1f}%)  mismatch→dicj_verify_{alias}.tsv")
             _mm = _gt & ~_same
             if int(_mm.sum()):
-                pd.DataFrame({"name": nm[_mm].values, "existing": ex[_mm].values, "namemap_pred": sub_pred[_mm].values}).drop_duplicates().head(200).to_csv(outdir / f"dicj_verify_{alias}.tsv", sep="\t", index=False)
+                pd.DataFrame({"name": nm[_mm].values, "period": rp[_mm].values, "existing": ex[_mm].values, "pred": sub_pred[_mm].values}).drop_duplicates().head(200).to_csv(outdir / f"dicj_verify_{alias}.tsv", sep="\t", index=False)
         else:
-            L.append(f"   驗證: existing 行 namemap 零命中 (existing 用 code-prefix 名 / 全自映, namemap 唔覆蓋 = 正常)")
+            L.append(f"   驗證: existing 行零命中 (全自映/code-prefix, 正常)")
 
-        # tie vs golden (報告 25 / 調整後 24·23), before(existing) vs after(filled)
-        gg = ga[ga["_t"].isin(["報告", "調整後"])].copy()
-        gg["_use"] = gg["_p"].map(lambda b: "報告" if str(b).startswith("25") else "調整後")
-        gsel = gg[gg["_t"] == gg["_use"]]
-        gold = gsel.groupby(["_d", "_p"])["_amt"].sum()
-        gold.index = gold.index.set_names(["_k", "_b"])
-        for tag, key in (("BEFORE(existing)", ex), ("AFTER(name-filled)", fd)):
+        # tie vs golden, before(existing) vs after(period-aware)
+        gold = gsel.groupby(["_d", "_pp"])["_amt"].sum(); gold.index = gold.index.set_names(["_k", "_b"])
+        for tag, key in (("BEFORE(existing)", ex), ("AFTER(period-aware)", fd)):
             o = pd.DataFrame({"_k": key.values, "_b": rp.values, "_w": w.values}).groupby(["_k", "_b"])["_w"].sum()
             j = pd.concat([gold.rename("g"), o.rename("o")], axis=1).fillna(0.0)
-            m = j[(j["g"] != 0) & (j["o"] != 0)]
-            unmatched = j[(j["g"] != 0) & (j["o"] == 0)]["g"].sum()
-            L.append(f"   {tag}: 已配對 Δ={m['o'].sum()-m['g'].sum():,.0f}萬 ({len(m)} key)  "
-                     f"golden 對唔到={unmatched:,.0f}萬")
+            m = j[(j["g"] != 0) & (j["o"] != 0)]; unmatched = j[(j["g"] != 0) & (j["o"] == 0)]["g"].sum()
+            L.append(f"   {tag}: 已配對 Δ={m['o'].sum()-m['g'].sum():,.0f}萬 ({len(m)} key)  golden 對唔到={unmatched:,.0f}萬")
 
-        # diagnose residual (AFTER): bucket vocab + 邊類對唔到 (bucket-label vs 缺 dicj)
+        # residual breakdown (AFTER)
         o_fd = pd.DataFrame({"_k": fd.values, "_b": rp.values, "_w": w.values}).groupby(["_k", "_b"])["_w"].sum()
         jj = pd.concat([gold.rename("g"), o_fd.rename("o")], axis=1).fillna(0.0)
-        ours_b = sorted(set(str(x) for x in rp.unique() if str(x).strip()))
-        gold_b = sorted(set(str(x) for x in gold.index.get_level_values("_b")))
-        L.append(f"   our buckets   ={ours_b}")
-        L.append(f"   golden buckets={gold_b}")
-        our_d = set(x for x in fd.unique() if str(x).strip())
-        gold_d = set(gold.index.get_level_values("_k"))
+        our_d = set(x for x in fd.unique() if str(x).strip()); gold_d = set(gold.index.get_level_values("_k"))
         miss_d = sorted(gold_d - our_d)
-        gap = jj[(jj["g"] != 0) & (jj["o"] == 0)].reset_index()
-        gap = gap.sort_values("g", key=lambda s: s.abs(), ascending=False)
-        gap_in_missd = gap[gap["_k"].isin(miss_d)]["g"].abs().sum()
-        gap_buckmis = gap[~gap["_k"].isin(miss_d)]["g"].abs().sum()
-        L.append(f"   殘差拆解: 缺dicj(我側完全冇此code)={gap_in_missd:,.0f}萬 ({len(miss_d)} code, e.g.{miss_d[:8]})  "
-                 f"|  bucket對唔上(code在但period唔match)={gap_buckmis:,.0f}萬")
+        gap = jj[(jj["g"] != 0) & (jj["o"] == 0)].reset_index().sort_values("g", key=lambda s: s.abs(), ascending=False)
+        gap_miss = gap[gap["_k"].isin(miss_d)]["g"].abs().sum(); gap_buck = gap[~gap["_k"].isin(miss_d)]["g"].abs().sum()
+        L.append(f"   殘差拆解: 缺dicj={gap_miss:,.0f}萬 ({len(miss_d)} code, e.g.{miss_d[:8]}) | bucket對唔上={gap_buck:,.0f}萬")
         gap.head(200).to_csv(outdir / f"dicj_goldgap_{alias}.tsv", sep="\t", index=False)
 
-        # golden 中文名→DICJ map (供 step0 dicj_name_substr_map_file 反填用, e.g. wynn)
-        # 只出 UNAMBIGUOUS 名 (歧義名唔出 → step0 唔會填錯年份變體)
-        pd.DataFrame([(_rawbyname[n], gname2d[n]) for n in gname2d]).to_csv(
+        # period-aware namemap (中文名 \t period \t DICJ) 供 step0 反填用
+        pd.DataFrame([(rawbyname[n], pp, d) for (n, pp), d in pa.items()]).to_csv(
             outdir / f"dicj_namemap_{alias}.tsv", sep="\t", index=False, header=False)
 
-        # write lookup + unmatched
-        lk = pd.DataFrame({"subproject": nm, "dicj": fd, "how": hw}).drop_duplicates("subproject")
+        # lookup + unmatched
+        lk = pd.DataFrame({"subproject": nm, "period": rp, "dicj": fd, "how": hw}).drop_duplicates(["subproject", "period"])
         lk.sort_values(["how", "subproject"]).to_csv(outdir / f"dicj_lookup_{alias}.tsv", sep="\t", index=False)
         un = lk[lk["dicj"] == ""].copy()
         if len(un):
             un["amt萬"] = un["subproject"].map(lambda x: round(w.abs()[nm.eq(x)].sum(), 1))
-            un.sort_values("amt萬", ascending=False)[["subproject", "amt萬"]].head(400).to_csv(
+            un.sort_values("amt萬", ascending=False)[["subproject", "period", "amt萬"]].head(400).to_csv(
                 outdir / f"dicj_unmatched_{alias}.tsv", sep="\t", index=False)
     _w(L)
 
