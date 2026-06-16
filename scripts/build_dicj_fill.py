@@ -161,6 +161,24 @@ def main():
             L.append(f"   {tag}: 已配對 Δ={m['o'].sum()-m['g'].sum():,.0f}萬 ({len(m)} key)  "
                      f"golden 對唔到={unmatched:,.0f}萬")
 
+        # diagnose residual (AFTER): bucket vocab + 邊類對唔到 (bucket-label vs 缺 dicj)
+        o_fd = pd.DataFrame({"_k": fd.values, "_b": rp.values, "_w": w.values}).groupby(["_k", "_b"])["_w"].sum()
+        jj = pd.concat([gold.rename("g"), o_fd.rename("o")], axis=1).fillna(0.0)
+        ours_b = sorted(set(str(x) for x in rp.unique() if str(x).strip()))
+        gold_b = sorted(set(str(x) for x in gold.index.get_level_values("_b")))
+        L.append(f"   our buckets   ={ours_b}")
+        L.append(f"   golden buckets={gold_b}")
+        our_d = set(x for x in fd.unique() if str(x).strip())
+        gold_d = set(gold.index.get_level_values("_k"))
+        miss_d = sorted(gold_d - our_d)
+        gap = jj[(jj["g"] != 0) & (jj["o"] == 0)].reset_index()
+        gap = gap.sort_values("g", key=lambda s: s.abs(), ascending=False)
+        gap_in_missd = gap[gap["_k"].isin(miss_d)]["g"].abs().sum()
+        gap_buckmis = gap[~gap["_k"].isin(miss_d)]["g"].abs().sum()
+        L.append(f"   殘差拆解: 缺dicj(我側完全冇此code)={gap_in_missd:,.0f}萬 ({len(miss_d)} code, e.g.{miss_d[:8]})  "
+                 f"|  bucket對唔上(code在但period唔match)={gap_buckmis:,.0f}萬")
+        gap.head(200).to_csv(outdir / f"dicj_goldgap_{alias}.tsv", sep="\t", index=False)
+
         # write lookup + unmatched
         lk = pd.DataFrame({"subproject": nm, "dicj": fd, "how": hw}).drop_duplicates("subproject")
         lk.sort_values(["how", "subproject"]).to_csv(outdir / f"dicj_lookup_{alias}.tsv", sep="\t", index=False)
