@@ -543,7 +543,22 @@ def main():
     # → 大表 + Tableau 多咗呢個 project 級維度 (我哋 project = subproject, DICJ = roll-up project).
     _dicj_srcs = ent.get("dicj_source_cols") or []
     if _dicj_srcs:
-        df = _coalesce_into(df, "dicj_code", _dicj_srcs, "dicj")
+        import re as _re
+        def _ndicj(v):                                   # 項目001 → 項目1 (對返 golden DICJ 格式)
+            v = str(v).strip()
+            m = _re.match(r"^(項目)0*(\d.*)$", v)
+            return m.group(1) + m.group(2) if m else v
+        _BL = ["", "nan", "None", "NaN", "<NA>", "NaT"]
+        _out = pd.Series("", index=df.index, dtype="object")   # OVERWRITE (唔保留舊 dicj_code,避免溝淡)
+        _avail = []
+        for _c in _dicj_srcs:
+            if _c in df.columns:
+                _avail.append(_c)
+                _s = df[_c].astype("string").fillna("").str.strip()
+                _out = _out.mask(_out.isin(_BL), _s.values)
+        df["dicj_code"] = _out.map(_ndicj).replace({"nan": "", "None": ""})
+        _nf = int(df["dicj_code"].astype("string").fillna("").str.strip().ne("").sum())
+        print(f"  dicj_code ← coalesce {_avail} (overwrite + 項目零正規化): {_nf:,}/{len(df):,} filled", flush=True)
 
     # ── Required-column check ─────────────────────────────────────────────────────
     missing_required = []
