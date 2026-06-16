@@ -11,7 +11,7 @@ Run (Windows):  python scripts/inspect_tie_detail.py            # all 6
                 python scripts/inspect_tie_detail.py vml sjm
 """
 from __future__ import annotations
-import sys
+import sys, re
 from pathlib import Path
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception: pass
@@ -36,6 +36,16 @@ def _etype(alias, bucket):
     b = str(bucket)
     if (alias, b) in AMT_TYPE_OVERRIDE: return AMT_TYPE_OVERRIDE[(alias, b)]
     return "報告" if b.startswith("25") else "調整後"
+
+
+PROJ_ROLLUP = {"sjm"}   # golden 拆 subproject (項目37.1-6/.7), 我哋 23 係 project 級 (項目37) → roll 對 project 級 tie
+
+
+def _roll(alias, code):
+    if alias in PROJ_ROLLUP:
+        m = re.match(r"^(項目\d+)\.", str(code))
+        if m: return m.group(1)
+    return code
 
 
 def _alias(s):
@@ -91,10 +101,13 @@ def main():
         com = ENT.get(alias)
         if not com: continue
         L.append(f"\n{'='*72}\n## {alias}")
-        ga = g[g["_a"] == alias]
+        ga = g[g["_a"] == alias].copy()
         L.append(f"   golden: {len(ga):,} 行  Σ_amt={ga['_amt'].sum():,.0f}  Period={sorted(ga['_p'].unique())}  Type={sorted(ga['_t'].unique())}")
         if len(ga) == 0:
             L.append("   !! golden 0 行 (alias 對唔到承批公司) — 睇 g['承批公司'].unique() 同 NAME2ALIAS"); continue
+        if alias in PROJ_ROLLUP:
+            ga["_d"] = ga["_d"].map(lambda c: _roll(alias, c))
+            L.append(f"   [project-rollup] golden 項目X.Y → 項目X (對 project 級 tie)")
         # golden pivot: (dicj, period) × type → amount
         gp = ga.groupby(["_d", "_p", "_t"])["_amt"].sum().unstack("_t").fillna(0.0)
         for t in ("報告", "計劃", "調整後"):
@@ -107,6 +120,8 @@ def main():
         if not dcol:
             L.append("   (no dicj_code col)"); continue
         dd = df[dcol].astype("string").fillna("").str.strip()
+        if alias in PROJ_ROLLUP:
+            dd = dd.map(lambda c: _roll(alias, c))
         rp = df["report_period"].astype(str).str.strip() if "report_period" in df.columns else pd.Series("", index=df.index)
         w = pd.to_numeric(df[amtc], errors="coerce").fillna(0.0) / 1e4
         ours = pd.DataFrame({"_d": dd.values, "_p": rp.values, "o": w.values}).groupby(["_d", "_p"])["o"].sum()
