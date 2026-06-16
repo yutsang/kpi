@@ -179,6 +179,11 @@ def main():
                  f"|  bucket對唔上(code在但period唔match)={gap_buckmis:,.0f}萬")
         gap.head(200).to_csv(outdir / f"dicj_goldgap_{alias}.tsv", sep="\t", index=False)
 
+        # golden 中文名→DICJ map (供 step0 dicj_name_substr_map_file 反填用, e.g. wynn)
+        nmap = ga[["_n", "_d"]].copy()
+        nmap = nmap[(nmap["_n"].astype(str).str.strip() != "") & (nmap["_d"].astype(str).str.strip() != "")]
+        nmap.drop_duplicates().to_csv(outdir / f"dicj_namemap_{alias}.tsv", sep="\t", index=False, header=False)
+
         # write lookup + unmatched
         lk = pd.DataFrame({"subproject": nm, "dicj": fd, "how": hw}).drop_duplicates("subproject")
         lk.sort_values(["how", "subproject"]).to_csv(outdir / f"dicj_lookup_{alias}.tsv", sep="\t", index=False)
