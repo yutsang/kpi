@@ -308,6 +308,22 @@ def main():
         raise FileNotFoundError("Run Step 1 first to produce unique_signatures.xlsx")
 
     sig_df = pd.read_excel(sig_xlsx, engine="openpyxl")
+
+    # KPI_SKIP_STEP3=1 — 完全 skip 本 step (連 LLM)，沿用現有 sig 檔嘅 H tag。
+    # 啱「唔關 H 分類」嘅 raw 修改 (opex/capex 手調、少量污染)：del raw → step0 重建 → step4 re-apply，
+    # 但 H 維持上次結果，慳成個 LLM pass。注意：改咗 H feedback / 規則 / categories label 就唔好設呢個掣。
+    import os as _os
+    if _os.environ.get("KPI_SKIP_STEP3"):
+        _hcols = [c for c in ("manual_horizontal", "llm_horizontal") if c in sig_df.columns]
+        _tagged = pd.Series(False, index=sig_df.index)
+        for _c in _hcols:
+            _tagged |= sig_df[_c].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("")
+        if _tagged.any():
+            print(f"  [skip] KPI_SKIP_STEP3=1 — 沿用現有 {int(_tagged.sum()):,}/{len(sig_df):,} 個 sig 嘅 H tag，"
+                  f"唔跑 LLM (opex/capex/污染 等唔關 H 嘅修改用呢個；改 H feedback/rule/label 就唔好設)", flush=True)
+            return
+        print("  [skip] KPI_SKIP_STEP3=1 但 sig 檔暫無 H tag → 照常跑 LLM", flush=True)
+
     sig_df["account_code"] = sig_df["account_code"].astype("string").fillna("")
     sig_df["account_desc"] = sig_df["account_desc"].astype("string").fillna("")
     sig_df["desc_norm"] = sig_df["desc_norm"].astype("string").fillna("")
