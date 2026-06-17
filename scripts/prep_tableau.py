@@ -394,6 +394,19 @@ def run(fmt="csv", out_dir="data/tableau"):
     _fill100("project", "dicj code")
     _fill100("subproject code", "dicj code")
     _fill100("subproject", "project")
+    # subproject 名去 code 前綴（code 已有獨立欄，名唔使重複）：vml 'SP00033 Comprehensive'→'Comprehensive'
+    if "subproject" in combined.columns and "subproject code" in combined.columns:
+        def _strip_pre(n, c):
+            n = str(n).strip(); c = str(c).strip()
+            if c and n.startswith(c):
+                _r = n[len(c):].lstrip(" -:_.．、|/")
+                return _r if _r else n
+            return n
+        _before = sum(1 for n, c in zip(combined["subproject"].tolist(), combined["subproject code"].tolist())
+                      if str(c).strip() and str(n).strip().startswith(str(c).strip()))
+        combined["subproject"] = [_strip_pre(n, c) for n, c in
+                                  zip(combined["subproject"].tolist(), combined["subproject code"].tolist())]
+        print(f"  [subproject名去碼前綴] {_before:,} 行")
     for _c in ("dicj code", "project", "subproject code", "subproject"):
         if _c in combined.columns:
             _nb = int(combined[_c].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"]).sum())
