@@ -371,6 +371,16 @@ def run(fmt="csv", out_dir="data/tableau"):
     combined["year_bucket"] = combined["year_bucket"].astype(str)
     print(f"\nCombined: {len(combined):,} rows, {combined['amount_mop'].sum()/1e6:.0f}M total")
     print(f"year_bucket values: {sorted(combined['year_bucket'].unique())}")
+
+    # ── 4 層 project 欄改清晰名 (方便查睇) ──
+    #   dicj code        = DICJ 碼 (粗)
+    #   project          = DICJ 大項目名 (= golden 項目名稱)；原生 project 名欄 drop 走由佢接手
+    #   subproject code  = 細碼 (galaxy B021 / vml SP00033 / melco 13c / mgm 項目019-OPEX；sjm/wynn=dicj層)
+    #   subproject       = 細名
+    if "項目名稱" in combined.columns:
+        combined = combined.drop(columns=[c for c in ["project"] if c in combined.columns])
+        combined = combined.rename(columns={"項目名稱": "project"})
+    combined = combined.rename(columns={"dicj_code": "dicj code", "project_code": "subproject code"})
     print(f"Cols: {list(combined.columns)}")
 
     # ── cube / cube-detail: ONE aggregated file = cross-tab source (no union, no stitching) ──
@@ -378,8 +388,8 @@ def run(fmt="csv", out_dir="data/tableau"):
         dims = ["entity", "year_bucket", "ng_code", "ng_label",
                 "vertical_id", "vertical_label", "horizontal_id", "horizontal_label",
                 "ng_scope", "final_capex_opex"]
-        if fmt == "cube-detail":   # keep drill-down dims (dicj golden碼 + project_code 項目組原始碼 + account / vendor)
-            dims += ["dicj_code", "project_code", "project", "subproject", "account_code", "account_desc", "vendor"]
+        if fmt == "cube-detail":   # keep drill-down dims (4 層 project + account / vendor)
+            dims += ["dicj code", "project", "subproject code", "subproject", "account_code", "account_desc", "vendor"]
         dims = [c for c in dims if c in combined.columns]
         cube = (combined.groupby(dims, dropna=False, observed=True)["amount_mop"]
                         .agg(amount_mop="sum", n_rows="size").reset_index())
