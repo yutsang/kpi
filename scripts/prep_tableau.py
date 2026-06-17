@@ -418,12 +418,14 @@ def run(fmt="csv", out_dir="data/tableau"):
                   "NG5": ("V_ART_EXHIBITION", "文藝展覽表演"), "NG6": ("V_WELLNESS", "健康養生"), "NG7": ("V_THEME_PARK", "主題遊樂場地"),
                   "NG8": ("V_RESTAURANT", "餐廳"), "NG9": ("V_COMMUNITY", "社區活化"), "NG10": ("V_MARITIME", "海上旅遊"),
                   "NG11": ("V_OTHER", "其他")}
+    combined["v_是否填補"] = ""   # 透明度 flag：="Y" 即原本 blank V、由 NG 主 V 填（Tableau 可 filter 走睇真 V）
     if "vertical_label" in combined.columns and "ng_code" in combined.columns:
         _ngc = combined["ng_code"].astype(str).str.strip()
         _vlb = combined["vertical_label"].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
         if int(_vlb.sum()):
             _by_ng0 = int((_vlb & _ngc.eq("NG0")).sum())
-            print(f"  [blank V] {int(_vlb.sum()):,} 行冇 V（其中 NG0 博彩 {_by_ng0:,}）→ 填 NG 主 V")
+            print(f"  [blank V] {int(_vlb.sum()):,} 行冇 V（其中 NG0 博彩 {_by_ng0:,}）→ 填 NG 主 V（打 v_是否填補=Y）")
+            combined.loc[_vlb, "v_是否填補"] = "Y"
             combined.loc[_vlb, "vertical_label"] = _ngc[_vlb].map(lambda n: NG_PRIMARY.get(n, ("", "其他"))[1])
             if "vertical_id" in combined.columns:
                 _vib = combined["vertical_id"].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
