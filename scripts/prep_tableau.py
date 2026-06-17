@@ -250,8 +250,8 @@ def run(fmt="csv", out_dir="data/tableau"):
         dims = ["entity", "year_bucket", "ng_code", "ng_label",
                 "vertical_id", "vertical_label", "horizontal_id", "horizontal_label",
                 "ng_scope", "final_capex_opex"]
-        if fmt == "cube-detail":   # keep drill-down dims (project / account / vendor)
-            dims += ["project", "subproject", "account_code", "account_desc", "vendor"]
+        if fmt == "cube-detail":   # keep drill-down dims (dicj / project / account / vendor)
+            dims += ["dicj_code", "project", "subproject", "account_code", "account_desc", "vendor"]
         dims = [c for c in dims if c in combined.columns]
         cube = (combined.groupby(dims, dropna=False, observed=True)["amount_mop"]
                         .agg(amount_mop="sum", n_rows="size").reset_index())
