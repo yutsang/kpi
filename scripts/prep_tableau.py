@@ -244,6 +244,17 @@ def run(fmt="csv", out_dir="data/tableau"):
         _nb = int(df["project_code"].astype(str).str.strip().isin(["", "nan", "None"]).sum())
         print(f"  [{ent}] project_code: {'native+dicj' if _has_native else 'project碼+dicj'} fallback, blank={_nb}")
 
+        # ── 調整前 / 調整 / 調整後 (萬元) — 項目組對數用。調整後 = native 調整後金額 else amount；調整前 = 調整後 − 調整金額 ──
+        _adj = (pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0)
+                if "調整金額" in df.columns else pd.Series(0.0, index=df.index))
+        _post = (pd.to_numeric(df["調整後金額"], errors="coerce")
+                 if "調整後金額" in df.columns else pd.Series(pd.NA, index=df.index, dtype="Float64"))
+        _post = pd.to_numeric(_post, errors="coerce").fillna(df["amount_mop"])
+        df["調整後_萬"] = _post / 1e4
+        df["調整_萬"] = _adj / 1e4
+        df["調整前_萬"] = (_post - _adj) / 1e4
+        keep += ["調整前_萬", "調整_萬", "調整後_萬"]
+
         sub = df[keep].copy()
         # Ensure amount_mop col exists in sub
         if "amount_mop" not in sub.columns:
