@@ -297,12 +297,26 @@ def run(fmt="csv", out_dir="data/tableau"):
         print(f"  [{ent}] project_code: {'native+dicj' if _has_native else 'project碼+dicj'} fallback, blank={_nb}")
 
         # ── 項目名稱 = golden DICJ 名稱 (by dicj_code) — 項目組要求 project name = golden 名（roll-up 層）──
+        # umbrella (golden 冇單一名，如 sjm 項目40=體育盛事 多個事件) → blank 用我哋 subproject 名頂上。
         _gm = gname.get(ent, {})
         if _gm and "dicj_code" in df.columns:
             df["項目名稱"] = df["dicj_code"].astype(str).fillna("").str.strip().map(_gndicj).map(_gm).fillna("")
+            if "subproject" in df.columns:
+                _bl = df["項目名稱"].astype(str).str.strip().isin(["", "nan", "None"])
+                df.loc[_bl, "項目名稱"] = df.loc[_bl, "subproject"].astype(str).str.strip()
             keep.append("項目名稱")
-            _gn_blank = int(df["項目名稱"].astype(str).str.strip().eq("").sum())
-            print(f"  [{ent}] 項目名稱 ← golden: blank {_gn_blank:,}/{len(df):,} (冇對到 golden 名嘅 dicj)")
+            _gn_blank = int(df["項目名稱"].astype(str).str.strip().isin(["", "nan", "None"]).sum())
+            print(f"  [{ent}] 項目名稱 ← golden(+subproject fallback): 仍 blank {_gn_blank:,}/{len(df):,}")
+
+        # ── H/V label 跟最新 categories.yml (id→label) re-map：改名(藝人演出費/Comp房間…)唔使重跑 pipeline ──
+        _hl = {h["id"]: h["label"] for h in (cats.get("horizontals") or [])}
+        _vl = {v["id"]: v["label"] for v in (cats.get("verticals") or [])}
+        if "horizontal_id" in df.columns and "horizontal_label" in df.columns and _hl:
+            _nl = df["horizontal_id"].astype(str).map(_hl)
+            df["horizontal_label"] = _nl.where(_nl.notna(), df["horizontal_label"])
+        if "vertical_id" in df.columns and "vertical_label" in df.columns and _vl:
+            _nv = df["vertical_id"].astype(str).map(_vl)
+            df["vertical_label"] = _nv.where(_nv.notna(), df["vertical_label"])
 
         # ── 調整前 / 調整 / 調整後 (萬元) — 項目組對數用。調整後 = native 調整後金額 else amount；調整前 = 調整後 − 調整金額 ──
         _adj = (pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0)
