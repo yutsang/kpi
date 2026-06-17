@@ -418,18 +418,38 @@ def run(fmt="csv", out_dir="data/tableau"):
                   "NG5": ("V_ART_EXHIBITION", "文藝展覽表演"), "NG6": ("V_WELLNESS", "健康養生"), "NG7": ("V_THEME_PARK", "主題遊樂場地"),
                   "NG8": ("V_RESTAURANT", "餐廳"), "NG9": ("V_COMMUNITY", "社區活化"), "NG10": ("V_MARITIME", "海上旅遊"),
                   "NG11": ("V_OTHER", "其他")}
-    combined["v_是否填補"] = ""   # 透明度 flag：="Y" 即原本 blank V、由 NG 主 V 填（Tableau 可 filter 走睇真 V）
+    # 透明度 flag v_調整：""=原始真V / "填補"=原blank填NG主V / "重設"=掛錯枝reset。Tableau 可 filter 走睇原始真 V。
+    combined["v_調整"] = ""
+    _ngc = combined["ng_code"].astype(str).str.strip() if "ng_code" in combined.columns else pd.Series("", index=combined.index)
+    # (1) blank V → 填 NG 主 V
     if "vertical_label" in combined.columns and "ng_code" in combined.columns:
-        _ngc = combined["ng_code"].astype(str).str.strip()
         _vlb = combined["vertical_label"].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
         if int(_vlb.sum()):
             _by_ng0 = int((_vlb & _ngc.eq("NG0")).sum())
-            print(f"  [blank V] {int(_vlb.sum()):,} 行冇 V（其中 NG0 博彩 {_by_ng0:,}）→ 填 NG 主 V（打 v_是否填補=Y）")
-            combined.loc[_vlb, "v_是否填補"] = "Y"
+            print(f"  [blank V] {int(_vlb.sum()):,} 行冇 V（其中 NG0 博彩 {_by_ng0:,}）→ 填 NG 主 V")
+            combined.loc[_vlb, "v_調整"] = "填補"
             combined.loc[_vlb, "vertical_label"] = _ngc[_vlb].map(lambda n: NG_PRIMARY.get(n, ("", "其他"))[1])
             if "vertical_id" in combined.columns:
                 _vib = combined["vertical_id"].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
                 combined.loc[_vib, "vertical_id"] = _ngc[_vib].map(lambda n: NG_PRIMARY.get(n, ("V_OTHER",))[0])
+    # (2) V 掛錯枝 enforcement：V 唔喺該 NG eligible 集（且唔係 cross-cutting）→ reset NG 主 V。
+    #     cross-cutting（任何 NG 合理，永不 reset）= 物業優化 + 公共設施 + 社區活化（user 2026-06-17 確認；拍攝視頻 reset）。
+    _ngcats = cats.get("ng_categories") or {}
+    CROSS_CUTTING = {"V_PROPERTY_UPGRADE", "V_PUBLIC_FACILITY", "V_COMMUNITY"}
+    if _ngcats and "ng_code" in combined.columns and "vertical_id" in combined.columns:
+        _elig = {ng: (set(d.get("eligible_verticals") or []) | CROSS_CUTTING | {"V_OTHER"})
+                 for ng, d in _ngcats.items()}
+        _vid3 = combined["vertical_id"].astype(str).str.strip()
+        _f3 = combined["v_調整"].astype(str).str.strip()
+        _stray = pd.Series([bool(v) and fl == "" and (n in _elig) and (v not in _elig[n])
+                            for v, n, fl in zip(_vid3.tolist(), _ngc.tolist(), _f3.tolist())],
+                           index=combined.index)
+        if int(_stray.sum()):
+            _samt = pd.to_numeric(combined.loc[_stray, "amount_mop"], errors="coerce").abs().sum() / 1e6
+            print(f"  [V掛錯枝] reset {int(_stray.sum()):,} 行 V→NG主V（Σ={_samt:,.0f}M；保留設施/社區 cross-cutting）")
+            combined.loc[_stray, "v_調整"] = "重設"
+            combined.loc[_stray, "vertical_label"] = _ngc[_stray].map(lambda n: NG_PRIMARY.get(n, ("", "其他"))[1])
+            combined.loc[_stray, "vertical_id"] = _ngc[_stray].map(lambda n: NG_PRIMARY.get(n, ("V_OTHER",))[0])
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
