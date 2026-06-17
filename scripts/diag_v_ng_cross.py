@@ -27,7 +27,8 @@ HOME_NG = {
     "V_RESTAURANT": "NG8", "V_FOOD_EVENT": "NG8", "V_COMMUNITY": "NG9", "V_MARITIME": "NG10",
     "V_OTHER": "NG11", "V_FESTIVAL": "NG11", "V_PUBLIC_FACILITY": "NG11",
 }
-CROSS = {"V_PROPERTY_UPGRADE"}                # 任何 NG 都合理，唔 flag
+# cross-cutting：本質上任何 NG 都會有，唔當 nonsense（設施/物業/節慶/社區/宣傳片）
+CROSS = {"V_PROPERTY_UPGRADE", "V_PUBLIC_FACILITY", "V_FESTIVAL", "V_COMMUNITY", "V_PROMO_VIDEO"}
 VENUE = {"V_VENUE_PERF_SPORT_MICE"}           # 只合理 NG2/3/4
 VENUE_OK = {"NG2", "NG3", "NG4"}
 
