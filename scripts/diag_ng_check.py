@@ -1,7 +1,8 @@
-r"""Check NG 有冇填錯 —— 同一 dicj_code（= golden 一個項目）理應同一個 NG。
-揾兩樣：
-  ① 一個 dicj_code 出現多個 NG（內部矛盾，多數填錯）—— by 金額
-  ② 每 dicj_code 嘅主 NG + golden 名（project 欄）—— 畀你眼睇 NG 啱唔啱（名係體育→NG應4 等）
+r"""Check NG 填錯 —— BUCKET-AWARE（user: 一個項目跨 bucket 有唔同 NG 係 golden 真實、合理；
+只有同一 bucket 內一個 dicj 出現多 NG 先係真錯）。
+
+  ① 真錯：同一 (dicj_code, bucket) 出現 >1 NG —— by 金額，詳列每個 NG + golden 名
+  ② 參考：multi-NG dicj 嘅 bucket × NG 分佈（睇係咪純跨 bucket 變化 = 合理）
 
 Run:  python scripts/diag_ng_check.py
 出 results/diag_ng_check.txt  ← paste 返嚟
@@ -22,43 +23,55 @@ def _s(x):
 
 
 def main():
-    L = ["# diag_ng_check — 同一 dicj_code 多個 NG（填錯訊號）+ dicj→主NG→golden名（眼睇）"]
+    L = ["# diag_ng_check (BUCKET-AWARE) — 同一 (dicj, bucket) 多 NG = 真錯；跨 bucket 變化 = 合理"]
     if not CSV.exists():
         L.append("!! csv 揾唔到"); _w(L); return
     df = pd.read_csv(CSV, dtype=str, keep_default_na=False)
     df["amt"] = pd.to_numeric(df["amount_mop"], errors="coerce").fillna(0.0)
-    ent = df["entity"].astype(str)
-    dc = _s(df["dicj code"]) if "dicj code" in df.columns else pd.Series("", index=df.index)
-    proj = _s(df["project"]) if "project" in df.columns else pd.Series("", index=df.index)
-    ngc = _s(df["ng_code"]); ngl = _s(df["ng_label"])
-    q = pd.DataFrame({"e": ent, "d": dc, "proj": proj, "ngc": ngc, "ngl": ngl, "a": df["amt"]})
+    q = pd.DataFrame({
+        "e": df["entity"].astype(str),
+        "d": _s(df["dicj code"]) if "dicj code" in df.columns else "",
+        "b": _s(df["year_bucket"]) if "year_bucket" in df.columns else "",
+        "proj": _s(df["project"]) if "project" in df.columns else "",
+        "ngc": _s(df["ng_code"]), "ngl": _s(df["ng_label"]), "a": df["amt"],
+    })
     q = q[q["d"] != ""]
 
-    # ① 一個 dicj_code 多個 NG
-    L.append("\n① 同一 dicj_code 出現多個 NG（內部矛盾，多數填錯）by 金額：")
-    multi = []
-    for (e, d), sub in q.groupby(["e", "d"]):
+    # ① 真錯：同一 (e, d, b) 多 NG
+    L.append("\n① 真錯：同一 (dicj_code, bucket) 出現 >1 NG（by 金額 top 30）：")
+    rows = []
+    for (e, d, b), sub in q.groupby(["e", "d", "b"]):
         ngs = sub.groupby("ngc").agg(a=("a", "sum"), ngl=("ngl", "first"))
         if len(ngs) > 1:
             nm = sub["proj"].mode().iloc[0] if not sub["proj"].mode().empty else ""
-            multi.append((e, d, nm, abs(sub["a"].sum()) / 1e4,
-                          [(i, r.ngl, r.a / 1e4) for i, r in ngs.sort_values("a", ascending=False).iterrows()]))
-    multi.sort(key=lambda t: -t[3])
-    L.append(f"   {len(multi)} 個 dicj_code 有 >1 NG")
-    for e, d, nm, tot, ngs in multi[:25]:
+            rows.append((e, d, b, nm, abs(sub["a"].sum()) / 1e4,
+                         [(i, r.ngl, r.a / 1e4) for i, r in ngs.sort_values("a", ascending=False).iterrows()]))
+    rows.sort(key=lambda t: -t[4])
+    L.append(f"   {len(rows)} 個 (dicj, bucket) 有 >1 NG  ← 呢啲先係真錯")
+    for e, d, b, nm, tot, ngs in rows[:30]:
         ss = " / ".join(f"{i}{lab[:4]}={a:,.0f}萬" for i, lab, a in ngs)
-        L.append(f"     {e:<7} {d:<10} {str(nm)[:20]:<20} → {ss}")
+        L.append(f"     {e:<7} {d:<9} [{b:<7}] {str(nm)[:20]:<20} → {ss}")
 
-    # ② per entity：dicj → 主 NG + golden 名（眼睇 NG 啱唔啱），按金額 top
-    L.append("\n② dicj → 主NG + golden名（眼睇 NG 合唔合理，每家 top 15）：")
-    for e, sub in q.groupby("e"):
-        L.append(f"\n   ── {e} ──")
-        gg = sub.groupby("d").agg(a=("a", "sum"),
-                                  ngl=("ngl", lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
-                                  proj=("proj", lambda s: s.mode().iloc[0] if not s.mode().empty else "")).reset_index()
-        gg = gg.reindex(gg["a"].abs().sort_values(ascending=False).index)
-        for r in gg.head(15).itertuples():
-            L.append(f"     {r.d:<10} [{str(r.ngl)[:5]:<5}] {str(r.proj)[:32]:<32} {r.a/1e4:>10,.0f}萬")
+    # ② 參考：multi-NG dicj 嘅 bucket × NG（睇係咪純跨 bucket = 合理）
+    L.append("\n② 參考：跨 bucket 有唔同 NG 嘅 dicj（每 bucket 一個 NG = 合理，唔使理）：")
+    multi_d = [k for k, sub in q.groupby(["e", "d"]) if sub["ngc"].nunique() > 1]
+    cross_only = 0
+    shown = 0
+    for (e, d), sub in q.groupby(["e", "d"]):
+        if sub["ngc"].nunique() <= 1:
+            continue
+        per_bkt = sub.groupby("b")["ngc"].nunique()
+        within = (per_bkt > 1).any()   # 有 bucket 內多 NG = 真錯（已喺①）
+        if not within:
+            cross_only += 1
+            if shown < 12:
+                nm = sub["proj"].mode().iloc[0] if not sub["proj"].mode().empty else ""
+                bk = sub.groupby("b").agg(ng=("ngl", lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
+                                          a=("a", "sum"))
+                ss = "  ".join(f"{i}:{r.ng[:4]}({r.a/1e4:,.0f}萬)" for i, r in bk.iterrows())
+                L.append(f"     {e:<7} {d:<9} {str(nm)[:18]:<18} {ss}")
+                shown += 1
+    L.append(f"   （純跨 bucket 變化 = {cross_only} 個 dicj，合理唔使理；真錯喺①）")
     _w(L)
 
 
