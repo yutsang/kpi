@@ -30,7 +30,7 @@ ENTITIES = {"galaxy":"company_1","sjm":"company_2","wynn":"company_3","vml":"com
 SUBPROJECT_COLS = {
     "galaxy": ("project_code", "subproject"),                          # B021 / Cross Border HK
     "vml":    ("Subproject", "SubProject_Name"),                       # SP00033 / Comprehensive Upgrade
-    "melco":  ("Project & Sub-project ID", "project_mre"),             # 13c / SC Master Plan (乾淨細名)
+    "melco":  ("Project & Sub-project ID", "Project/Sub-Project Name_1"),  # 13c / Water park operations (100% 乾淨細名)
     "mgm":    ("Project_code", "Project_name"),                        # 項目019-OPEX / 細名
     "sjm":    (None, "Subproject"),                                    # 冇細碼；細層只得名 (序號+名)
     "wynn":   (None, "Sub project"),                                   # 冇細碼；細層只得名
@@ -381,6 +381,23 @@ def run(fmt="csv", out_dir="data/tableau"):
         combined = combined.drop(columns=[c for c in ["project"] if c in combined.columns])
         combined = combined.rename(columns={"項目名稱": "project"})
     combined = combined.rename(columns={"dicj_code": "dicj code", "project_code": "subproject code"})
+
+    # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
+    #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
+    def _fill100(dst, src):
+        if dst in combined.columns and src in combined.columns:
+            _d = combined[dst].astype(str).str.strip()
+            _b = _d.isin(["", "nan", "None", "NaN", "<NA>"])
+            if int(_b.sum()):
+                combined.loc[_b, dst] = combined.loc[_b, src].astype(str).str.strip()
+                print(f"  [fill100] {dst}: 補 {int(_b.sum()):,} 個空 ← {src}")
+    _fill100("project", "dicj code")
+    _fill100("subproject code", "dicj code")
+    _fill100("subproject", "project")
+    for _c in ("dicj code", "project", "subproject code", "subproject"):
+        if _c in combined.columns:
+            _nb = int(combined[_c].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"]).sum())
+            print(f"  [4層 100%?] {_c}: blank={_nb}")
     print(f"Cols: {list(combined.columns)}")
 
     # ── cube / cube-detail: ONE aggregated file = cross-tab source (no union, no stitching) ──
