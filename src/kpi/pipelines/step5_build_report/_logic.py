@@ -385,7 +385,13 @@ def main():
                           "comp_type", "is_labor", "is_internal", "take_flag", "take_flag2",
                           "netoff_flag", "internal", "remark", "25跨年", "24跨年", "23跨年"]
         _ref_cols = [c for c in (_UNIFIED_EXTRA + _adjust_names) if c in df.columns and c not in base_cols]
-        all_row_cols = base_cols + extra_cols_appended + _detail_raw + _ref_cols + tag_cols
+        # 4 層 project 結構嘅原生細碼/細名欄 — 保證 survive 落 parquet 畀 prep_tableau wire（SUBPROJECT_COLS）。
+        # 只 keep 存在嘅，對冇呢啲欄嘅 entity 無害。
+        _PROJECT_STRUCT = ["Project & Sub-project ID", "Project name - Amended", "project_mre_id",
+                           "Project_name", "Project/Sub-Project Name_1", "Sub-Project Serial Number",
+                           "Subproject", "SubProject_Name", "Sub project", "项目名称中文"]
+        _proj_cols = [c for c in _PROJECT_STRUCT if c in df.columns and c not in base_cols]
+        all_row_cols = base_cols + extra_cols_appended + _detail_raw + _ref_cols + _proj_cols + tag_cols
         all_row_cols = [c for c in all_row_cols if c and c in df.columns]
         # Dedupe (preserve order) — pandas to_parquet fails on duplicate col names
         seen = set()
