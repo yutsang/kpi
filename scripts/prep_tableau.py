@@ -227,18 +227,22 @@ def run(fmt="csv", out_dir="data/tableau"):
                 df["project_full"] = df["project_full"] + " | " + part
             keep.append("project_full")
 
-        # ── project_code 唔好留空：native project_code 優先 → 空就 fill project (項目組原始碼，如 mgm
-        #    項目121 / 項目CAPEX-1 / 項目019-OPEX，未 remap) → 仲空就 fill dicj_code (golden 碼)。
-        #    coalesce 確保每行都有碼，唔覆蓋已有 native 值。
-        _pc = ((df["project_code"] if "project_code" in df.columns else pd.Series("", index=df.index))
+        # ── project_code = pure CODE，唔好留空、亦唔好放 project 名 ──
+        # 有 native project_code 欄 (sjm/vml/melco 本身係碼) → 優先，空位 fill dicj_code(碼)，唔掂 project(=名)。
+        # 冇 native (mgm：project 欄本身 = Project_code 碼) → 用 project 做碼，空位再 fill dicj_code。
+        _has_native = "project_code" in df.columns
+        _pc = ((df["project_code"] if _has_native else pd.Series("", index=df.index))
                .astype("string").fillna("").str.strip())
-        for _fb in ("project", "dicj_code"):
+        _fallbacks = ["dicj_code"] if _has_native else ["project", "dicj_code"]
+        for _fb in _fallbacks:
             if _fb in df.columns:
                 _pc = _pc.mask(_pc.eq("") | _pc.isin(["nan", "None"]),
                                df[_fb].astype("string").fillna("").str.strip())
         df["project_code"] = _pc.replace({"nan": "", "None": ""})
         if "project_code" not in keep:
             keep.append("project_code")
+        _nb = int(df["project_code"].astype(str).str.strip().isin(["", "nan", "None"]).sum())
+        print(f"  [{ent}] project_code: {'native+dicj' if _has_native else 'project碼+dicj'} fallback, blank={_nb}")
 
         sub = df[keep].copy()
         # Ensure amount_mop col exists in sub
