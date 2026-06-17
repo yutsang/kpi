@@ -310,7 +310,20 @@ def main():
     n_rv = _apply_row_overrides(df, _ent_cfg.get("row_vertical_overrides") or [],
                                 "vertical_id", "vertical_source",
                                 cols["account_code"], cols["account_desc"])
-    n_rh = _apply_row_overrides(df, _ent_cfg.get("row_horizontal_overrides") or [],
+    # row_horizontal_overrides 可以由一個乾淨多行檔 append（避免喺 conf 條巨 line 手術整爛上面 predominant）
+    _rh_extra = []
+    _rh_file = _ent_cfg.get("row_horizontal_overrides_file") if isinstance(_ent_cfg, dict) else None
+    if _rh_file:
+        from pathlib import Path as _P
+        import yaml as _yaml
+        _p = _P(_rh_file) if _P(_rh_file).is_absolute() else (_P.cwd() / _rh_file)
+        try:
+            _ld = _yaml.safe_load(_p.read_text(encoding="utf-8")) or []
+            _rh_extra = _ld if isinstance(_ld, list) else (_ld.get("row_horizontal_overrides") or [])
+            print(f"  [row_h] +{len(_rh_extra)} extra overrides ← {_rh_file}", flush=True)
+        except Exception as _e:
+            print(f"  [row_h] ⚠ 讀唔到 {_rh_file}: {_e}", flush=True)
+    n_rh = _apply_row_overrides(df, (_ent_cfg.get("row_horizontal_overrides") or []) + _rh_extra,
                                 "horizontal_id", "horizontal_source",
                                 cols["account_code"], cols["account_desc"])
     if n_rv or n_rh:
