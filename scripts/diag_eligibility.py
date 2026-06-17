@@ -27,7 +27,8 @@ def main():
     cats = yaml.safe_load(CATS.read_text(encoding="utf-8")) or {}
     vlabel = {v["id"]: v.get("label", v["id"]) for v in (cats.get("verticals") or [])}
     ngcats = cats.get("ng_categories") or {}
-    eligible = {ng: set(d.get("eligible_verticals") or []) for ng, d in ngcats.items()}
+    CROSS_CUTTING = {"V_PROPERTY_UPGRADE", "V_PUBLIC_FACILITY", "V_COMMUNITY"}  # 任何 NG 合理，永不 reset
+    eligible = {ng: (set(d.get("eligible_verticals") or []) | CROSS_CUTTING) for ng, d in ngcats.items()}
     nglabel = {ng: d.get("label", "") for ng, d in ngcats.items()}
 
     L.append("\n① 每 NG eligible 集大小（證明唔係 1:1）：")
@@ -39,10 +40,10 @@ def main():
     df["amt"] = pd.to_numeric(df["amount_mop"], errors="coerce").fillna(0.0).abs()
     vid = df["vertical_id"].astype(str).str.strip()
     ng = df["ng_code"].astype(str).str.strip()
-    filled = df["v_是否填補"].astype(str).str.strip() if "v_是否填補" in df.columns else pd.Series("", index=df.index)
-    # 掛錯枝：V 非空、非填補、NG 有 eligible 集、V 唔喺集
-    bad = [bool(v) and f != "Y" and (n in eligible) and (v not in eligible[n]) and v != "V_OTHER"
-           for v, n, f in zip(vid.tolist(), ng.tolist(), filled.tolist())]
+    adj = df["v_調整"].astype(str).str.strip() if "v_調整" in df.columns else pd.Series("", index=df.index)
+    # 掛錯枝：V 非空、未經調整(原始真V)、NG 有 eligible 集、V 唔喺集（已含 cross-cutting）
+    bad = [bool(v) and f == "" and (n in eligible) and (v not in eligible[n]) and v != "V_OTHER"
+           for v, n, f in zip(vid.tolist(), ng.tolist(), adj.tolist())]
     bad = pd.Series(bad, index=df.index)
     L.append(f"\n② 掛錯枝行: {int(bad.sum()):,}  Σ={df.loc[bad,'amt'].sum()/1e6:,.1f}M（總 {df['amt'].sum()/1e6:,.0f}M 嘅 {df.loc[bad,'amt'].sum()/df['amt'].sum()*100:.1f}%）")
     g = (df[bad].groupby(["entity", "ng_code", "ng_label", "vertical_label"])["amt"]
