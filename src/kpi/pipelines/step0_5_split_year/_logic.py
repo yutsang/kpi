@@ -141,6 +141,29 @@ def main():
     else:
         raise ValueError(f"Unknown year_split mode: {mode!r}")
 
+    # ── DICJ bucket-scoped remap: golden 同一 project 喺唔同 bucket 用唔同 code ──
+    # mgm 2025: 項目121/168/177… 喺 bucket 25 用 2025/Opex 碼 (202/244/230)，喺 25_24SY 用返 2024 碼。
+    # report_period 喺 step0_5 split 完先有 → 喺呢度做 (step0 嘅 dicj_remap_by_year 太粗會跨 bucket 改錯)。
+    # 只動 dicj_code，唔郁 Project_code → V map 安全。
+    _dremap_b = ent.get("dicj_remap_by_bucket") or {}
+    if _dremap_b and "dicj_code" in df_out.columns and "report_period" in df_out.columns:
+        _rp = df_out["report_period"].astype(str).str.strip()
+        _dc = df_out["dicj_code"].astype("string").fillna("")
+        _chg = 0
+        for _bk, _mp in _dremap_b.items():
+            if not _mp:
+                continue
+            _bm = _rp.eq(str(_bk))
+            for _src, _dst in _mp.items():
+                _hit = _bm & _dc.eq(str(_src))
+                _n = int(_hit.sum())
+                if _n:
+                    _dc = _dc.mask(_hit, str(_dst))
+                    _chg += _n
+        df_out["dicj_code"] = _dc
+        _rules = sum(len(m or {}) for m in _dremap_b.values())
+        print(f"  dicj_code ← remap_by_bucket ({_rules} 規則): {_chg:,} 行改寫 (對齊 golden per-bucket)")
+
     # OVERWRITE raw.parquet with split version. Downstream (step1/2/4) reads as-is.
     df_out.to_parquet(parquet_path, index=False)
     print(f"  rows in={n_in:,}  out={len(df_out):,}  → {parquet_path.name} (overwritten)")
