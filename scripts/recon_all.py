@@ -168,12 +168,18 @@ def main():
                     for _, r in sub.head(6).iterrows():
                         L.append(f"         {r['bucket']:<8} {str(r['code'])[:12]:<12} golden={r['golden']:>10,.0f} ours={r['ours']:>10,.0f} Δ={r['Δ']:>9,.0f}")
             rdf.round(1).to_csv(outdir / f"recon_all_{alias}.tsv", sep="\t", index=False)
-        verdict = "✅ TIE" if (ent_ties and big_n == 0 and gonly_n == 0 and oonly_n == 0) else ("◐ 細差(<幾萬)" if (big_n + gonly_n + oonly_n) <= 3 else "✗ 有差")
-        overall.append((alias, verdict, nblank, big_n + gonly_n + oonly_n))
+        # verdict by AMOUNT not count: Σ|Δ| of all by-project diffs ÷ entity total (exclude known golden-error buckets)
+        err_bk = {b for (a, b) in NOTE if a == alias}
+        diff_amt = float(rdf[~rdf["bucket"].isin(err_bk)]["Δ"].abs().sum()) if len(rdf) else 0.0
+        gtot_ent = sum(float(ga[(ga["_p"] == b) & (ga["_t"] == _etype(b))]["_amt"].sum()) for b in BUCKETS)
+        pct = diff_amt / max(abs(gtot_ent), 1) * 100
+        verdict = "✅ TIE" if pct < 0.5 else ("◐ 近tie" if pct < 1.5 else "✗ 有差")
+        if err_bk: verdict += " *(golden側錯)"
+        overall.append((alias, verdict, nblank, blank_amt, diff_amt, pct))
 
-    L.append(f"\n{'='*72}\n## 總結")
-    for a, v, nb, ng in overall:
-        L.append(f"   {a:<8} {v:<12} blank行={nb:,}  個別差異項={ng}")
+    L.append(f"\n{'='*72}\n## 總結 (個別差異按金額%判，已扣 golden-側錯 bucket)")
+    for a, v, nb, ba, da, pc in overall:
+        L.append(f"   {a:<8} {v:<18} blank={nb:,}行/{ba:,.0f}萬  個別Σ|Δ|={da:,.0f}萬 ({pc:.2f}%)")
     _w(L)
 
 
