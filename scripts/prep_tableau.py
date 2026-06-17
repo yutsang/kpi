@@ -227,14 +227,18 @@ def run(fmt="csv", out_dir="data/tableau"):
                 df["project_full"] = df["project_full"] + " | " + part
             keep.append("project_full")
 
-        # ── project_code 欄：mgm 等只有 Project_code(→project) 而冇 lowercase project_code →
-        #    補返做「項目組原始碼」(項目121 / 項目CAPEX-1 / 項目019-OPEX，未 remap，同 remapped 後嘅
-        #    dicj_code 係兩組碼)。連 project 都冇先 fallback dicj_code。唔覆蓋已有 native project_code。
+        # ── project_code 唔好留空：native project_code 優先 → 空就 fill project (項目組原始碼，如 mgm
+        #    項目121 / 項目CAPEX-1 / 項目019-OPEX，未 remap) → 仲空就 fill dicj_code (golden 碼)。
+        #    coalesce 確保每行都有碼，唔覆蓋已有 native 值。
+        _pc = ((df["project_code"] if "project_code" in df.columns else pd.Series("", index=df.index))
+               .astype("string").fillna("").str.strip())
+        for _fb in ("project", "dicj_code"):
+            if _fb in df.columns:
+                _pc = _pc.mask(_pc.eq("") | _pc.isin(["nan", "None"]),
+                               df[_fb].astype("string").fillna("").str.strip())
+        df["project_code"] = _pc.replace({"nan": "", "None": ""})
         if "project_code" not in keep:
-            if "project" in keep:
-                df["project_code"] = df["project"]; keep.append("project_code")
-            elif "dicj_code" in df.columns:
-                df["project_code"] = df["dicj_code"]; keep.append("project_code")
+            keep.append("project_code")
 
         sub = df[keep].copy()
         # Ensure amount_mop col exists in sub
