@@ -580,6 +580,28 @@ def main():
         _chg = int((_before != _s).sum())
         print(f"  dicj_code ← normalize {len(_dnorm)} rule(s): {_chg:,} 行改寫 (對齊 golden code)", flush=True)
 
+    # ── DICJ year-scoped exact remap: 同一 code 喺某 report_year = 另一個 golden code ──
+    # mgm 2025: gaming 項目CAPEX-N → golden 重用 項目19-22；幾個項目 golden 用 Opex_code (項目121→202…)。
+    # 同 code 喺 24 = 本身,唔可以全域改 → 按 report_year scope。只動 dicj_code,唔郁 Project_code (V map 安全)。
+    _dremap = ent.get("dicj_remap_by_year") or {}
+    if _dremap and "dicj_code" in df.columns and "report_year" in df.columns:
+        _ry = df["report_year"].astype(str).str.strip()
+        _dc = df["dicj_code"].astype("string").fillna("")
+        _chg2 = 0
+        for _yr, _mp in _dremap.items():
+            if not _mp:
+                continue
+            _ym = _ry.eq(str(_yr))
+            for _src, _dst in _mp.items():
+                _hit = _ym & _dc.eq(str(_src))
+                _n = int(_hit.sum())
+                if _n:
+                    _dc = _dc.mask(_hit, str(_dst))
+                    _chg2 += _n
+        df["dicj_code"] = _dc
+        _rules = sum(len(m or {}) for m in _dremap.values())
+        print(f"  dicj_code ← remap_by_year ({_rules} 規則): {_chg2:,} 行改寫 (對齊 golden code)", flush=True)
+
     # ── DICJ from name-prefix: 源文件 project 名 = "CODE_中文名 | Eng" → 抽開頭 code 做 dicj (wynn 24/25) ──
     _pfx_col = ent.get("dicj_name_prefix_col")
     if _pfx_col and _pfx_col in df.columns:
