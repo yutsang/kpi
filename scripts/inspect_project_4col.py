@@ -20,7 +20,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 CSV = ROOT / "tableau_combined_25.csv"
-COLS = ["dicj_code", "項目名稱", "project_code", "project", "subproject"]
+# prep_tableau 已改清晰名：dicj code / project(=DICJ大項目名) / subproject code(細碼) / subproject(細名)
+COLS = ["dicj code", "project", "subproject code", "subproject"]
 
 
 def _pop(s):
@@ -42,18 +43,18 @@ def main():
         for c in COLS:
             if c in d.columns:
                 s, pop = _pop(d[c])
-                L.append(f"     {c:<14} 有值 {pop:5.1f}%   distinct={s[s != ''].nunique():,}")
+                L.append(f"     {c:<16} 有值 {pop:5.1f}%   distinct={s[s != ''].nunique():,}")
             else:
-                L.append(f"     {c:<14} ✗ 冇呢欄")
-        # granularity: per dicj_code 有幾多 distinct project 名 (>1 = project 比 dicj 細)
-        if "dicj_code" in d.columns and "project" in d.columns:
-            dd = d[d["dicj_code"].astype(str).str.strip().replace({"nan": "", "None": ""}) != ""]
-            g = dd.groupby("dicj_code")["project"].nunique()
+                L.append(f"     {c:<16} ✗ 冇呢欄")
+        # granularity: per 'dicj code' 有幾多 distinct 'subproject code' (>1 = 細碼真係比 dicj 細)
+        if "dicj code" in d.columns and "subproject code" in d.columns:
+            dd = d[d["dicj code"].astype(str).str.strip().replace({"nan": "", "None": ""}) != ""]
+            g = dd.groupby("dicj code")["subproject code"].nunique()
             if len(g):
-                L.append(f"     granularity: {int((g > 1).sum())}/{len(g)} 個 dicj_code 有 >1 個 project 名"
-                         f"（即 project 比 dicj 細；最多一個 dicj 拆 {int(g.max())} 個 project）")
-        # 抽樣 8 個 distinct，睇 dicj名 vs project名 vs subproject 粒度
-        scols = [c for c in ["dicj_code", "項目名稱", "project", "subproject"] if c in d.columns]
+                L.append(f"     granularity: {int((g > 1).sum())}/{len(g)} 個 dicj code 有 >1 個 subproject code"
+                         f"（即細碼比 dicj 細；最多一個 dicj 拆 {int(g.max())} 個 subproject code）")
+        # 抽樣 8 個 distinct，睇 4 層粒度
+        scols = [c for c in ["dicj code", "project", "subproject code", "subproject"] if c in d.columns]
         samp = d[scols].drop_duplicates().head(8)
         L.append(f"     抽樣 ({' | '.join(scols)}):")
         for _, r in samp.iterrows():
