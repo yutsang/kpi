@@ -40,10 +40,19 @@ def _load_progress(p: Path) -> dict:
 
 
 def _save_progress(p: Path, data: dict) -> None:
+    # progress json 純屬監察用，唔應該因為 Windows 檔鎖 (OneDrive/防毒/Excel 開住) 寫唔到就拖冧成個 pipeline。
     tmp = p.with_suffix(p.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, p)
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, p)
+    except (PermissionError, OSError) as e:
+        print(f"  [warn] 寫唔到 progress {p.name} ({e}) — 略過，唔影響 pipeline", flush=True)
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def _iso(ts: float) -> str:
