@@ -24,6 +24,18 @@ import yaml
 
 ENTITIES = {"galaxy":"company_1","sjm":"company_2","wynn":"company_3","vml":"company_4","melco":"company_5","mgm":"company_6"}
 
+# 4 層 project 結構嘅細碼/細名來源欄 (diag_project_code 由原始 data book 確認)。
+#   (subproject_code_col, subproject_name_col)；code=None 即原始檔冇比 dicj 更細嘅碼 → project_code 用 dicj-level。
+# conf 同名 key (subproject_code_col / subproject_name_col) 可覆蓋呢度。
+SUBPROJECT_COLS = {
+    "galaxy": ("project_code", "subproject"),                          # B021 / Cross Border HK
+    "vml":    ("Subproject", "SubProject_Name"),                       # SP00033 / Comprehensive Upgrade
+    "melco":  ("Project & Sub-project ID", "Project/Sub-Project Name_1"),  # 13c / Water park operations
+    "mgm":    ("Project_code", "Project_name"),                        # 項目019-OPEX (比 master 細)
+    "sjm":    (None, "Subproject"),                                    # 冇細碼；細層只得名 (序號+名)
+    "wynn":   (None, "Sub project"),                                   # 冇細碼；細層只得名
+}
+
 # Canonical V → NG0-NG11 mapping (Macau gaming framework)
 V_TO_NG = {
     "V_GAMING_VENUE": ("NG0", "博彩項目"),
@@ -232,10 +244,13 @@ def run(fmt="csv", out_dir="data/tableau"):
         ad_col = cfg.get("columns",{}).get("account_desc","")
         dn_col = cfg.get("columns",{}).get("description","")
         vd_col = cfg.get("columns",{}).get("vendor","")
-        # subproject candidates (varies per entity)
-        sub_col = next((c for c in ("Sub project", "SubProject_Name", "Subproject_Name",
-                                      "subproject", "项目名称中文", "项目英文名称",
-                                      "Initiative Name", "Contents Name") if c in df.columns), None)
+        # subproject 細名欄：conf > SUBPROJECT_COLS dict > 候選
+        _dict_code, _dict_name = SUBPROJECT_COLS.get(ent, (None, None))
+        _want_name = cfg.get("subproject_name_col") or _dict_name
+        sub_col = (_want_name if _want_name in df.columns
+                   else next((c for c in ("Sub project", "SubProject_Name", "Subproject_Name",
+                                          "subproject", "项目名称中文", "项目英文名称",
+                                          "Initiative Name", "Contents Name") if c in df.columns), None))
         for src, tgt in [(proj_col,"project"),(sub_col,"subproject"),
                           (ac_col,"account_code"),(ad_col,"account_desc"),
                           (dn_col,"description"),(vd_col,"vendor")]:
@@ -279,22 +294,33 @@ def run(fmt="csv", out_dir="data/tableau"):
                 df["project_full"] = df["project_full"] + " | " + part
             keep.append("project_full")
 
-        # ── project_code = pure CODE，唔好留空、亦唔好放 project 名 ──
-        # 有 native project_code 欄 (sjm/vml/melco 本身係碼) → 優先，空位 fill dicj_code(碼)，唔掂 project(=名)。
-        # 冇 native (mgm：project 欄本身 = Project_code 碼) → 用 project 做碼，空位再 fill dicj_code。
-        _has_native = "project_code" in df.columns
-        _pc = ((df["project_code"] if _has_native else pd.Series("", index=df.index))
-               .astype("string").fillna("").str.strip())
-        _fallbacks = ["dicj_code"] if _has_native else ["project", "dicj_code"]
-        for _fb in _fallbacks:
-            if _fb in df.columns:
-                _pc = _pc.mask(_pc.eq("") | _pc.isin(["nan", "None"]),
-                               df[_fb].astype("string").fillna("").str.strip())
+        # ── project_code = 純細碼 (subproject code) ──
+        # per-entity conf `subproject_code_col` 指明真細碼欄：galaxy project_code(B021) / vml Subproject(SP00033) /
+        #   melco 'Project & Sub-project ID'(13c) / mgm Project_code(項目019-OPEX)。空位 fill dicj_code。
+        # sjm/wynn 原始檔冇比 dicj 更細嘅碼 → 唔設 subproject_code_col → project_code = dicj_code(細層只得名，喺 subproject 欄)。
+        _subcode = cfg.get("subproject_code_col") or _dict_code
+        _dicj = (df["dicj_code"].astype("string").fillna("").str.strip()
+                 if "dicj_code" in df.columns else pd.Series("", index=df.index))
+        if _subcode and _subcode in df.columns:
+            _pc = df[_subcode].astype("string").fillna("").str.strip()
+            _pc = _pc.mask(_pc.eq("") | _pc.isin(["nan", "None"]), _dicj)
+            _srcdesc = f"conf:{_subcode}+dicj"
+        else:
+            _has_native = "project_code" in df.columns
+            _pc = ((df["project_code"] if _has_native else pd.Series("", index=df.index))
+                   .astype("string").fillna("").str.strip())
+            for _fb in (["dicj_code"] if _has_native else ["project", "dicj_code"]):
+                if _fb in df.columns:
+                    _pc = _pc.mask(_pc.eq("") | _pc.isin(["nan", "None"]),
+                                   df[_fb].astype("string").fillna("").str.strip())
+            _srcdesc = ("native+dicj" if _has_native else "project碼+dicj")
+            if _subcode:
+                _srcdesc += f" (⚠ conf subproject_code_col='{_subcode}' 唔喺 df)"
         df["project_code"] = _pc.replace({"nan": "", "None": ""})
         if "project_code" not in keep:
             keep.append("project_code")
         _nb = int(df["project_code"].astype(str).str.strip().isin(["", "nan", "None"]).sum())
-        print(f"  [{ent}] project_code: {'native+dicj' if _has_native else 'project碼+dicj'} fallback, blank={_nb}")
+        print(f"  [{ent}] project_code ← {_srcdesc}, blank={_nb}")
 
         # ── 項目名稱 = golden DICJ 名稱 (by dicj_code) — 項目組要求 project name = golden 名（roll-up 層）──
         # umbrella (golden 冇單一名，如 sjm 項目40=體育盛事 多個事件) → blank 用我哋 subproject 名頂上。
