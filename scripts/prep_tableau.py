@@ -227,6 +227,15 @@ def run(fmt="csv", out_dir="data/tableau"):
                 df["project_full"] = df["project_full"] + " | " + part
             keep.append("project_full")
 
+        # ── project_code 欄：mgm 等只有 Project_code(→project) 而冇 lowercase project_code →
+        #    補返做「項目組原始碼」(項目121 / 項目CAPEX-1 / 項目019-OPEX，未 remap，同 remapped 後嘅
+        #    dicj_code 係兩組碼)。連 project 都冇先 fallback dicj_code。唔覆蓋已有 native project_code。
+        if "project_code" not in keep:
+            if "project" in keep:
+                df["project_code"] = df["project"]; keep.append("project_code")
+            elif "dicj_code" in df.columns:
+                df["project_code"] = df["dicj_code"]; keep.append("project_code")
+
         sub = df[keep].copy()
         # Ensure amount_mop col exists in sub
         if "amount_mop" not in sub.columns:
@@ -250,8 +259,8 @@ def run(fmt="csv", out_dir="data/tableau"):
         dims = ["entity", "year_bucket", "ng_code", "ng_label",
                 "vertical_id", "vertical_label", "horizontal_id", "horizontal_label",
                 "ng_scope", "final_capex_opex"]
-        if fmt == "cube-detail":   # keep drill-down dims (dicj / project / account / vendor)
-            dims += ["dicj_code", "project", "subproject", "account_code", "account_desc", "vendor"]
+        if fmt == "cube-detail":   # keep drill-down dims (dicj golden碼 + project_code 項目組原始碼 + account / vendor)
+            dims += ["dicj_code", "project_code", "project", "subproject", "account_code", "account_desc", "vendor"]
         dims = [c for c in dims if c in combined.columns]
         cube = (combined.groupby(dims, dropna=False, observed=True)["amount_mop"]
                         .agg(amount_mop="sum", n_rows="size").reset_index())
