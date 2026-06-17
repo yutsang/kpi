@@ -80,12 +80,64 @@ def _fuzzy_col(df, name):
     return None
 
 
+import re as _re
+_GCAND = [Path("HQ 投資方向_audit_0616.xlsx"), Path("data/HQ 投資方向_audit_0616.xlsx")]
+_N2A = [(["galaxy", "銀河"], "galaxy"), (["wynn", "永利"], "wynn"), (["mgm", "美高梅"], "mgm"),
+        (["melco", "新濠", "摩珀斯", "影匯", "影滙", "studio city", "city of dreams"], "melco"),
+        (["sjm", "澳娛", "葡京", "回力", "上葡京"], "sjm"),
+        (["威尼斯", "金沙", "sands", "londoner", "倫敦人", "parisian", "巴黎人", "venetian", "vml"], "vml")]
+
+
+def _gname_alias(s):
+    sl = str(s).strip().lower()
+    for kws, a in _N2A:
+        if any(k.lower() in sl for k in kws): return a
+    return None
+
+
+def _gndicj(v):
+    v = str(v).strip()
+    m = _re.match(r"^(博彩項目|項目)0*(\d.*)$", v)
+    return m.group(1) + m.group(2) if m else v
+
+
+def golden_name_map():
+    """{alias: {dicj_norm: 項目名稱}} — 項目組要求 project name = golden DICJ 名稱 (per 承批公司)."""
+    gp = next((p for p in _GCAND if p.exists()), None)
+    if not gp:
+        print("  ⚠ golden 檔揾唔到 → 唔 attach 項目名稱"); return {}
+    try:
+        g = pd.read_excel(gp, sheet_name="Database combine", dtype=str)
+    except Exception as e:
+        print(f"  ⚠ 讀 golden 失敗: {e}"); return {}
+    g.columns = [str(c).strip() for c in g.columns]
+    dcol = next((c for c in g.columns if c.strip() in ("DICJ Code", "DICJ")), None)
+    ncol = next((c for c in g.columns if "項目名稱" in str(c) or "项目名称" in str(c)), None)
+    acol = next((c for c in g.columns if c.strip() == "Amount"), None)
+    acomp = next((c for c in g.columns if "承批" in str(c)), None)
+    if not (dcol and ncol and acomp): return {}
+    g["_a"] = g[acomp].map(_gname_alias)
+    g["_d"] = g[dcol].astype(str).str.strip().map(_gndicj)
+    g["_n"] = g[ncol].astype(str).str.strip()
+    g["_amt"] = pd.to_numeric(g[acol].astype(str).str.replace(",", "", regex=False), errors="coerce").fillna(0.0) if acol else 0.0
+    gg = g[g["_n"].ne("") & g["_n"].ne("nan") & g["_a"].notna()]
+    out = {}
+    for a in gg["_a"].unique():
+        sub = gg[gg["_a"] == a]
+        idx = sub.groupby("_d")["_amt"].apply(lambda s: s.abs().idxmax())   # 每 dicj 攞金額最大嗰個名
+        out[a] = dict(zip(sub.loc[idx, "_d"], sub.loc[idx, "_n"]))
+    return out
+
+
 def run(fmt="csv", out_dir="data/tableau"):
     """Build Tableau files. DEFAULT = csv (one combined tableau_combined_25.csv). Other formats kept
     for the kedro generate/tableau pipelines. Importable so they can call it (no argparse)."""
     from kpi.lib.conf import load_categories
     from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code
     cats = load_categories()
+    gname = golden_name_map()
+    if gname:
+        print(f"  golden 名 map: {', '.join(f'{a}={len(m)}' for a, m in gname.items())}")
     frames = []
     for ent, com in ENTITIES.items():
         parquet = Path(f"data/{ent}/output/{com}_kpi_report.parquet")
@@ -243,6 +295,14 @@ def run(fmt="csv", out_dir="data/tableau"):
             keep.append("project_code")
         _nb = int(df["project_code"].astype(str).str.strip().isin(["", "nan", "None"]).sum())
         print(f"  [{ent}] project_code: {'native+dicj' if _has_native else 'project碼+dicj'} fallback, blank={_nb}")
+
+        # ── 項目名稱 = golden DICJ 名稱 (by dicj_code) — 項目組要求 project name = golden 名（roll-up 層）──
+        _gm = gname.get(ent, {})
+        if _gm and "dicj_code" in df.columns:
+            df["項目名稱"] = df["dicj_code"].astype(str).fillna("").str.strip().map(_gndicj).map(_gm).fillna("")
+            keep.append("項目名稱")
+            _gn_blank = int(df["項目名稱"].astype(str).str.strip().eq("").sum())
+            print(f"  [{ent}] 項目名稱 ← golden: blank {_gn_blank:,}/{len(df):,} (冇對到 golden 名嘅 dicj)")
 
         # ── 調整前 / 調整 / 調整後 (萬元) — 項目組對數用。調整後 = native 調整後金額 else amount；調整前 = 調整後 − 調整金額 ──
         _adj = (pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0)
