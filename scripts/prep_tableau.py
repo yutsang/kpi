@@ -30,8 +30,8 @@ ENTITIES = {"galaxy":"company_1","sjm":"company_2","wynn":"company_3","vml":"com
 SUBPROJECT_COLS = {
     "galaxy": ("project_code", "subproject"),                          # B021 / Cross Border HK
     "vml":    ("Subproject", "SubProject_Name"),                       # SP00033 / Comprehensive Upgrade
-    "melco":  ("Project & Sub-project ID", "Project/Sub-Project Name_1"),  # 13c / Water park operations
-    "mgm":    ("Project_code", "Project_name"),                        # 項目019-OPEX (比 master 細)
+    "melco":  ("Project & Sub-project ID", "Project name - Amended"),  # 13c / Water Park Operations
+    "mgm":    ("Project_code", "Project_name"),                        # 項目019-OPEX / 細名
     "sjm":    (None, "Subproject"),                                    # 冇細碼；細層只得名 (序號+名)
     "wynn":   (None, "Sub project"),                                   # 冇細碼；細層只得名
 }
