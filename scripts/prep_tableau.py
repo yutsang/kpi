@@ -411,6 +411,38 @@ def run(fmt="csv", out_dir="data/tableau"):
         if _c in combined.columns:
             _nb = int(combined[_c].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"]).sum())
             print(f"  [4層 100%?] {_c}: blank={_nb}")
+
+    # ── blank V 填 NG 主 V（user: blank V 也是問題）。只填空，唔郁已有 V。NG primary = ng_default canonical。──
+    NG_PRIMARY = {"NG0": ("V_GAMING_VENUE", "博彩娛樂場優化"), "NG1": ("V_OVERSEAS_ROADSHOW", "參與海外路演與宣傳活動"),
+                  "NG2": ("V_MICE", "會議展覽"), "NG3": ("V_CONCERT", "娛樂表演"), "NG4": ("V_SPORT_EVENT", "體育賽事"),
+                  "NG5": ("V_ART_EXHIBITION", "文藝展覽表演"), "NG6": ("V_WELLNESS", "健康養生"), "NG7": ("V_THEME_PARK", "主題遊樂場地"),
+                  "NG8": ("V_RESTAURANT", "餐廳"), "NG9": ("V_COMMUNITY", "社區活化"), "NG10": ("V_MARITIME", "海上旅遊"),
+                  "NG11": ("V_OTHER", "其他")}
+    if "vertical_label" in combined.columns and "ng_code" in combined.columns:
+        _ngc = combined["ng_code"].astype(str).str.strip()
+        _vlb = combined["vertical_label"].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
+        if int(_vlb.sum()):
+            _by_ng0 = int((_vlb & _ngc.eq("NG0")).sum())
+            print(f"  [blank V] {int(_vlb.sum()):,} 行冇 V（其中 NG0 博彩 {_by_ng0:,}）→ 填 NG 主 V")
+            combined.loc[_vlb, "vertical_label"] = _ngc[_vlb].map(lambda n: NG_PRIMARY.get(n, ("", "其他"))[1])
+            if "vertical_id" in combined.columns:
+                _vib = combined["vertical_id"].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
+                combined.loc[_vib, "vertical_id"] = _ngc[_vib].map(lambda n: NG_PRIMARY.get(n, ("V_OTHER",))[0])
+
+    # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
+    _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
+    if _amtc and "entity" in combined.columns:
+        _pre = combined.groupby("entity")["amount_mop"].apply(lambda s: pd.to_numeric(s, errors="coerce").sum()).to_dict()
+        _az = pd.Series(True, index=combined.index)
+        for c in _amtc:
+            _az &= pd.to_numeric(combined[c], errors="coerce").fillna(0.0).eq(0.0)
+        if int(_az.sum()):
+            combined = combined[~_az].copy()
+            _post = combined.groupby("entity")["amount_mop"].apply(lambda s: pd.to_numeric(s, errors="coerce").sum()).to_dict()
+            print(f"  [剔全0行] drop {int(_az.sum()):,} 行（全部金額=0）；驗 tie：")
+            for e in sorted(_pre):
+                _d = _pre[e] - _post.get(e, 0.0)
+                print(f"      {e:<7} Σ前={_pre[e]/1e6:>9,.1f}M  Σ後={_post.get(e,0)/1e6:>9,.1f}M  Δ={_d/1e6:.4f}M")
     print(f"Cols: {list(combined.columns)}")
 
     # ── cube / cube-detail: ONE aggregated file = cross-tab source (no union, no stitching) ──
