@@ -450,6 +450,53 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
                 print(f"  [vml H修正→{_lab}] {int(_m.sum()):,} 行")
 
+    # ── 其他(H_OTHER) 救援：account_desc 明確屬某真 H bucket 嘅搬走（user 2026-06-18 逐家睇 其他 dump）──
+    #   tie-safe（H 唔喺 golden tie key）；只郁 H_OTHER；first-match-wins；收入/回收/contra/分攤 留 其他。
+    #   留喺其他唔郁：匯兌/FX/利息/稅/Cost Recovery/Interco 分攤/Adjustment/Variance/Prepaid（無 token 自然唔搬）。
+    if "horizontal_id" in combined.columns and "account_desc" in combined.columns:
+        _accU = combined["account_desc"].astype(str).str.upper()
+        _hO = combined["horizontal_id"].astype(str).str.strip().eq("H_OTHER")
+        # guard：呢類就算撞 token 都唔搬（收入/回收/contra 抵銷項）
+        _keepO = _accU.str.contains("REVENUE|CONTRA|RECOVERY", regex=True, na=False)
+        # (target_id, label, [account_desc UPPER token]) — 順序 = 優先（前者先 match）
+        _RESCUE = [
+            ("H_HOTEL_ROOM", "Comp房間", ["COMPLIMENTARY ROOM"]),
+            ("H_FNB", "Comp餐飲", ["COMPLIMENTARY FOOD", "COMPLIMENTARY BEVERAGE"]),
+            ("H_COMP_OTHER", "Comp其他", ["COMP-ON PROPERTY", "COMP ON PROPERTY"]),
+            ("H_LABOR", "人工成本", ["PAID TIME OFF", "13TH MONTH", "COMP LEAVE", "REWARD LEAVE",
+                "OVERTIME", "PROVIDENT", "RETIREMENT FUND", "HEALTH & WELFARE", "HEALTH AND WELFARE",
+                "WORKERS COMPENSATION", "EMPLOYEE HOUSING", "GROUP INSURANCE", "LIFE INSURANCE",
+                "EMPLOYEE BENEFIT", "SOCIAL SECURITY", "BONUS", "OTHER ALLOWANCE"]),
+            ("H_SPONSORSHIP", "贊助費", ["SPONSORSHIP", "SPONSOR", "CHARITABLE", "NON-PROFIT",
+                "NONPROFIT", "捐贈", "公益"]),
+            ("H_ADVERTISING", "廣告及推廣", ["PROMOTIONAL", "推廣", "PREPAID ADVERTISING",
+                "ADVERTISING", "MEDIA-OTHER", "MEDIA - OTHER"]),
+            ("H_MAINTENANCE", "維護費", ["R&M", "REPAIR", "MAINTENANCE", "MAINTEN", "UTILITIES",
+                "UTILITY", "ELECTRICITY", "WATER USAGE", "GAS & OIL", "GAS AND OIL"]),
+            ("H_EQUIP", "設施及器具採購", ["CHINAWARE", "CHINA/GLASS", "CHINA / GLASS", "GLASS/SILVER",
+                "SILVERWARE", "KITCHEN SUPPL", "LINEN", "GAMBLING EQUIPMENT", "FACILITY INVENTORY",
+                "GUEST SUPPLIES", "PANTRY SUPPLIES", "OPERATING ITEMS AND EQUIP", "LED WALL",
+                "AV EQUIPMENT", "O/E-"]),
+            ("H_PROFESSIONAL", "專業服務費", ["PROFESSIONAL FEE", "LEGAL FEE", "OUTSIDE SERVICE",
+                "OUT SERV", "OUTSERV", "CONSULTING", "CONSULTANT"]),
+        ]
+        _assigned = pd.Series(False, index=combined.index)
+        _summary = []
+        for _hid, _lab, _toks in _RESCUE:
+            _tokm = pd.Series(False, index=combined.index)
+            for _t in _toks:
+                _tokm |= _accU.str.contains(_re.escape(_t), regex=True, na=False)
+            _m = _hO & ~_keepO & ~_assigned & _tokm
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid
+                if "horizontal_label" in combined.columns:
+                    combined.loc[_m, "horizontal_label"] = _lab
+                _assigned |= _m
+                _amt = pd.to_numeric(combined.loc[_m, "amount_mop"], errors="coerce").abs().sum() / 1e4
+                _summary.append(f"{_lab}={int(_m.sum()):,}行/{_amt:,.0f}萬")
+        if _summary:
+            print(f"  [其他救援→真H] " + " | ".join(_summary))
+
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
     def _fill100(dst, src):
