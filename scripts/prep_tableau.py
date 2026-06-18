@@ -532,12 +532,15 @@ def run(fmt="csv", out_dir="data/tableau"):
             # ── 拆分（keyword heuristic，待 dump 驗）──
             if v == "V_OVERSEAS_ROADSHOW":
                 return "政府、公益及社區活動" if _has(s, ("贊助", "政府", "MGTO", "旅遊局", "文化局", "體育局", "運動會", "Sponsor", "sponsor")) else "線下宣傳"
-            if v == "V_INVITE_AGENCY": return "線下宣傳"
+            if v == "V_INVITE_AGENCY":
+                return "線上宣傳" if _has(s, ("佣金", "Commission", "commission", "Agency Fee", "Agency Fees", "Agency fee", "agency fee")) else "線下宣傳"
             if v == "V_PROMO_VIDEO": return "線上宣傳"
-            if v == "V_INVITE_GUEST": return "線下宣傳"
+            if v == "V_INVITE_GUEST":
+                return "線上宣傳" if _has(s, ("媒體", "Media", "media", "Digital", "digital", "Online", "online", "網站", "SEO", "線上", "Social", "social")) else "線下宣傳"
             if v == "V_CONCERT":
                 return "節日慶典" if _has(s, ("節", "慶典", "賀歲", "新年", "CNY", "Festival", "花車", "煙花", "巡遊", "花燈", "Parade", "parade")) else "演出表演"
             if v == "V_FOOD_EVENT":
+                if _has(s, ("Deposits", "CIP", "資產", "Renovation", "Asset Under", "新工作范圍")): return "美食-其他"
                 if _has(s, ("宴", "Dinner", "dinner", "菜單", "Menu", "名廚", "Chef", "chef", "美酒", "Wine", "wine", "Pairing", "Whisky")): return "特別菜單或宴會"
                 if _has(s, ("媒體", "Media", "media", "推廣", "KOL", "宣傳", "Promo")): return "線上宣傳"
                 return "美食-其他"
