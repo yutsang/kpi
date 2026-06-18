@@ -450,6 +450,22 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
                 print(f"  [vml H修正→{_lab}] {int(_m.sum()):,} 行")
 
+    # ── galaxy 部門分攤修正（user 2026-06-18 逐項定）：EVS(清潔)→維護費；Allocation-Entertainment→廣告 ──
+    #   Commission 維持其他（信用卡手續費,非中介佣金）；Allocation-R&M 由通用救援 R&M token 接手→維護。
+    if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
+        _gal = combined["entity"].astype(str).eq("galaxy")
+        _accg = combined["account_desc"].astype(str)
+        _hg = combined["horizontal_id"].astype(str).str.strip().eq("H_OTHER")
+        _g_evs = _gal & _hg & _accg.str.contains("Allocation", case=False, na=False) & _accg.str.contains("EVS", na=False)
+        _g_ent = _gal & _hg & _accg.str.contains("Allocation", case=False, na=False) & _accg.str.contains("Entertainment", case=False, na=False)
+        for _m, _hid, _lab, _nm in [(_g_evs, "H_MAINTENANCE", "維護費", "EVS→維護"),
+                                     (_g_ent, "H_ADVERTISING", "廣告及推廣", "Entertainment分攤→廣告")]:
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid
+                if "horizontal_label" in combined.columns:
+                    combined.loc[_m, "horizontal_label"] = _lab
+                print(f"  [galaxy {_nm}] {int(_m.sum()):,} 行")
+
     # ── 其他(H_OTHER) 救援：account_desc 明確屬某真 H bucket 嘅搬走（user 2026-06-18 逐家睇 其他 dump）──
     #   tie-safe（H 唔喺 golden tie key）；只郁 H_OTHER；first-match-wins；收入/回收/contra/分攤 留 其他。
     #   留喺其他唔郁：匯兌/FX/利息/稅/Cost Recovery/Interco 分攤/Adjustment/Variance/Prepaid（無 token 自然唔搬）。
