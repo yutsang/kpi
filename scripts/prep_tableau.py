@@ -441,7 +441,10 @@ def run(fmt="csv", out_dir="data/tableau"):
         _m1 = _vml & _opex & _acc2.str.contains("OUTSIDE SERV", case=False, na=False) & _h2.eq("H_OTHER")
         _m2 = _vml & _acc2.str.contains("SALARIES|Salaries|Salary", case=False, regex=True, na=False) & _h2.eq("H_OTHER")
         _m3 = _vml & _acc2.str.contains("CONTRACT LABOR|Contract Labor", case=False, regex=True, na=False) & _h2.isin(["H_PROFESSIONAL", "H_OTHER"])
-        for _m, _hid, _lab in [(_m1, "H_PROFESSIONAL", "專業服務費"), (_m2, "H_LABOR", "人工成本"), (_m3, "H_LABOR", "人工成本")]:
+        _m4 = _vml & _opex & _acc2.str.contains("SOFTWARE & HOSTING|SOFTWARE AND HOSTING", case=False, regex=True, na=False) & _h2.eq("H_OTHER")
+        _m5 = _vml & _acc2.str.contains("SOCIAL SECURITY|Social Security", case=False, regex=True, na=False) & _h2.eq("H_OTHER")
+        for _m, _hid, _lab in [(_m1, "H_PROFESSIONAL", "專業服務費"), (_m2, "H_LABOR", "人工成本"), (_m3, "H_LABOR", "人工成本"),
+                               (_m4, "H_PROFESSIONAL", "專業服務費"), (_m5, "H_LABOR", "人工成本")]:
             if int(_m.sum()):
                 combined.loc[_m, "horizontal_id"] = _hid
                 combined.loc[_m, "horizontal_label"] = _lab
