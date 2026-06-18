@@ -25,8 +25,22 @@ import re
 
 ROOT = Path(__file__).resolve().parent.parent
 CSV = ROOT / "tableau_combined_25.csv"
-GOLD = ROOT / "internal_resource_golden.xlsx"
 THR = 50.0  # 萬：只列 |diff|>THR 嘅格
+
+
+def find_gold():
+    cands = []
+    if len(sys.argv) > 1:
+        cands.append(Path(sys.argv[1]))
+    cands += [ROOT / "internal_resource_golden.xlsx", ROOT / "data" / "internal_resource_golden.xlsx",
+              Path.cwd() / "internal_resource_golden.xlsx", Path.home() / "Downloads" / "internal_resource_golden.xlsx"]
+    for p in cands:
+        try:
+            if p.exists():
+                return p, cands
+        except Exception:
+            pass
+    return None, cands
 
 # golden NG 中文名 → ng_code（容錯：博彩娛樂/博彩項目 都 →NG0）
 NG_NAME2CODE = {
@@ -66,7 +80,7 @@ def _ng_from_name(s) -> str:
     return ""
 
 
-def load_golden() -> pd.DataFrame:
+def load_golden(GOLD) -> pd.DataFrame:
     raw = pd.read_excel(GOLD, dtype=str, header=None)
     # 揾 header row（含 entity/year/capex/opex 字眼）
     hdr = None
@@ -126,9 +140,15 @@ def our_metrics(df: pd.DataFrame) -> pd.DataFrame:
 def main():
     if not CSV.exists():
         L.append("!! tableau_combined_25.csv 揾唔到"); _w(); return
-    if not GOLD.exists():
-        L.append(f"!! {GOLD.name} 揾唔到（root 放 internal_resource_golden.xlsx）"); _w(); return
-    gold = load_golden()
+    GOLD, cands = find_gold()
+    if GOLD is None:
+        L.append("!! internal_resource_golden.xlsx 揾唔到。揾過：")
+        for p in cands:
+            L.append(f"     {p}")
+        L.append("   → 放去 repo root，或 `python scripts\\recon_internal_resource.py <golden路徑>`")
+        _w(); return
+    L.append(f"  golden 檔: {GOLD}")
+    gold = load_golden(GOLD)
     df = pd.read_csv(CSV, dtype=str, keep_default_na=False)
     df["_yb"] = df["year_bucket"].astype(str).str.strip()
 

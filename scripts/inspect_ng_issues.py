@@ -50,6 +50,25 @@ def main():
     elig = {ng: set(d.get("eligible_verticals") or []) | CROSS
             for ng, d in (cats.get("ng_categories") or {}).items()}
 
+    # ── §0 用戶點名 NG×V（直接查，唔理 eligible，睇 V掛錯枝 reset 後仲有冇 + 來源）──
+    L.append(f"\n{'='*78}\n## §0 用戶點名 NG×V（直接查 vertical_id；prep reset 後仲剩低嘅 + 來源）")
+    FLAG = [("NG5", "V_MICE"), ("NG9", "V_MICE"), ("NG9", "V_FOOD_EVENT"),
+            ("NG9", "V_ART_EXHIBITION"), ("NG5", "V_FOOD_EVENT"), ("NG9", "V_CONCERT")]
+    _any0 = False
+    for ngc, vid in FLAG:
+        sub = df[(df.ng_code == ngc) & (df.vertical_id == vid)]
+        if not len(sub):
+            continue
+        _any0 = True
+        L.append(f"\n   ▸ {ngc} × {vid}（{sub['amt'].sum():,.0f}萬，{len(sub)}行）:")
+        for ent, gg in sub.groupby("entity"):
+            d = gg.groupby(["project", "項目組V", "account_desc"])["amt"].sum().reset_index().sort_values("amt", key=lambda s: s.abs(), ascending=False)
+            L.append(f"      {ent}: {gg['amt'].sum():,.0f}萬 ← {' / '.join(str(x)[:24] for x in d['project'].head(3))}")
+            for _, x in d.head(4).iterrows():
+                L.append(f"        {x['amt']:>7,.0f}萬 | {x['project'][:30]:<30} | 組V={x['項目組V'][:12]} | {x['account_desc'][:22]}")
+    if not _any0:
+        L.append("   （點名 6 個 combo 全部冇 row → 已被 prep reset / relabel 解決 🎉）")
+
     # ── §1 NG×V 掛錯枝 ──
     L.append(f"\n{'='*78}\n## §1 NG×V 掛錯枝（V 唔喺該 NG eligible；按 |萬| 排）")
     stray = df[[(n in elig) and (v != "") and (v not in elig[n])
@@ -114,6 +133,14 @@ def main():
         d = sub.groupby("account_desc")["amt"].sum().reset_index().sort_values("amt", key=lambda s: s.abs(), ascending=False)
         for _, x in d.head(18).iterrows():
             L.append(f"     {x['amt']:>9,.0f}萬 | {x['account_desc'][:40]}")
+
+    # ── §6 vml NG11(其他) by project — 邊個 project 撐起個大 其他 ──
+    L.append(f"\n{'='*78}\n## §6 vml NG11(其他) by project（睇邊啲 project 應該唔係其他）")
+    v11 = df[(df.entity == "vml") & (df.ng_code == "NG11")]
+    L.append(f"   合計 {v11['amt'].sum():,.0f}萬，{len(v11)}行；top project：")
+    d6 = v11.groupby(["project", "vertical_label", "horizontal_label"])["amt"].sum().reset_index().sort_values("amt", key=lambda s: s.abs(), ascending=False)
+    for _, x in d6.head(25).iterrows():
+        L.append(f"     {x['amt']:>8,.0f}萬 | {x['project'][:38]:<38} | V={x['vertical_label'][:10]:<10} | H={x['horizontal_label'][:8]}")
     _w()
 
 
