@@ -382,6 +382,15 @@ def run(fmt="csv", out_dir="data/tableau"):
         combined = combined.rename(columns={"項目名稱": "project"})
     combined = combined.rename(columns={"dicj_code": "dicj code", "project_code": "subproject code"})
 
+    # ── H_UTILITY → H_MAINTENANCE（user: 水電/utility 放維護費，唔好獨立 utility 類）──
+    if "horizontal_id" in combined.columns:
+        _um = combined["horizontal_id"].astype(str).str.strip().eq("H_UTILITY")
+        if int(_um.sum()):
+            combined.loc[_um, "horizontal_id"] = "H_MAINTENANCE"
+            if "horizontal_label" in combined.columns:
+                combined.loc[_um, "horizontal_label"] = "維護費"
+            print(f"  [H_UTILITY→維護費] {int(_um.sum()):,} 行")
+
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
     def _fill100(dst, src):
