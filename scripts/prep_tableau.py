@@ -634,7 +634,11 @@ def run(fmt="csv", out_dir="data/tableau"):
                 if _has(s, ("媒體", "Media", "media", "推廣", "KOL", "宣傳", "Promo")): return "宣傳推廣"
                 return "美食-其他"
             if v == "V_COMMUNITY":
-                if _has(s, ("建設", "工程", "設施", "裝修", "Construction")): return "內部設施-社區活化"
+                # 社區活化拆 3：建設類分內/外（公共片區=外）；其餘=政府公益（user 2026-06-18 §2 sjm 新馬路）
+                _con = _has(s, ("建設", "工程", "設施", "裝修", "Construction", "Renovation", "renovation",
+                                "重整", "碼頭", "環境美化", "Deposits paid", "CIP", "activ", "活化計劃"))
+                if _con:
+                    return "外部設施-社區活化" if _has(s, ("新馬路", "片區", "碼頭", "福隆新街", "公共", "環境美化")) else "內部設施-社區活化"
                 return "政府、公益及社區活動"
             return cur
         _newlab = [_relabel(v, n, s, c) for v, n, s, c in zip(_vid, _ngl, _basis, _cur)]
@@ -643,6 +647,25 @@ def run(fmt="csv", out_dir="data/tableau"):
         from collections import Counter
         _top = Counter(_newlab).most_common(14)
         print(f"  [V relabel] 改 {_nch:,} 行；新 V top: " + " | ".join(f"{k}={v}" for k, v in _top))
+
+    # ── NG6 康養：設施/中心/診所/水療/會所 等 → 內部設施-康養（user 2026-06-18 §4：康養設施較細）──
+    #   康養活動(活動/瑜伽節/講座) 維持；facility kw（含 subproject）先升做 內部設施-康養。
+    if "ng_code" in combined.columns and "vertical_label" in combined.columns:
+        _ng6 = _ngc.eq("NG6") & combined["vertical_label"].astype(str).eq("康養活動")
+        _fb6 = (combined.get("project", pd.Series("", index=combined.index)).astype(str) + " " +
+                combined.get("subproject", pd.Series("", index=combined.index)).astype(str) + " " +
+                combined.get("description", pd.Series("", index=combined.index)).astype(str) + " " +
+                combined.get("account_desc", pd.Series("", index=combined.index)).astype(str))
+        _FAC6 = ("中心", "診所", "會所", "水療", "理療", "中醫房", "醫療", "保健", "設施", "基礎設施",
+                 "SPA", "Spa", "spa", "Clinic", "Polyclinic", "Surgical", "Wellness Cent",
+                 "Wellness Centre", "Wellness Center", "Fitness", "Gym")
+        _fac6 = _ng6 & _fb6.apply(lambda s: any(k in s for k in _FAC6))
+        if int(_fac6.sum()):
+            combined.loc[_fac6, "vertical_label"] = "內部設施-康養"
+            if "vertical_id" in combined.columns:
+                combined.loc[_fac6, "vertical_id"] = "V_PROPERTY_UPGRADE"
+            _a6 = pd.to_numeric(combined.loc[_fac6, "amount_mop"], errors="coerce").abs().sum() / 1e4
+            print(f"  [NG6 康養設施→內部設施-康養] {int(_fac6.sum()):,} 行 / {_a6:,.0f}萬")
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
