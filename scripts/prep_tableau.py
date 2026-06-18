@@ -251,12 +251,21 @@ def run(fmt="csv", out_dir="data/tableau"):
                    else next((c for c in ("Sub project", "SubProject_Name", "Subproject_Name",
                                           "subproject", "项目名称中文", "项目英文名称",
                                           "Initiative Name", "Contents Name") if c in df.columns), None))
+        # wynn：原生細欄「subproject」(真細名 Music Concerts… 6%) 比 sub_col「Sub project」(=項目名 92%)
+        #   更細，但 sub_col 揀咗 Sub project 會覆蓋佢 → 先捕捉，for-loop 後 overlay 返（有就用更細）。
+        _fine_sub = (df["subproject"].astype(str).str.strip().str.replace(r"[\r\n]+", " ", regex=True)
+                     if (ent == "wynn" and "subproject" in df.columns and sub_col != "subproject") else None)
         for src, tgt in [(proj_col,"project"),(sub_col,"subproject"),
                           (ac_col,"account_code"),(ad_col,"account_desc"),
                           (dn_col,"description"),(vd_col,"vendor")]:
             if src and src in df.columns:
                 df[tgt] = df[src].astype(str).str.strip().str.replace(r"[\r\n]+", " ", regex=True)
                 keep.append(tgt)
+        if _fine_sub is not None and "subproject" in df.columns:
+            _nb = ~_fine_sub.isin(["", "nan", "None", "NaN", "<NA>"])
+            if int(_nb.sum()):
+                df.loc[_nb, "subproject"] = _fine_sub[_nb]
+                print(f"  [wynn subproject] overlay 更細 native subproject {int(_nb.sum()):,} 行（其餘用 Sub project）")
 
         # ── UNIFORM extra detail layers (audit_detail_cols) — same set as the audit 大表 so Tableau can
         #    drill每條數 at consistent granularity (科目層級/科目明細/發票號/PO號/成本中心/WBS子項/憑證號).
@@ -600,30 +609,29 @@ def run(fmt="csv", out_dir="data/tableau"):
             if v == "V_MICE": return "會展活動"
             if v == "V_WELLNESS": return "康養活動"
             if v == "V_MARITIME": return "海上活動"
-            if v == "V_VENUE_PERF_SPORT_MICE": return "內部設施-場館"
+            if v in ("V_VENUE_PERF_SPORT_MICE", "V_MUSEUM"): return "內部設施-場館"  # 場館+博物館 併入場館
             if v == "V_RESTAURANT": return "內部設施-餐廳"
             if v == "V_THEME_PARK": return "內部設施-遊樂"
             if v in ("V_OVERSEAS_OFFICE", "V_REGIONAL_TEAM"): return "國際代表團隊及海外辦事處"
-            if v == "V_OVERSEAS_WEB_SEO": return "線上宣傳"
+            if v == "V_OVERSEAS_WEB_SEO": return "宣傳推廣"
             if v == "V_PROPERTY_UPGRADE":
+                if ng == "NG2": return "內部設施-場館"   # 會展場館優化 → 場館（user 2026-06-18）
                 if ng == "NG6": return "內部設施-康養"
                 if ng == "NG11": return "內部設施-其他"
                 return "內部設施優化"
             if v == "V_PUBLIC_FACILITY": return "外部設施優化"
-            # ── 拆分（keyword heuristic，待 dump 驗）──
+            # ── 宣傳：項目組覺得線上/線下難分 → 改回「路演」+「宣傳推廣」兩類（user 2026-06-18）──
+            #   路演 = 參加路演(V_OVERSEAS_ROADSHOW，贊助/政府嗰啲歸 政府公益社區活動)；
+            #   其餘宣傳（邀請旅行社[含佣金]/邀請外國客/拍片/海外SEO）= 宣傳推廣。
             if v == "V_OVERSEAS_ROADSHOW":
-                return "政府、公益及社區活動" if _has(s, ("贊助", "政府", "MGTO", "旅遊局", "文化局", "體育局", "運動會", "Sponsor", "sponsor")) else "線下宣傳"
-            if v == "V_INVITE_AGENCY":
-                return "線上宣傳" if _has(s, ("佣金", "Commission", "commission", "Agency Fee", "Agency Fees", "Agency fee", "agency fee")) else "線下宣傳"
-            if v == "V_PROMO_VIDEO": return "線上宣傳"
-            if v == "V_INVITE_GUEST":
-                return "線上宣傳" if _has(s, ("媒體", "Media", "media", "Digital", "digital", "Online", "online", "網站", "SEO", "線上", "Social", "social")) else "線下宣傳"
+                return "政府、公益及社區活動" if _has(s, ("贊助", "政府", "MGTO", "旅遊局", "文化局", "體育局", "運動會", "Sponsor", "sponsor")) else "路演"
+            if v in ("V_INVITE_AGENCY", "V_INVITE_GUEST", "V_PROMO_VIDEO"): return "宣傳推廣"
             if v == "V_CONCERT":
                 return "節日慶典" if _has(s, ("節", "慶典", "賀歲", "新年", "CNY", "Festival", "花車", "煙花", "巡遊", "花燈", "Parade", "parade")) else "演出表演"
             if v == "V_FOOD_EVENT":
                 if _has(s, ("Deposits", "CIP", "資產", "Renovation", "Asset Under", "新工作范圍", "工程", "建設", "裝修")): return "內部設施-餐廳"
                 if _has(s, ("宴", "Dinner", "dinner", "菜單", "Menu", "名廚", "Chef", "chef", "美酒", "Wine", "wine", "Pairing", "Whisky")): return "特別菜單或宴會"
-                if _has(s, ("媒體", "Media", "media", "推廣", "KOL", "宣傳", "Promo")): return "線上宣傳"
+                if _has(s, ("媒體", "Media", "media", "推廣", "KOL", "宣傳", "Promo")): return "宣傳推廣"
                 return "美食-其他"
             if v == "V_COMMUNITY":
                 if _has(s, ("建設", "工程", "設施", "裝修", "Construction")): return "內部設施-社區活化"
