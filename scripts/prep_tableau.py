@@ -432,6 +432,21 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_otam, "horizontal_label"] = "廣告及推廣"
             print(f"  [OTA/佣金→廣告] {int(_otam.sum()):,} 行")
 
+    # ── vml H 矛盾修正（compare_h_ref: 項目組H 確認我哋錯）：OUTSIDE SERV→專業(opex) / SALARIES→人工 / CONTRACT LABOR→人工 ──
+    if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
+        _vml = combined["entity"].astype(str).eq("vml")
+        _acc2 = combined["account_desc"].astype(str)
+        _h2 = combined["horizontal_id"].astype(str).str.strip()
+        _opex = ~combined["final_capex_opex"].astype(str).str.strip().eq("Capex") if "final_capex_opex" in combined.columns else True
+        _m1 = _vml & _opex & _acc2.str.contains("OUTSIDE SERV", case=False, na=False) & _h2.eq("H_OTHER")
+        _m2 = _vml & _acc2.str.contains("SALARIES|Salaries|Salary", case=False, regex=True, na=False) & _h2.eq("H_OTHER")
+        _m3 = _vml & _acc2.str.contains("CONTRACT LABOR|Contract Labor", case=False, regex=True, na=False) & _h2.isin(["H_PROFESSIONAL", "H_OTHER"])
+        for _m, _hid, _lab in [(_m1, "H_PROFESSIONAL", "專業服務費"), (_m2, "H_LABOR", "人工成本"), (_m3, "H_LABOR", "人工成本")]:
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid
+                combined.loc[_m, "horizontal_label"] = _lab
+                print(f"  [vml H修正→{_lab}] {int(_m.sum()):,} 行")
+
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
     def _fill100(dst, src):
