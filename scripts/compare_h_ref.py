@@ -49,12 +49,19 @@ def main():
         raw = raw[[uidc, hcol]].copy()
         raw["uid"] = _s(raw[uidc]); raw["href"] = _s(raw[hcol])
         pq = pd.read_parquet(pp)
-        uidp = "unique_id" if "unique_id" in pq.columns else None
-        if not uidp or "horizontal_id" not in pq.columns:
-            L.append("   !! parquet 冇 unique_id/horizontal_id"); continue
+        hcolp = next((c for c in ("horizontal_id", "horizontal_label") if c in pq.columns), None)
+        # join key：試 native uid / unique_id / 其他唯一碼欄，要喺 parquet 入面
+        uidp = next((c for c in (uidc, "unique_id", "唯一識別碼", "KPMG唯一識別碼", "Ref number", "Index")
+                     if c in pq.columns), None)
+        if not hcolp or not uidp:
+            cand = [c for c in pq.columns if any(k in str(c).lower() for k in
+                    ("uid", "unique", "識別", "ref", "index", "horizontal"))]
+            L.append(f"   !! parquet 揾唔到 horizontal({hcolp}) / uid({uidp})。候選欄: {cand[:15]}")
+            continue
         amt = pd.to_numeric(pq[amtc], errors="coerce").fillna(0.0) / 1e4 if amtc in pq.columns else \
             pd.to_numeric(pq.get("amount_mop", 0), errors="coerce").fillna(0.0) / 1e4
-        pq = pd.DataFrame({"uid": _s(pq[uidp]), "ourH": _s(pq["horizontal_id"]), "a": amt})
+        pq = pd.DataFrame({"uid": _s(pq[uidp]), "ourH": _s(pq[hcolp]), "a": amt})
+        L.append(f"   join key = '{uidp}'  H欄 = '{hcolp}'")
         m = pq.merge(raw[["uid", "href"]], on="uid", how="inner")
         L.append(f"   join: {len(m):,}/{len(pq):,} parquet 行對到 raw")
         if not len(m):
