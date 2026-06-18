@@ -591,6 +591,22 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_stray, "vertical_label"] = _ngc[_stray].map(lambda n: NG_PRIMARY.get(n, ("", "其他"))[1])
             combined.loc[_stray, "vertical_id"] = _ngc[_stray].map(lambda n: NG_PRIMARY.get(n, ("V_OTHER",))[0])
 
+    # ── 點名 NG×V 修正（user §0：V 對唔上 databook NG → align 去 NG-native；如刻意 two-taxonomy 可 raw 改 NG）──
+    _FIXNGV = [  # (entity, ng_code, project 包含, → vertical_id)
+        ("sjm", "NG5", "澳門設計大獎", "V_ART_EXHIBITION"),
+        ("galaxy", "NG9", "為前線團隊成員提供年度培訓", "V_COMMUNITY"),
+        ("vml", "NG9", "帶動旅客進入社區", "V_COMMUNITY"),
+        ("melco", "NG9", "新濠風尚", "V_COMMUNITY"),
+    ]
+    if "vertical_id" in combined.columns and "project" in combined.columns and "entity" in combined.columns:
+        _proj = combined["project"].astype(str)
+        _ent = combined["entity"].astype(str)
+        for _e, _n, _pk, _vid in _FIXNGV:
+            _m = _ent.eq(_e) & _ngc.eq(_n) & _proj.str.contains(_pk, na=False, regex=False)
+            if int(_m.sum()):
+                combined.loc[_m, "vertical_id"] = _vid
+                print(f"  [NGV修正] {_e} {_n} {_pk[:12]} → {_vid}（{int(_m.sum())}行）")
+
     # ── (3) V label 大改（user 2026-06-18）：更名/合併/NG條件 = 確定；拆分 = keyword heuristic（待 dump 驗）──
     if "vertical_id" in combined.columns and "vertical_label" in combined.columns:
         _vid = combined["vertical_id"].astype(str).str.strip().tolist()
