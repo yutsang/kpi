@@ -391,22 +391,46 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_um, "horizontal_label"] = "維護費"
             print(f"  [H_UTILITY→維護費] {int(_um.sum()):,} 行")
 
-    # ── capex 錯 H 修正（user 2026-06-18）：capex 行嘅 CIP/裝修/資產新工作范圍 錯標人工/維護 → 建設；廠房設備 → 器具 ──
+    # ── capex 只能入 {建設 / 設施器具 / 人工}（user 2026-06-18）──
+    #   (a) 明確 account：CIP/裝修/Renovation/新工作范圍 → 建設（即使現標人工）
+    #   (b) 通用：capex H ∉ {建設,器具,人工} → 採購/供應/設備類=器具；其餘(show/WIP/其他)=建設(舞台亦建設)
     if "horizontal_id" in combined.columns and "final_capex_opex" in combined.columns and "account_desc" in combined.columns:
         _cap = combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
         _acc = combined["account_desc"].astype(str)
+        _hid = combined["horizontal_id"].astype(str).str.strip()
         _CON = ["CIP-A&A", "CIP-OTHER", "CIP-", "Deposits paid - Renovation", "Renovation (WBS)",
                 "租賃物業裝修", "物業裝修", "新工作范圍", "新工作範圍"]
-        _EQP = ["廠房和設備", "Plant and Equipment", "廠房及設備"]
-        _conm = _cap & _acc.apply(lambda s: any(k in str(s) for k in _CON))
-        _eqpm = _cap & _acc.apply(lambda s: any(k in str(s) for k in _EQP))
-        for _m, _h, _lab, _nm in [(_conm, "H_CONSTRUCTION", "建設與設施支出", "建設"),
-                                   (_eqpm, "H_EQUIP", "設施及器具採購", "器具")]:
+        _EQKW = ["PURCHASES", "採購", "Par Stock", "Stock", "Inventory", "Supplies", "China", "Glass",
+                 "Chinaware", "FF&E", "設備", "器具", "Equipment", "Software", "License", "Kitchen",
+                 "FA -", "O/E-", "廠房和設備", "Plant and Equipment", "Food", "Beverage"]
+        _ALLOW = {"H_CONSTRUCTION", "H_EQUIP", "H_LABOR"}
+        _eqkw = _acc.apply(lambda s: any(k in str(s) for k in _EQKW))
+        _con0 = _cap & _acc.apply(lambda s: any(k in str(s) for k in _CON))   # 明確建設(即使現人工)
+        _bad = _cap & ~_hid.isin(_ALLOW)                                      # H 唔喺 allow
+        _to_eqp = _bad & _eqkw & ~_con0
+        _to_con = _con0 | (_bad & ~_eqkw)
+        for _m, _h, _lab, _nm in [(_to_eqp, "H_EQUIP", "設施及器具採購", "器具"),
+                                   (_to_con, "H_CONSTRUCTION", "建設與設施支出", "建設")]:
             if int(_m.sum()):
                 combined.loc[_m, "horizontal_id"] = _h
                 if "horizontal_label" in combined.columns:
                     combined.loc[_m, "horizontal_label"] = _lab
-                print(f"  [capex-H修正→{_nm}] {int(_m.sum()):,} 行")
+                print(f"  [capex→{_nm}] {int(_m.sum()):,} 行")
+
+    # ── OTA / 旅行社 / 佣金 → 廣告及推廣（user 2026-06-18：呢類係推廣開支，唔係其他）──
+    if "horizontal_id" in combined.columns and "account_desc" in combined.columns:
+        def _is_ota(s):
+            s = str(s)
+            if any(k in s for k in ("佣金", "旅行社", "OTA")):
+                return True
+            return ("Commission" in s) and ("Agent" in s or "Travel" in s)
+        _otam = combined["account_desc"].astype(str).apply(_is_ota) & \
+            combined["horizontal_id"].astype(str).str.strip().isin(["H_OTHER", "H_PROFESSIONAL"])
+        if int(_otam.sum()):
+            combined.loc[_otam, "horizontal_id"] = "H_ADVERTISING"
+            if "horizontal_label" in combined.columns:
+                combined.loc[_otam, "horizontal_label"] = "廣告及推廣"
+            print(f"  [OTA/佣金→廣告] {int(_otam.sum()):,} 行")
 
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
