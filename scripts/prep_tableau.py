@@ -407,8 +407,8 @@ def run(fmt="csv", out_dir="data/tableau"):
         _eqkw = _acc.apply(lambda s: any(k in str(s) for k in _EQKW))
         _con0 = _cap & _acc.apply(lambda s: any(k in str(s) for k in _CON))   # 明確建設(即使現人工)
         _bad = _cap & ~_hid.isin(_ALLOW)                                      # H 唔喺 allow
-        _to_eqp = _bad & _eqkw & ~_con0
-        _to_con = _con0 | (_bad & ~_eqkw)
+        _to_eqp = _cap & _eqkw & ~_con0          # capex 採購/設備類 → 器具（即使現標人工，如 PURCHASES）
+        _to_con = _con0 | (_bad & ~_eqkw)        # CIP/裝修 + 其餘非 allow → 建設
         for _m, _h, _lab, _nm in [(_to_eqp, "H_EQUIP", "設施及器具採購", "器具"),
                                    (_to_con, "H_CONSTRUCTION", "建設與設施支出", "建設")]:
             if int(_m.sum()):
