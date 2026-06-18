@@ -540,7 +540,7 @@ def run(fmt="csv", out_dir="data/tableau"):
             if v == "V_CONCERT":
                 return "節日慶典" if _has(s, ("節", "慶典", "賀歲", "新年", "CNY", "Festival", "花車", "煙花", "巡遊", "花燈", "Parade", "parade")) else "演出表演"
             if v == "V_FOOD_EVENT":
-                if _has(s, ("Deposits", "CIP", "資產", "Renovation", "Asset Under", "新工作范圍")): return "美食-其他"
+                if _has(s, ("Deposits", "CIP", "資產", "Renovation", "Asset Under", "新工作范圍", "工程", "建設", "裝修")): return "內部設施-餐廳"
                 if _has(s, ("宴", "Dinner", "dinner", "菜單", "Menu", "名廚", "Chef", "chef", "美酒", "Wine", "wine", "Pairing", "Whisky")): return "特別菜單或宴會"
                 if _has(s, ("媒體", "Media", "media", "推廣", "KOL", "宣傳", "Promo")): return "線上宣傳"
                 return "美食-其他"
