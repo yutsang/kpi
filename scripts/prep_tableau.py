@@ -501,6 +501,57 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_stray, "vertical_label"] = _ngc[_stray].map(lambda n: NG_PRIMARY.get(n, ("", "其他"))[1])
             combined.loc[_stray, "vertical_id"] = _ngc[_stray].map(lambda n: NG_PRIMARY.get(n, ("V_OTHER",))[0])
 
+    # ── (3) V label 大改（user 2026-06-18）：更名/合併/NG條件 = 確定；拆分 = keyword heuristic（待 dump 驗）──
+    if "vertical_id" in combined.columns and "vertical_label" in combined.columns:
+        _vid = combined["vertical_id"].astype(str).str.strip().tolist()
+        _ngl = _ngc.tolist()
+        _basis = (combined.get("account_desc", pd.Series("", index=combined.index)).astype(str) + " " +
+                  combined.get("description", pd.Series("", index=combined.index)).astype(str) + " " +
+                  combined.get("project", pd.Series("", index=combined.index)).astype(str) + " " +
+                  combined.get("項目組V", pd.Series("", index=combined.index)).astype(str)).tolist()
+        _cur = combined["vertical_label"].astype(str).tolist()
+
+        def _has(s, kws):
+            return any(k in s for k in kws)
+
+        def _relabel(v, ng, s, cur):
+            # ── 確定性 ──
+            if v == "V_MICE": return "會展活動"
+            if v == "V_WELLNESS": return "康養活動"
+            if v == "V_MARITIME": return "海上活動"
+            if v == "V_VENUE_PERF_SPORT_MICE": return "內部設施-場館"
+            if v == "V_RESTAURANT": return "內部設施-餐廳"
+            if v == "V_THEME_PARK": return "內部設施-遊樂"
+            if v in ("V_OVERSEAS_OFFICE", "V_REGIONAL_TEAM"): return "國際代表團隊及海外辦事處"
+            if v == "V_OVERSEAS_WEB_SEO": return "線上宣傳"
+            if v == "V_PROPERTY_UPGRADE":
+                if ng == "NG6": return "內部設施-康養"
+                if ng == "NG11": return "內部設施-其他"
+                return "內部設施優化"
+            if v == "V_PUBLIC_FACILITY": return "外部設施優化"
+            # ── 拆分（keyword heuristic，待 dump 驗）──
+            if v == "V_OVERSEAS_ROADSHOW":
+                return "政府、公益及社區活動" if _has(s, ("贊助", "政府", "MGTO", "旅遊局", "文化局", "體育局", "運動會", "Sponsor", "sponsor")) else "線下宣傳"
+            if v == "V_INVITE_AGENCY": return "線下宣傳"
+            if v == "V_PROMO_VIDEO": return "線上宣傳"
+            if v == "V_INVITE_GUEST": return "線下宣傳"
+            if v == "V_CONCERT":
+                return "節日慶典" if _has(s, ("節", "慶典", "賀歲", "新年", "CNY", "Festival", "花車", "煙花", "巡遊", "花燈", "Parade", "parade")) else "演出表演"
+            if v == "V_FOOD_EVENT":
+                if _has(s, ("宴", "Dinner", "dinner", "菜單", "Menu", "名廚", "Chef", "chef", "美酒", "Wine", "wine", "Pairing", "Whisky")): return "特別菜單或宴會"
+                if _has(s, ("媒體", "Media", "media", "推廣", "KOL", "宣傳", "Promo")): return "線上宣傳"
+                return "美食-其他"
+            if v == "V_COMMUNITY":
+                if _has(s, ("建設", "工程", "設施", "裝修", "Construction")): return "內部設施-社區活化"
+                return "政府、公益及社區活動"
+            return cur
+        _newlab = [_relabel(v, n, s, c) for v, n, s, c in zip(_vid, _ngl, _basis, _cur)]
+        _nch = sum(1 for a, b in zip(_newlab, _cur) if a != b)
+        combined["vertical_label"] = _newlab
+        from collections import Counter
+        _top = Counter(_newlab).most_common(14)
+        print(f"  [V relabel] 改 {_nch:,} 行；新 V top: " + " | ".join(f"{k}={v}" for k, v in _top))
+
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
     if _amtc and "entity" in combined.columns:
