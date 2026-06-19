@@ -21,10 +21,10 @@ ENTS = ["galaxy", "wynn", "vml", "melco", "mgm", "sjm"]
 COMP_H = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
 
 HQ = {
-    "capex": {"galaxy": {"23": 27449, "24": 101399, "25": 128629},
+    "capex": {"galaxy": {"23": 27449, "24": 117129, "25": 131812},
               "wynn": {"23": 75211, "24": 125999, "25": 141056},
-              "vml": {"23": 70470, "24": 361174, "25": 143811},
-              "melco": {"23": 35379, "24": 106400, "25": 127111},
+              "vml": {"23": 70470, "24": 361175, "25": 135760},
+              "melco": {"23": 28531, "24": 106029, "25": 127111},
               "mgm": {"23": 33644, "24": 129071, "25": 155597},
               "sjm": {"23": 26143, "24": 173735, "25": 157955}},
     "comp": {"galaxy": {"24": 55309, "25": 91878}, "wynn": {"24": 24459, "25": 21489},
@@ -44,22 +44,27 @@ def main():
     post = pd.to_numeric(df.get("調整後_萬", 0), errors="coerce").fillna(0.0)
     pre = pd.to_numeric(df.get("調整前_萬", 0), errors="coerce").fillna(0.0)
     yb = df["year_bucket"].astype(str)
-    # EXACT bucket（唔好用 prefix；24_23SY ≠ 24）。合併對數MOP：23/24 bucket→調整後；25→調整前。SY bucket 唔計。
-    df["m"] = post.where(yb.isin(["23", "24"]), pre)
-    df["y2"] = yb   # exact bucket label
+    y2 = yb.str[:2]
+    # capex = spent-year prefix（24=24+24_23SY；25=25+25_23SY+25_24SY）對 HQ capex golden；
+    # staff/comp = exact bucket（對 staff golden）。amount：spent/exact 23/24→調整後，25→調整前。
+    df["bk_exact"] = yb
+    df["bk_pref"] = y2
+    df["m_exact"] = post.where(yb.isin(["23", "24"]), pre)
+    df["m_pref"] = post.where(y2.isin(["23", "24"]), pre)
     co = df.get("final_capex_opex", pd.Series("", index=df.index)).astype(str).str.strip()
     hid = df.get("horizontal_id", pd.Series("", index=df.index)).astype(str).str.strip()
     df["ent"] = df["entity"].astype(str)
 
     def ours(ent, metric, yr):
-        m = (df["ent"] == ent) & (df["y2"] == yr)
-        if metric == "capex":
-            m &= co.eq("Capex")
-        elif metric == "comp":
+        if metric == "capex":   # spent-year prefix
+            m = (df["ent"] == ent) & (df["bk_pref"] == yr) & co.eq("Capex")
+            return df.loc[m, "m_pref"].sum()
+        m = (df["ent"] == ent) & (df["bk_exact"] == yr)   # exact bucket
+        if metric == "comp":
             m &= hid.isin(COMP_H)
         elif metric == "staff":
-            m &= hid.eq("H_LABOR") & (~co.eq("Capex"))   # staff = opex only（HQ 對數）
-        return df.loc[m, "m"].sum()
+            m &= hid.eq("H_LABOR") & (~co.eq("Capex"))
+        return df.loc[m, "m_exact"].sum()
 
     for metric in ("staff", "comp", "capex"):
         L.append(f"\n{'='*70}\n## {metric.upper()}（左 HQ｜右 我哋｜Δ=我哋−HQ）")
