@@ -522,6 +522,43 @@ def run(fmt="csv", out_dir="data/tableau"):
         if _summary:
             print(f"  [其他救援→真H] " + " | ".join(_summary))
 
+    # ── 內部資源 mark retag（user 2026-06-19 §A/§B）：項目組喺 databook mark 好 comp/staff，但我哋 H 錯位 ──
+    #   comp_type → 對應 comp H（房落人工/票落Comp其他 等錯位修返）；is_labor → 人工（OVERRIDE capex 搶去建設）。
+    #   tie 不變（H 唔喺 golden tie key；final_capex_opex 不動）。先 comp_type 再 is_labor（staff 最後贏）。
+    if "horizontal_id" in combined.columns:
+        # (a) comp_type → comp H
+        if "comp_type" in combined.columns:
+            _ct = combined["comp_type"].astype(str).str.strip()
+            _CT2H = [
+                ("H_HOTEL_ROOM", "Comp房間", ["客房支出", "房間支出", "Rooms", "Room", "Hotel Room",
+                                              "Hotel room", "Hotel Misc", "Hotel-Spa"]),
+                ("H_FNB", "Comp餐飲", ["F&B", "FnB", "FNB", "食品飲料支出", "食品與飲料支出"]),
+                ("H_VENUE", "Comp活動場地", ["會場支出", "場地租借"]),
+                ("H_COMP_TICKET", "Comp贈票", ["門票", "門票支出", "演唱會門票支出", "贈票支出"]),
+                ("H_COMP_OTHER", "Comp其他", ["其他", "Others", "Other"]),
+                ("H_OTHER", "其他", ["Flight"]),   # 機票=非內部資源運輸 → 其他
+            ]
+            _cnt = {}
+            for _hid, _lab, _vals in _CT2H:
+                _m = _ct.isin(_vals)
+                if int(_m.sum()):
+                    combined.loc[_m, "horizontal_id"] = _hid
+                    if "horizontal_label" in combined.columns:
+                        combined.loc[_m, "horizontal_label"] = _lab
+                    _cnt[_lab] = int(_m.sum())
+            if _cnt:
+                print(f"  [comp_type retag] " + " | ".join(f"{k}={v:,}" for k, v in _cnt.items()))
+        # (b) is_labor truthy → 人工（OVERRIDE，因 capex enforcement 會搶 staff 去 建設/器具）
+        if "is_labor" in combined.columns:
+            _il = combined["is_labor"].astype(str).str.strip().str.lower()
+            _ilm = ~_il.isin(["", "0", "0.0", "n", "no", "false", "f", "nan", "none", "<na>"])
+            if int(_ilm.sum()):
+                combined.loc[_ilm, "horizontal_id"] = "H_LABOR"
+                if "horizontal_label" in combined.columns:
+                    combined.loc[_ilm, "horizontal_label"] = "人工成本"
+                _a = pd.to_numeric(combined.loc[_ilm, "amount_mop"], errors="coerce").abs().sum() / 1e4
+                print(f"  [is_labor→人工] {int(_ilm.sum()):,} 行 / {_a:,.0f}萬")
+
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
     def _fill100(dst, src):
