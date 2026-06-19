@@ -44,10 +44,9 @@ def main():
     post = pd.to_numeric(df.get("調整後_萬", 0), errors="coerce").fillna(0.0)
     pre = pd.to_numeric(df.get("調整前_萬", 0), errors="coerce").fillna(0.0)
     yb = df["year_bucket"].astype(str)
-    y2 = yb.str[:2]
-    # 合併對數MOP amount：23/24 → 調整後；25 → 調整前
-    df["m"] = post.where(y2.isin(["23", "24"]), pre)
-    df["y2"] = y2
+    # EXACT bucket（唔好用 prefix；24_23SY ≠ 24）。合併對數MOP：23/24 bucket→調整後；25→調整前。SY bucket 唔計。
+    df["m"] = post.where(yb.isin(["23", "24"]), pre)
+    df["y2"] = yb   # exact bucket label
     co = df.get("final_capex_opex", pd.Series("", index=df.index)).astype(str).str.strip()
     hid = df.get("horizontal_id", pd.Series("", index=df.index)).astype(str).str.strip()
     df["ent"] = df["entity"].astype(str)
