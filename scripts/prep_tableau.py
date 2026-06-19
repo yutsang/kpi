@@ -559,6 +559,25 @@ def run(fmt="csv", out_dir="data/tableau"):
                 _a = pd.to_numeric(combined.loc[_ilm, "amount_mop"], errors="coerce").abs().sum() / 1e4
                 print(f"  [is_labor→人工] {int(_ilm.sum()):,} 行 / {_a:,.0f}萬")
 
+    # ── wynn 人工成本 ⟺ Nature of Expenses 含 'Staff'（Staff Cost / Staff and Support Costs）──
+    #   user 2026-06-19：wynn staff cost 規律 = account='Staff Cost'。非 Staff 嘅 人工 → 按性質改走。
+    if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
+        _wy = combined["entity"].astype(str).eq("wynn")
+        _accw = combined["account_desc"].astype(str)
+        _staff = _accw.str.contains("Staff", case=False, na=False)
+        _hlw = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        _to_lab = _wy & _staff & ~_hlw                       # Staff 但未係人工 → 補入
+        _bad = _wy & _hlw & ~_staff                          # 非 Staff 但係人工 → 剷走
+        _os = _bad & _accw.str.contains("Outside Service", case=False, na=False)
+        _eqp = _bad & _accw.str.contains("Operating Items", case=False, na=False)
+        _oth = _bad & ~_accw.str.contains("Outside Service|Operating Items", case=False, regex=True, na=False)
+        for _m, _hid, _lab in [(_to_lab, "H_LABOR", "人工成本"), (_os, "H_PROFESSIONAL", "專業服務費"),
+                               (_eqp, "H_EQUIP", "設施及器具採購"), (_oth, "H_OTHER", "其他")]:
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid
+                combined.loc[_m, "horizontal_label"] = _lab
+        print(f"  [wynn 人工=Staff] 補入={int(_to_lab.sum())} | OutsideServ→專業={int(_os.sum())} | OpItems→設施={int(_eqp.sum())} | 其餘非Staff→其他={int(_oth.sum())}")
+
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
     def _fill100(dst, src):
