@@ -156,11 +156,11 @@ def main():
     for (ent, yr), gsub in gold.groupby(["entity", "year"]):
         oursub = df[(df["entity"] == ent) & (df["_yb"] == yr)]
         om = our_metrics(oursub).set_index("ng_code")
-        # 同時計 24+24_23SY 作參考
-        alt = df[(df["entity"] == ent) & (df["_yb"].str.startswith(yr))]
+        # 全計劃年 = 純 yr bucket + 該 plan-year 嘅跨年 SY buckets（23 → 24_23SY, 25_23SY；24 → 25_24SY）
+        alt = df[(df["entity"] == ent) & ((df["_yb"] == yr) | (df["_yb"].str.endswith(f"_{yr}SY")))]
         oalt = our_metrics(alt).set_index("ng_code")
 
-        L.append(f"\n{'='*78}\n## {ent} {yr}（左=golden 右=我哋[{yr}] | Δ；括號=我哋[{yr}+SY]）")
+        L.append(f"\n{'='*78}\n## {ent} {yr}（左=golden 右=我哋[{yr}純] | Δ；括號=我哋[{yr}全計劃年 含_{yr}SY]）")
         # entity×year TOTAL（galaxy24/mgm24 staff 只有總數 → 睇呢度）
         gt = {m: gsub[m].sum() for m in METRICS}
         ot = {m: om[m].sum() if m in om.columns else 0.0 for m in METRICS}
