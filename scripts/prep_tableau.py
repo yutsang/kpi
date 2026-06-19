@@ -452,7 +452,8 @@ def run(fmt="csv", out_dir="data/tableau"):
         _m3 = _vml & _acc2.str.contains("CONTRACT LABOR|Contract Labor", case=False, regex=True, na=False) & _h2.isin(["H_PROFESSIONAL", "H_OTHER"])
         _m4 = _vml & _opex & _acc2.str.contains("SOFTWARE & HOSTING|SOFTWARE AND HOSTING", case=False, regex=True, na=False) & _h2.eq("H_OTHER")
         _m5 = _vml & _acc2.str.contains("SOCIAL SECURITY|Social Security", case=False, regex=True, na=False) & _h2.eq("H_OTHER")
-        for _m, _hid, _lab in [(_m1, "H_PROFESSIONAL", "專業服務費"), (_m2, "H_LABOR", "人工成本"), (_m3, "H_LABOR", "人工成本"),
+        # _m3 CONTRACT LABOR → 專業（user 2026-06-19：vml 人工 over 主因，合約勞工係專業服務唔係內部 staff）
+        for _m, _hid, _lab in [(_m1, "H_PROFESSIONAL", "專業服務費"), (_m2, "H_LABOR", "人工成本"), (_m3, "H_PROFESSIONAL", "專業服務費"),
                                (_m4, "H_PROFESSIONAL", "專業服務費"), (_m5, "H_LABOR", "人工成本")]:
             if int(_m.sum()):
                 combined.loc[_m, "horizontal_id"] = _hid
@@ -577,6 +578,27 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_id"] = _hid
                 combined.loc[_m, "horizontal_label"] = _lab
         print(f"  [wynn 人工=Staff] 補入={int(_to_lab.sum())} | OutsideServ→專業={int(_os.sum())} | OpItems→設施={int(_eqp.sum())} | 其餘非Staff→其他={int(_oth.sum())}")
+
+    # ── galaxy opex staff cost 規律（user 2026-06-19）：opex + (account_desc 4 個 OR account_code 4 個) 先算人工 ──
+    if "entity" in combined.columns and "account_desc" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
+        _gl = combined["entity"].astype(str).eq("galaxy")
+        _gopex = (~combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+                  if "final_capex_opex" in combined.columns else pd.Series(True, index=combined.index))
+        _gd = combined["account_desc"].astype(str).str.strip().isin(
+            ["Casual Labor", "Contract Services", "Outsourced Contract Labor", "Payroll - Direct Event Investment"])
+        _gc = combined["account_code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).isin(
+            ["7926000", "8000140", "8000150", "8000960"])
+        _gmatch = _gd | _gc
+        _ghl = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        _g_add = _gl & _gopex & _gmatch & ~_ghl              # 命中但唔係人工 → 補入
+        _g_rm = _gl & _gopex & _ghl & ~_gmatch               # 係人工但唔命中 → 剷走→其他
+        if int(_g_add.sum()):
+            combined.loc[_g_add, "horizontal_id"] = "H_LABOR"; combined.loc[_g_add, "horizontal_label"] = "人工成本"
+        if int(_g_rm.sum()):
+            combined.loc[_g_rm, "horizontal_id"] = "H_OTHER"; combined.loc[_g_rm, "horizontal_label"] = "其他"
+        _aa = pd.to_numeric(combined.loc[_g_add, "amount_mop"], errors="coerce").abs().sum() / 1e4
+        _ar = pd.to_numeric(combined.loc[_g_rm, "amount_mop"], errors="coerce").abs().sum() / 1e4
+        print(f"  [galaxy 人工=opex+acct規律] 補入={int(_g_add.sum())}行/{_aa:,.0f}萬 | 剷非命中人工→其他={int(_g_rm.sum())}行/{_ar:,.0f}萬")
 
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
