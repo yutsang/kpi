@@ -460,6 +460,21 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
                 print(f"  [vml H修正→{_lab}] {int(_m.sum()):,} 行")
 
+        # ── vml 從 人工 剷走 cost-allocation/contract/outside-serv/travel（HQ staff 細；user 2026-06-19 acct dump）──
+        _vlab = _vml & combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        _vcode = combined["account_code"].astype(str).str.replace(r"\.0$", "", regex=True) if "account_code" in combined.columns else pd.Series("", index=combined.index)
+        _va = combined["account_desc"].astype(str)
+        _v_alloc = _vlab & _vcode.str.startswith("89000")                              # 89000 部門間分攤 → 其他
+        _v_con = _vlab & _va.str.contains("CONTRACT LABOR|Contract Labor", case=False, regex=True, na=False)  # → 專業
+        _v_os = _vlab & _va.str.contains("OUTSIDE SERV", case=False, na=False)         # → 專業
+        _v_tr = _vlab & _va.str.contains("TRAVEL & ENT|TRAVEL&ENT", case=False, regex=True, na=False)  # → 其他
+        for _m, _hid, _lab in [(_v_alloc, "H_OTHER", "其他"), (_v_con, "H_PROFESSIONAL", "專業服務費"),
+                               (_v_os, "H_PROFESSIONAL", "專業服務費"), (_v_tr, "H_OTHER", "其他")]:
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid
+                combined.loc[_m, "horizontal_label"] = _lab
+        print(f"  [vml 人工剷] 89000分攤→其他={int(_v_alloc.sum())} | Contract→專業={int(_v_con.sum())} | OutSrv→專業={int(_v_os.sum())} | Travel→其他={int(_v_tr.sum())}")
+
     # ── galaxy 部門分攤修正（user 2026-06-18 逐項定）：EVS(清潔)→維護費；Allocation-Entertainment→廣告 ──
     #   Commission 維持其他（信用卡手續費,非中介佣金）；Allocation-R&M 由通用救援 R&M token 接手→維護。
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
