@@ -623,14 +623,15 @@ def run(fmt="csv", out_dir="data/tableau"):
         _2324 = combined["year_bucket"].astype(str).str[:2].isin(["23", "24"])
         _accx = combined["account_desc"].astype(str)
         _hlx = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        _blob = (combined["account_code"].astype(str) + " " + _accx) if "account_code" in combined.columns else _accx
         _me = combined["entity"].astype(str).eq("melco") & _hlx & _2324
         _mg = combined["entity"].astype(str).eq("mgm") & _hlx & _2324
         _rules = [
-            (_me & _accx.str.contains("Contract Labour|Contract Labor", case=False, regex=True, na=False), "H_PROFESSIONAL", "專業服務費"),
-            (_me & _accx.str.contains("Travel & Entertainment", case=False, na=False), "H_OTHER", "其他"),
-            (_mg & _accx.str.contains("Professional Fee", case=False, na=False), "H_PROFESSIONAL", "專業服務費"),
-            (_mg & _accx.str.contains("Travel & Entertainment", case=False, na=False), "H_OTHER", "其他"),
-            (_mg & _accx.str.contains("Uniform", case=False, na=False), "H_OTHER", "其他"),
+            (_me & _blob.str.contains("611710|Contract Labo", case=False, regex=True, na=False), "H_PROFESSIONAL", "專業服務費"),
+            (_me & _blob.str.contains("624110|Travel & Ent", case=False, regex=True, na=False), "H_OTHER", "其他"),
+            (_mg & _blob.str.contains("588020|Professional Fee", case=False, regex=True, na=False), "H_PROFESSIONAL", "專業服務費"),
+            (_mg & _blob.str.contains("590010|Travel & Acc|Travel & Ent", case=False, regex=True, na=False), "H_OTHER", "其他"),
+            (_mg & _blob.str.contains("578000|Uniform", case=False, regex=True, na=False), "H_OTHER", "其他"),
         ]
         _cnt = 0
         for _m, _hid, _lab in _rules:
@@ -639,6 +640,17 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
                 _cnt += int(_m.sum())
         print(f"  [melco/mgm 人工剷 spent-23/24] {_cnt:,} 行")
+
+    # ── capex staff 補返人工（項目組H mark 咗 staff 但 capex enforcement 搶咗去建設；user Table 1 capex+opex）──
+    if "項目組H" in combined.columns and "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
+        _capstaff = combined["final_capex_opex"].astype(str).str.strip().eq("Capex") & \
+            combined["項目組H"].astype(str).str.contains("staff cost|Staff cost|人工成本", case=False, regex=True, na=False) & \
+            ~combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        if int(_capstaff.sum()):
+            combined.loc[_capstaff, "horizontal_id"] = "H_LABOR"
+            combined.loc[_capstaff, "horizontal_label"] = "人工成本"
+            _a = pd.to_numeric(combined.loc[_capstaff, "amount_mop"], errors="coerce").abs().sum() / 1e4
+            print(f"  [capex staff→人工] {int(_capstaff.sum()):,} 行 / {_a:,.0f}萬（項目組H=staff 嘅 capex）")
 
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)

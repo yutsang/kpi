@@ -34,6 +34,10 @@ HQ = {
               "vml": {"23": 790, "24": 1457, "25": 1253}, "melco": {"23": 7218, "24": 13912, "25": 27806},
               "mgm": {"23": 6357, "24": 6829, "25": 21467}, "sjm": {"23": 0, "24": 0, "25": 142}},
 }
+# Table 1 = capex+opex 人工成本 調整前（user 2026-06-19），exact bucket 23/24/24_23SY
+STAFF_TOTAL = {"galaxy": {"23": 17082, "24": 34926, "24_23SY": 16872}, "sjm": {"23": 5554, "24": 4115, "24_23SY": 2485},
+               "wynn": {"23": 10219, "24": 10219, "24_23SY": 9}, "vml": {"23": 791, "24": 12163, "24_23SY": 12163},
+               "melco": {"23": 15989, "24": 14831, "24_23SY": 9}, "mgm": {"23": 7231, "24": 9270, "24_23SY": 3463}}
 L: list[str] = ["# recon_hq —— 對 HQ Databook per-entity（萬；合併對數MOP=調整後23/24+調整前25）"]
 
 
@@ -51,6 +55,7 @@ def main():
     df["bk_pref"] = y2
     df["m_exact"] = post.where(yb.isin(["23", "24"]), pre)
     df["m_pref"] = post.where(y2.isin(["23", "24"]), pre)
+    df["pre_amt"] = pre
     co = df.get("final_capex_opex", pd.Series("", index=df.index)).astype(str).str.strip()
     hid = df.get("horizontal_id", pd.Series("", index=df.index)).astype(str).str.strip()
     df["ent"] = df["entity"].astype(str)
@@ -81,6 +86,19 @@ def main():
                 cells.append(f"{h:>10,.0f}{o:>10,.0f}{o-h:>9,.0f}")
             L.append(f"   {ent:<8}" + "".join(cells))
         L.append(f"   {'總計':<8}" + "".join(f"{tot[y][0]:>10,.0f}{tot[y][1]:>10,.0f}{tot[y][1]-tot[y][0]:>9,.0f}" for y in yrs))
+
+    # STAFF_TOTAL：capex+opex 人工成本 調整前 vs Table 1（exact bucket 23/24/24_23SY）
+    L.append(f"\n{'='*70}\n## STAFF_TOTAL（capex+opex 人工 調整前 vs Table 1）")
+    yrs2 = ["23", "24", "24_23SY"]
+    L.append("   " + f"{'entity':<8}" + "".join(f"{'HQ'+y:>10}{'我'+y:>10}{'Δ'+y:>9}" for y in yrs2))
+    for ent in ENTS:
+        cells = []
+        for y in yrs2:
+            h = STAFF_TOTAL.get(ent, {}).get(y, 0)
+            m2 = (df["ent"] == ent) & (df["bk_exact"] == y) & hid.eq("H_LABOR")
+            o = df.loc[m2, "pre_amt"].sum()
+            cells.append(f"{h:>10,.0f}{o:>10,.0f}{o-h:>9,.0f}")
+        L.append(f"   {ent:<8}" + "".join(cells))
     _w()
 
 
