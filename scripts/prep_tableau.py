@@ -604,10 +604,12 @@ def run(fmt="csv", out_dir="data/tableau"):
         _gc = combined["account_code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).isin(
             ["7926000", "8000140", "8000150", "8000960"])
         _gmatch = _gd | _gc
-        _g25 = combined["year_bucket"].astype(str).str.startswith("25")   # 規律只驗過 2025；23/24 account 唔同
+        _gy2 = combined["year_bucket"].astype(str).str[:2]
+        _g25 = _gy2.eq("25")           # spent-25：add + remove（規律驗過 2025）
+        _g2425 = _gy2.isin(["24", "25"])   # spent-24+25：subtractive 剷非命中（23 唔郁，account 唔同+有未tag staff）
         _ghl = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
-        _g_add = _gl & _gopex & _g25 & _gmatch & ~_ghl       # spent-25 命中但唔係人工 → 補入
-        _g_rm = _gl & _gopex & _g25 & _ghl & ~_gmatch        # spent-25 係人工但唔命中 → 剷走→其他
+        _g_add = _gl & _gopex & _g25 & _gmatch & ~_ghl       # 只 spent-25 補入
+        _g_rm = _gl & _gopex & _g2425 & _ghl & ~_gmatch      # spent-24+25 非命中 → 其他
         if int(_g_add.sum()):
             combined.loc[_g_add, "horizontal_id"] = "H_LABOR"; combined.loc[_g_add, "horizontal_label"] = "人工成本"
         if int(_g_rm.sum()):
