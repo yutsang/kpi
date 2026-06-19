@@ -618,6 +618,28 @@ def run(fmt="csv", out_dir="data/tableau"):
         _ar = pd.to_numeric(combined.loc[_g_rm, "amount_mop"], errors="coerce").abs().sum() / 1e4
         print(f"  [galaxy 人工=opex+acct規律] 補入={int(_g_add.sum())}行/{_aa:,.0f}萬 | 剷非命中人工→其他={int(_g_rm.sum())}行/{_ar:,.0f}萬")
 
+    # ── melco/mgm: 從 人工 剷走 Contract/Travel/ProfFees/Uniform（spent-23/24 only；25 唔郁）user acct dump ──
+    if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
+        _2324 = combined["year_bucket"].astype(str).str[:2].isin(["23", "24"])
+        _accx = combined["account_desc"].astype(str)
+        _hlx = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        _me = combined["entity"].astype(str).eq("melco") & _hlx & _2324
+        _mg = combined["entity"].astype(str).eq("mgm") & _hlx & _2324
+        _rules = [
+            (_me & _accx.str.contains("Contract Labour|Contract Labor", case=False, regex=True, na=False), "H_PROFESSIONAL", "專業服務費"),
+            (_me & _accx.str.contains("Travel & Entertainment", case=False, na=False), "H_OTHER", "其他"),
+            (_mg & _accx.str.contains("Professional Fee", case=False, na=False), "H_PROFESSIONAL", "專業服務費"),
+            (_mg & _accx.str.contains("Travel & Entertainment", case=False, na=False), "H_OTHER", "其他"),
+            (_mg & _accx.str.contains("Uniform", case=False, na=False), "H_OTHER", "其他"),
+        ]
+        _cnt = 0
+        for _m, _hid, _lab in _rules:
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid
+                combined.loc[_m, "horizontal_label"] = _lab
+                _cnt += int(_m.sum())
+        print(f"  [melco/mgm 人工剷 spent-23/24] {_cnt:,} 行")
+
     # ── 100% fill：4 欄唔好有 blank/None（user 要全部填滿）──
     #   project 名空 → dicj code；subproject code 空 → dicj code；subproject 名空 → project(DICJ名)
     def _fill100(dst, src):
