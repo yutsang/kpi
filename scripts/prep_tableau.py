@@ -618,6 +618,25 @@ def run(fmt="csv", out_dir="data/tableau"):
         _ar = pd.to_numeric(combined.loc[_g_rm, "amount_mop"], errors="coerce").abs().sum() / 1e4
         print(f"  [galaxy 人工=opex+acct規律] 補入={int(_g_add.sum())}行/{_aa:,.0f}萬 | 剷非命中人工→其他={int(_g_rm.sum())}行/{_ar:,.0f}萬")
 
+    # ── comp 清理：comp-H 入面非內部 comp 嘅行搬走（user 2026-06-19 comp dump）──
+    #   外部運輸/旅遊稅(非內部資源)→其他；Pre-Opening/Food Cost(運營,非comp)→其他；Operating Supplies/Items→設施
+    if "horizontal_id" in combined.columns and "account_desc" in combined.columns:
+        _COMPH = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
+        _inc = combined["horizontal_id"].astype(str).str.strip().isin(_COMPH)
+        _ad = combined["account_desc"].astype(str)
+        _c_oth = _inc & _ad.str.contains("Comp External - Transp|Comp External - Tourism|Comp Transportation|External - Barter|Tourism Tax", case=False, regex=True, na=False)
+        _c_po = _inc & _ad.str.contains("Pre-Opening|Pre Opening", case=False, regex=True, na=False)
+        _c_fc = _inc & _ad.str.contains("Food Cost|Cost of Sales", case=False, regex=True, na=False)
+        _c_os = _inc & _ad.str.contains("Operating Suppl|Operating Items", case=False, regex=True, na=False)
+        _c_gt = _inc & _ad.str.contains("Government Tax", case=False, na=False)
+        for _m, _hid, _lab in [(_c_oth, "H_OTHER", "其他"), (_c_po, "H_OTHER", "其他"),
+                               (_c_fc, "H_OTHER", "其他"), (_c_os, "H_EQUIP", "設施及器具採購"),
+                               (_c_gt, "H_OTHER", "其他")]:
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid
+                combined.loc[_m, "horizontal_label"] = _lab
+        print(f"  [comp清理] 外部運輸/稅→其他={int(_c_oth.sum())} | Pre-Open→其他={int(_c_po.sum())} | FoodCost→其他={int(_c_fc.sum())} | Op供應→設施={int(_c_os.sum())} | 政府稅→其他={int(_c_gt.sum())}")
+
     # ── melco/mgm: 從 人工 剷走 Contract/Travel/ProfFees/Uniform（spent-23/24 only；25 唔郁）user acct dump ──
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
         _2324 = combined["year_bucket"].astype(str).str[:2].isin(["23", "24"])
