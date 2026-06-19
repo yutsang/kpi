@@ -96,7 +96,7 @@ def main():
         for y in yrs2:
             h = STAFF_TOTAL.get(ent, {}).get(y, 0)
             m2 = (df["ent"] == ent) & (df["bk_exact"] == y) & hid.eq("H_LABOR")
-            o = df.loc[m2, "pre_amt"].sum()
+            o = df.loc[m2, "m_exact"].sum()   # 調整後（同 opex recon basis；Table 1 = 報告值）
             cells.append(f"{h:>10,.0f}{o:>10,.0f}{o-h:>9,.0f}")
         L.append(f"   {ent:<8}" + "".join(cells))
     _w()
