@@ -548,7 +548,7 @@ def run(fmt="csv", out_dir="data/tableau"):
                     _cnt[_lab] = int(_m.sum())
             if _cnt:
                 print(f"  [comp_type retag] " + " | ".join(f"{k}={v:,}" for k, v in _cnt.items()))
-        # (b) is_labor truthy → 人工（OVERRIDE，因 capex enforcement 會搶 staff 去 建設/器具）
+        # (b) is_labor truthy → 人工（保留含 capex 勞工；HQ 對數時先取 opex 部分 — 見 recon_hq）
         if "is_labor" in combined.columns:
             _il = combined["is_labor"].astype(str).str.strip().str.lower()
             _ilm = ~_il.isin(["", "0", "0.0", "n", "no", "false", "f", "nan", "none", "<na>"])
