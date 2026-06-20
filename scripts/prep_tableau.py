@@ -890,7 +890,7 @@ def run(fmt="csv", out_dir="data/tableau"):
         _fixes = [
             (_hid.eq("H_LICENSE") & _ad.str.contains("CONTRACT ENTERTAINMENT", case=False, na=False), "H_PERFORMER", "藝人演出費", "授權→藝人"),
             (_hid.eq("H_ADVERTISING") & _ad.str.contains("Contract Performers|Performers & Contract", case=False, regex=True, na=False), "H_PERFORMER", "藝人演出費", "廣告→藝人"),
-            (_hid.eq("H_LABOR") & _ad.str.contains("Renovation", case=False, na=False), "H_CONSTRUCTION", "建設與設施支出", "人工→建設"),
+            (_hid.eq("H_LABOR") & _ad.str.contains(r"Renovation|\bCIP\b|\bAUC\b|Building Improvement|Capital Project", case=False, regex=True, na=False), "H_CONSTRUCTION", "建設與設施支出", "人工→建設"),
             (_hid.eq("H_OTHER") & _ad.str.lower().eq("salaries") & _ent.ne("galaxy"), "H_LABOR", "人工成本", "其他→人工(非gx)"),
             (_hid.eq("H_PERFORMER") & _ad.str.contains("Repairs.{0,3}Maintenance|Utilities", case=False, regex=True, na=False), "H_MAINTENANCE", "維護費", "藝人→維護"),
             (_hid.eq("H_FNB") & _ad.str.contains("FLOWERS", case=False, na=False), "H_OTHER", "其他", "餐飲→其他(花)"),
