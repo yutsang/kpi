@@ -34,7 +34,7 @@ def run(ent, df):
     for c in ("horizontal_id", "comp_type", "account_desc", "account_code"):
         e[c] = _s(e[c]) if c in e.columns else ""
     comp = e[e["horizontal_id"].isin(COMP_H)]
-    for yb_v in ("24", "25"):
+    for yb_v in ("23", "24", "25"):
         sub = comp[comp.bk == yb_v]
         if not len(sub):
             continue
