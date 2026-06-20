@@ -64,7 +64,10 @@ def main():
         if metric == "capex":   # spent-year prefix
             m = (df["ent"] == ent) & (df["bk_pref"] == yr) & co.eq("Capex")
             return df.loc[m, "m_pref"].sum()
-        m = (df["ent"] == ent) & (df["bk_exact"] == yr)   # exact bucket
+        if metric == "staff" and yr == "25":   # 25 staff 散喺 25_23SY/25_24SY → prefix（mgm/wynn）
+            m = (df["ent"] == ent) & (df["bk_pref"] == "25") & hid.eq("H_LABOR") & (~co.eq("Capex"))
+            return df.loc[m, "m_pref"].sum()
+        m = (df["ent"] == ent) & (df["bk_exact"] == yr)   # exact bucket（23/24 staff、comp）
         if metric == "comp":
             m &= hid.isin(COMP_H)
         elif metric == "staff":
