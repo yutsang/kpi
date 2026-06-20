@@ -907,6 +907,25 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _nlab
         print("  [H紅旗修] " + " | ".join(_msgs))
 
+    # ── V 紅旗修（2026-06-20 audit）──
+    # B. 藝術珍寶博物館（mgm）統一 → 內部設施-場館（user：博物館=場館；之前一半派咗 文藝展覽表演）
+    if "vertical_label" in combined.columns and "subproject" in combined.columns:
+        _mus = combined["subproject"].astype(str).str.contains("藝術珍寶博物館|珍寶博物館", na=False) \
+            & combined["vertical_label"].astype(str).str.strip().eq("文藝展覽表演")
+        if int(_mus.sum()):
+            combined.loc[_mus, "vertical_id"] = "V_MUSEUM"
+            combined.loc[_mus, "vertical_label"] = "內部設施-場館"
+        print(f"  [V紅旗修] 藝術珍寶博物館→內部設施-場館 {int(_mus.sum())}行")
+    # A. sjm subproject 垃圾名（附件3.pdf 等）→ 用 project 真名
+    if "entity" in combined.columns and "subproject" in combined.columns and "project" in combined.columns:
+        _sp = combined["subproject"].astype(str)
+        _bad = (combined["entity"].astype(str) == "sjm") \
+            & (_sp.str.contains("附件", na=False) | _sp.str.lower().str.endswith(".pdf", na=False)) \
+            & combined["project"].astype(str).str.strip().ne("")
+        if int(_bad.sum()):
+            combined.loc[_bad, "subproject"] = combined.loc[_bad, "project"]
+        print(f"  [sjm 垃圾名→project] {int(_bad.sum())}行")
+
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
     if _amtc and "entity" in combined.columns:
