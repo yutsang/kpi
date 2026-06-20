@@ -882,6 +882,31 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_sjv, "horizontal_label"] = "Comp活動場地"
         print(f"  [sjm 24 食飲→會場 by V] {int(_sjv.sum()):,} 行")
 
+    # ── H reasonableness 修正（2026-06-20 audit 紅旗）：account_desc 對唔上 label 嘅搬返正確 H。tie-safe（淨 re-tag）──
+    if "horizontal_id" in combined.columns and "account_desc" in combined.columns and "entity" in combined.columns:
+        _hid = combined["horizontal_id"].astype(str).str.strip()
+        _ad = combined["account_desc"].astype(str).str.strip()
+        _ent = combined["entity"].astype(str)
+        _fixes = [
+            (_hid.eq("H_LICENSE") & _ad.str.contains("CONTRACT ENTERTAINMENT", case=False, na=False), "H_PERFORMER", "藝人演出費", "授權→藝人"),
+            (_hid.eq("H_ADVERTISING") & _ad.str.contains("Contract Performers|Performers & Contract", case=False, regex=True, na=False), "H_PERFORMER", "藝人演出費", "廣告→藝人"),
+            (_hid.eq("H_LABOR") & _ad.str.contains("Renovation", case=False, na=False), "H_CONSTRUCTION", "建設與設施支出", "人工→建設"),
+            (_hid.eq("H_OTHER") & _ad.str.lower().eq("salaries") & _ent.ne("galaxy"), "H_LABOR", "人工成本", "其他→人工(非gx)"),
+            (_hid.eq("H_PERFORMER") & _ad.str.contains("Repairs.{0,3}Maintenance|Utilities", case=False, regex=True, na=False), "H_MAINTENANCE", "維護費", "藝人→維護"),
+            (_hid.eq("H_FNB") & _ad.str.contains("FLOWERS", case=False, na=False), "H_OTHER", "其他", "餐飲→其他(花)"),
+            (_hid.eq("H_FNB") & _ad.str.contains("Promotional chip", case=False, na=False), "H_ADVERTISING", "廣告及推廣", "餐飲→廣告(籌碼)"),
+            (_hid.eq("H_COMP_OTHER") & _ad.str.contains("Apple Product", case=False, na=False), "H_EQUIP", "設施及器具採購", "comp其他→設施(Apple)"),
+            (_hid.eq("H_COMP_OTHER") & _ad.str.contains(r"TRAVEL & ENT TRANSP|TRAVEL CUSTOMER|Comp External - Transp|^Transportation$", case=False, regex=True, na=False), "H_OTHER", "其他", "comp其他→其他(運輸)"),
+        ]
+        _msgs = []
+        for _m, _nid, _nlab, _tag in _fixes:
+            n = int(_m.sum())
+            _msgs.append(f"{_tag}={n}")
+            if n:
+                combined.loc[_m, "horizontal_id"] = _nid
+                combined.loc[_m, "horizontal_label"] = _nlab
+        print("  [H紅旗修] " + " | ".join(_msgs))
+
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
     if _amtc and "entity" in combined.columns:
