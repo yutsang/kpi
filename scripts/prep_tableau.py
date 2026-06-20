@@ -658,10 +658,10 @@ def run(fmt="csv", out_dir="data/tableau"):
         _gmap = [
             (_one.eq("Comp") & _ph.str.contains(r"\|.*room", case=False, regex=True, na=False), "H_HOTEL_ROOM", "Comp房間"),
             (_one.eq("Comp") & _ph.str.contains(r"\|.*Venue", case=False, regex=True, na=False), "H_VENUE", "Comp活動場地"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*(F&B|Service Charge)", case=False, regex=True, na=False), "H_FNB", "Comp餐飲"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*(?:F&B|Service Charge)", case=False, regex=True, na=False), "H_FNB", "Comp餐飲"),
             (_one.eq("Comp") & _ph.str.contains(r"\|.*Ticket", case=False, regex=True, na=False), "H_COMP_TICKET", "Comp贈票"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*(Tax|Travel|Transport)", case=False, regex=True, na=False), "H_OTHER", "其他"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*(Barter|others|Event Service|Gallery|Credit Card)", case=False, regex=True, na=False), "H_COMP_OTHER", "Comp其他"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*(?:Tax|Travel|Transport)", case=False, regex=True, na=False), "H_OTHER", "其他"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*(?:Barter|others|Event Service|Gallery|Credit Card)", case=False, regex=True, na=False), "H_COMP_OTHER", "Comp其他"),
             (_one.eq("Marketing"), "H_ADVERTISING", "廣告及推廣"),
             (_one.eq("Sponsorship"), "H_SPONSORSHIP", "贊助費"),
             (_one.str.contains("Professional Fee", case=False, na=False), "H_PROFESSIONAL", "專業服務費"),
