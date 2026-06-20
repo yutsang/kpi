@@ -637,6 +637,16 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
         print(f"  [comp清理] 外部運輸/稅→其他={int(_c_oth.sum())} | Pre-Open→其他={int(_c_po.sum())} | FoodCost→其他={int(_c_fc.sum())} | Op供應→設施={int(_c_os.sum())} | 政府稅→其他={int(_c_gt.sum())}")
 
+    # ── vml: COMPLIMENTARY OTHER → Comp活動場地（24 已咁 tag，23 冚晒落 comp其他；統一搬，修 23 會場 −1,024 + comp其他 +1,503）──
+    if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
+        _vco = (combined["entity"].astype(str) == "vml") \
+            & combined["account_desc"].astype(str).str.contains("COMPLIMENTARY OTHER", case=False, na=False) \
+            & combined["horizontal_id"].astype(str).str.strip().isin({"H_HOTEL_ROOM", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"})
+        if int(_vco.sum()):
+            combined.loc[_vco, "horizontal_id"] = "H_VENUE"
+            combined.loc[_vco, "horizontal_label"] = "Comp活動場地"
+        print(f"  [vml COMPLIMENTARY OTHER→會場] {int(_vco.sum()):,} 行")
+
     # ── melco/mgm: 從 人工 剷走 Contract/Travel/ProfFees/Uniform（spent-23/24 only；25 唔郁）user acct dump ──
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
         _2324 = combined["year_bucket"].astype(str).str[:2].isin(["23", "24"])
