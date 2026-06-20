@@ -936,6 +936,17 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_cr, "horizontal_label"] = "Comp房間"
         print(f"  [galaxy Comp Rooms desc→房] {int(_cr.sum())}行")
 
+    # D. sjm: comp 入面 account_desc=「專業服務費」其實係專業（sjm 24 comp over）→ 搬返 H_PROFESSIONAL
+    if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
+        _COMPH2 = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
+        _sjp = (combined["entity"].astype(str) == "sjm") \
+            & combined["account_desc"].astype(str).str.strip().eq("專業服務費") \
+            & combined["horizontal_id"].astype(str).str.strip().isin(_COMPH2)
+        if int(_sjp.sum()):
+            combined.loc[_sjp, "horizontal_id"] = "H_PROFESSIONAL"
+            combined.loc[_sjp, "horizontal_label"] = "專業服務費"
+        print(f"  [sjm comp 專業服務費→專業] {int(_sjp.sum())}行")
+
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
     if _amtc and "entity" in combined.columns:
