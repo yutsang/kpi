@@ -926,6 +926,16 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_bad, "subproject"] = combined.loc[_bad, "project"]
         print(f"  [sjm 垃圾名→project] {int(_bad.sum())}行")
 
+    # C. galaxy: 描述含「Comp Rooms -」（房 service/tax）而家喺 餐飲/其他 → 搬返 Comp房間（JE 內 re-tag，tie-safe）
+    if "entity" in combined.columns and "description" in combined.columns and "horizontal_id" in combined.columns:
+        _cr = (combined["entity"].astype(str) == "galaxy") \
+            & combined["description"].astype(str).str.contains(r"Comp Room", case=False, regex=True, na=False) \
+            & ~combined["horizontal_id"].astype(str).str.strip().eq("H_HOTEL_ROOM")
+        if int(_cr.sum()):
+            combined.loc[_cr, "horizontal_id"] = "H_HOTEL_ROOM"
+            combined.loc[_cr, "horizontal_label"] = "Comp房間"
+        print(f"  [galaxy Comp Rooms desc→房] {int(_cr.sum())}行")
+
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
     if _amtc and "entity" in combined.columns:
