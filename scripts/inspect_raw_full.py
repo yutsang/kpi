@@ -15,7 +15,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 ENTS = sys.argv[1:] or ["vml"]
-LABEL_KW = "comp|room|客房|會場|venue|food|餐|f&b|staff|人工|薪|salar|payroll|分類|標簽|標籤|類別|類型|category|nature|性質|hotel|房|票|ticket|贈"
+LABEL_KW = "comp|room|客房|會場|venue|food|餐|f&b|staff|人工|薪|salar|payroll|分類|標簽|標籤|類別|類型|category|nature|性質|hotel|房|票|ticket|贈|房晚|adr|計入投資|單價"
+ROOM_SHEET_KW = "comp|房|room|admin|adr|hotel|客房|內部資源|internal"
 
 
 def num(s):
@@ -67,12 +68,13 @@ def run(ent, L):
 
 
 def main():
-    L = ["# inspect_raw_full"]
     for ent in ENTS:
+        L = [f"# inspect_raw_full — {ent}"]   # 每家獨立 L（修 accumulation bug）
         run(ent, L)
         out = ROOT / "results" / f"inspect_raw_full_{ent}.txt"; out.parent.mkdir(exist_ok=True)
         out.write_text("\n".join(L), encoding="utf-8")
-    print("\n".join(L)); print(f"\nwrote results/inspect_raw_full_*.txt  ← paste 返嚟")
+        print(f"wrote {out.relative_to(ROOT)}")
+    print("← paste 返嚟")
 
 
 if __name__ == "__main__":
