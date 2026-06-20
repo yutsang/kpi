@@ -61,18 +61,19 @@ def main():
     df["ent"] = df["entity"].astype(str)
 
     def ours(ent, metric, yr):
-        if metric == "capex":   # spent-year prefix
-            m = (df["ent"] == ent) & (df["bk_pref"] == yr) & co.eq("Capex")
-            return df.loc[m, "m_pref"].sum()
-        if metric == "staff" and yr == "25":   # 25 staff 散喺 25_23SY/25_24SY → prefix（mgm/wynn）
-            m = (df["ent"] == ent) & (df["bk_pref"] == "25") & hid.eq("H_LABOR") & (~co.eq("Capex"))
-            return df.loc[m, "m_pref"].sum()
-        m = (df["ent"] == ent) & (df["bk_exact"] == yr)   # exact bucket（23/24 staff、comp）
-        if metric == "comp":
+        # golden 包期後（user 2026-06-20）：23=exact(調整後)、24=24+24_23SY(調整後)、25=25+25_23SY+25_24SY(調整前)。
+        # 全部 spent-year prefix + m_pref（= 調整後 23/24 prefix、調整前 25 prefix = amount_mop）。
+        if yr == "23":
+            m = (df["ent"] == ent) & (df["bk_exact"] == "23")
+        else:
+            m = (df["ent"] == ent) & (df["bk_pref"] == yr)
+        if metric == "capex":
+            m &= co.eq("Capex")
+        elif metric == "comp":
             m &= hid.isin(COMP_H)
         elif metric == "staff":
             m &= hid.eq("H_LABOR") & (~co.eq("Capex"))
-        return df.loc[m, "m_exact"].sum()
+        return df.loc[m, "m_pref"].sum()
 
     for metric in ("staff", "comp", "capex"):
         L.append(f"\n{'='*70}\n## {metric.upper()}（左 HQ｜右 我哋｜Δ=我哋−HQ）")
