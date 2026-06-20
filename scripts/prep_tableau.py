@@ -647,6 +647,17 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_vco, "horizontal_label"] = "Comp活動場地"
         print(f"  [vml COMPLIMENTARY OTHER→會場] {int(_vco.sum()):,} 行")
 
+    # ── sjm 24: 食飲 comp 入面 演出/體育/會展/節慶 V 其實係 event/venue comp（ct=FnB 分唔到 venue，用 V 分）──
+    #   golden 會場 3,938 ≈ 演出表演+體育賽事+會展活動+節日慶典 = 3,921（Δ−17）；剩食飲 1,808 vs 1,733（+75）
+    if "entity" in combined.columns and "vertical_label" in combined.columns and "horizontal_id" in combined.columns:
+        _sjv = (combined["entity"].astype(str) == "sjm") & (combined["year_bucket"].astype(str) == "24") \
+            & combined["horizontal_id"].astype(str).str.strip().eq("H_FNB") \
+            & combined["vertical_label"].astype(str).str.strip().isin({"演出表演", "體育賽事", "會展活動", "節日慶典"})
+        if int(_sjv.sum()):
+            combined.loc[_sjv, "horizontal_id"] = "H_VENUE"
+            combined.loc[_sjv, "horizontal_label"] = "Comp活動場地"
+        print(f"  [sjm 24 食飲→會場 by V] {int(_sjv.sum()):,} 行")
+
     # ── melco/mgm: 從 人工 剷走 Contract/Travel/ProfFees/Uniform（spent-23/24 only；25 唔郁）user acct dump ──
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
         _2324 = combined["year_bucket"].astype(str).str[:2].isin(["23", "24"])
