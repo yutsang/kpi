@@ -647,6 +647,35 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_vco, "horizontal_label"] = "Comp活動場地"
         print(f"  [vml COMPLIMENTARY OTHER→會場] {int(_vco.sum()):,} 行")
 
+    # ── galaxy: 用項目組自己 H 標簽（項目組H = 基礎 ground truth, 格式「大類|細類」）map comp 五類 + 廣告/贊助/專業 ──
+    #   opex only（capex 留返 capex 邏輯）；staff 留返 account 規律（而家已較準）。tie-safe：淨 re-tag H。
+    if "entity" in combined.columns and "項目組H" in combined.columns and "horizontal_id" in combined.columns:
+        _go = (combined["entity"].astype(str) == "galaxy")
+        if "final_capex_opex" in combined.columns:
+            _go &= ~combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+        _ph = combined["項目組H"].astype(str)
+        _one = _ph.str.split("|").str[0].str.strip()
+        _gmap = [
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*room", case=False, regex=True, na=False), "H_HOTEL_ROOM", "Comp房間"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*Venue", case=False, regex=True, na=False), "H_VENUE", "Comp活動場地"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*(F&B|Service Charge)", case=False, regex=True, na=False), "H_FNB", "Comp餐飲"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*Ticket", case=False, regex=True, na=False), "H_COMP_TICKET", "Comp贈票"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*(Tax|Travel|Transport)", case=False, regex=True, na=False), "H_OTHER", "其他"),
+            (_one.eq("Comp") & _ph.str.contains(r"\|.*(Barter|others|Event Service|Gallery|Credit Card)", case=False, regex=True, na=False), "H_COMP_OTHER", "Comp其他"),
+            (_one.eq("Marketing"), "H_ADVERTISING", "廣告及推廣"),
+            (_one.eq("Sponsorship"), "H_SPONSORSHIP", "贊助費"),
+            (_one.str.contains("Professional Fee", case=False, na=False), "H_PROFESSIONAL", "專業服務費"),
+        ]
+        _gcnt = []
+        for _m, _h, _l in _gmap:
+            _mm = _go & _m
+            n = int(_mm.sum())
+            _gcnt.append(f"{_l}={n}")
+            if n:
+                combined.loc[_mm, "horizontal_id"] = _h
+                combined.loc[_mm, "horizontal_label"] = _l
+        print("  [galaxy 項目組H→H] " + " | ".join(_gcnt))
+
     # ── melco/mgm: 從 人工 剷走 Contract/Travel/ProfFees/Uniform（spent-23/24 only；25 唔郁）user acct dump ──
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
         _2324 = combined["year_bucket"].astype(str).str[:2].isin(["23", "24"])
