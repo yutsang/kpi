@@ -34,6 +34,10 @@ def main():
     for c in ("horizontal_label", "account_desc", "description", "ng_code", "項目組H", "year_bucket"):
         e[c] = _s(e[c]) if c in e.columns else ""
     e["y2"] = e["year_bucket"].str[:2]
+    # golden NG 用中文名 → 對 ng_code
+    NG2CODE = {"博彩娛樂": "NG0", "吸引外國客源": "NG1", "會議展覽": "NG2", "娛樂表演": "NG3",
+               "體育盛事": "NG4", "文化藝術": "NG5", "健康養生": "NG6", "主題遊樂": "NG7",
+               "美食之都": "NG8", "社區旅遊": "NG9", "海上旅遊": "NG10", "其他": "NG11"}
     # golden 房 by NG（23+24 internal_resource）
     g_room = {}
     if GOLD.exists():
@@ -41,7 +45,7 @@ def main():
         g = g[g["entity"].astype(str).str.strip() == ENT]
         g["客房支出"] = pd.to_numeric(g.get("客房支出", 0), errors="coerce").fillna(0.0)
         for _, r in g.iterrows():
-            ng = str(r.get("NG", "")).strip()
+            ng = NG2CODE.get(str(r.get("NG", "")).strip(), str(r.get("NG", "")).strip())
             g_room[ng] = g_room.get(ng, 0) + r["客房支出"]
     L = [f"# inspect_ng_desc — {ent if (ent:=ENT) else ''} comp房 by NG（amount_mop萬）"]
     L.append(f"\n## 房 comp（Comp房間）by NG：我哋(24prefix調後) vs golden客房(23+24)")
