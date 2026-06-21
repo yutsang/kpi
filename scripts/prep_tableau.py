@@ -1028,22 +1028,28 @@ def run(fmt="csv", out_dir="data/tableau"):
         print(f"  [sjm 25 comp其他blank→廣告] {int(_sjm25_mask.sum())}行")
 
     # G. mgm: comp 入面非 internal resource → 正確 H
-    # Airfare/Ferry = 運輸 → H_OTHER；Outside Comp = 外部 comp → H_OTHER；Other Electronic = 器具 → H_EQUIP
+    # 注意：MGM comp_type 全部 blank，所有分類靠 account_desc + description
+    # Airfare/Ferry = 運輸; Outside Comp = 外部comp; Other Electronic = 器具;
+    # OC Trans Upfront Offer = 海外客運輸優惠; Travel Subsidy = 海外旅費補貼現金（非 internal resource）
     if "entity" in combined.columns and "horizontal_id" in combined.columns:
         _COMPH_G = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
         _mg = combined["entity"].astype(str).eq("mgm")
         _mg_comp = combined["horizontal_id"].astype(str).str.strip().isin(_COMPH_G)
         _mg_ad = combined.get("account_desc", pd.Series("", index=combined.index)).astype(str).str.strip()
-        _mg_ct = combined.get("comp_type", pd.Series("", index=combined.index)).astype(str).str.strip()
+        _mg_ds = combined.get("description", pd.Series("", index=combined.index)).astype(str).str.strip()
         _mgm_fixes_g = [
-            (_mg & _mg_comp & (_mg_ad.eq("Airfare") | _mg_ct.eq("Airfare")),
+            (_mg & _mg_comp & _mg_ad.eq("Airfare"),
              "H_OTHER", "其他", "Airfare→其他"),
-            (_mg & _mg_comp & (_mg_ct.str.contains(r"^Outside Comp$", na=False) | _mg_ad.str.contains("Outside Comp", na=False)),
+            (_mg & _mg_comp & _mg_ad.str.contains("Outside Comp", na=False),
              "H_OTHER", "其他", "外部Comp→其他"),
             (_mg & _mg_comp & _mg_ad.eq("Other Electronic"),
              "H_EQUIP", "設施及器具採購", "電子器具→設施"),
-            (_mg & _mg_comp & _mg_ct.str.contains(r"^Ferry", na=False),
+            (_mg & _mg_comp & _mg_ad.str.contains(r"^Ferry", na=False),
              "H_OTHER", "其他", "Ferry→其他"),
+            (_mg & _mg_comp & _mg_ad.str.contains("OC Trans Upfront Offer", na=False),
+             "H_OTHER", "其他", "OC_Trans→其他"),
+            (_mg & _mg_comp & _mg_ds.str.contains(r"Travel Subsid|International Travel Subsid|Promotional Cash for Overseas", case=False, regex=True, na=False),
+             "H_OTHER", "其他", "海外旅費補貼→其他"),
         ]
         _gmsgs = []
         for _m, _hid, _lab, _tag in _mgm_fixes_g:
