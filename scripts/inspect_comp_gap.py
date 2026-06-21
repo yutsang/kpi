@@ -57,7 +57,8 @@ def run(ent, df, gold):
     L = [f"# inspect_comp_gap — {ent}（golden 23/24 調整後；under→其他H揾,over→現行收）"]
     e = df[df["entity"].astype(str) == ent].copy()
     post = pd.to_numeric(e.get("調整後_萬", 0), errors="coerce").fillna(0.0)
-    e["m"] = post
+    pre  = pd.to_numeric(e.get("調整前_萬",  0), errors="coerce").fillna(0.0)
+    e["m"] = post.where(e["year_bucket"].astype(str).str[:2].eq("24"), pre)  # comp: 24-prefix=調整後, else=調整前
     e["yb"] = e["year_bucket"].astype(str)
     for c in ("horizontal_id", "horizontal_label", "comp_type", "account_desc", "account_code", "項目組H", "ng_code", "final_capex_opex"):
         e[c] = _s(e[c]) if c in e.columns else ""

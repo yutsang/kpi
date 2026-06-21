@@ -29,7 +29,7 @@ def run(ent, df):
     post = pd.to_numeric(e.get("調整後_萬", 0), errors="coerce").fillna(0.0)
     pre = pd.to_numeric(e.get("調整前_萬", 0), errors="coerce").fillna(0.0)
     yb = e["year_bucket"].astype(str)
-    e["m"] = post.where(yb.isin(["23", "24"]), pre)
+    e["m"] = post.where(yb.str[:2].eq("24"), pre)  # comp: 23=調整前, 24-prefix=調整後, 25=調整前
     e["bk"] = yb
     for c in ("horizontal_id", "comp_type", "account_desc", "account_code"):
         e[c] = _s(e[c]) if c in e.columns else ""
