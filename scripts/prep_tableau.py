@@ -647,24 +647,27 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_vco, "horizontal_label"] = "Comp活動場地"
         print(f"  [vml COMPLIMENTARY OTHER→會場] {int(_vco.sum()):,} 行")
 
-    # ── galaxy: 用項目組自己 H 標簽（項目組H = 基礎 ground truth, 格式「大類|細類」）map comp 五類 + 廣告/贊助/專業 ──
-    #   opex only（capex 留返 capex 邏輯）；staff 留返 account 規律（而家已較準）。tie-safe：淨 re-tag H。
+    # ── galaxy: 用項目組自己 H 標簽（項目組H = 基礎 ground truth）map comp/廣告/贊助/專業 ──
+    #   格式：24-prefix = "Comp|Venue" (pipe)；25-prefix = "Comp-Venue" (dash)；大小寫不一（user 2026-06-21）。
+    #   capex 不排除（項目組H comp capex 行也應計入，tie to pt_class_H filter）。
+    #   cleanup after：galaxy y2=(24,25) 非 pt_class_H comp 行 → H_OTHER。
     if "entity" in combined.columns and "項目組H" in combined.columns and "horizontal_id" in combined.columns:
         _go = (combined["entity"].astype(str) == "galaxy")
-        if "final_capex_opex" in combined.columns:
-            _go &= ~combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
         _ph = combined["項目組H"].astype(str)
-        _one = _ph.str.split("|").str[0].str.strip()
+        # split on first | or - ; case-insensitive "comp" check
+        _one = _ph.str.extract(r'^([^|\-]+)')[0].str.strip().str.lower()
+        # sub-category separator can be | or - ; match sub-type after separator
+        _sub = lambda kw: _ph.str.contains(rf"[|\-].*(?:{kw})", case=False, regex=True, na=False)
         _gmap = [
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*room", case=False, regex=True, na=False), "H_HOTEL_ROOM", "Comp房間"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*Venue", case=False, regex=True, na=False), "H_VENUE", "Comp活動場地"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*(?:F&B|Service Charge)", case=False, regex=True, na=False), "H_FNB", "Comp餐飲"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*Ticket", case=False, regex=True, na=False), "H_COMP_TICKET", "Comp贈票"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*(?:Tax|Travel|Transport)", case=False, regex=True, na=False), "H_OTHER", "其他"),
-            (_one.eq("Comp") & _ph.str.contains(r"\|.*(?:Barter|others|Event Service|Gallery|Credit Card)", case=False, regex=True, na=False), "H_COMP_OTHER", "Comp其他"),
-            (_one.eq("Marketing"), "H_ADVERTISING", "廣告及推廣"),
-            (_one.eq("Sponsorship"), "H_SPONSORSHIP", "贊助費"),
-            (_one.str.contains("Professional Fee", case=False, na=False), "H_PROFESSIONAL", "專業服務費"),
+            (_one.eq("comp") & _sub(r"room"),                                        "H_HOTEL_ROOM",   "Comp房間"),
+            (_one.eq("comp") & _sub(r"venue"),                                       "H_VENUE",         "Comp活動場地"),
+            (_one.eq("comp") & _sub(r"f&b|service charge"),                          "H_FNB",           "Comp餐飲"),
+            (_one.eq("comp") & _sub(r"ticket|spa|printing fee"),                     "H_COMP_TICKET",   "Comp贈票"),
+            (_one.eq("comp") & _sub(r"tax|travel|transport|credit card"),             "H_OTHER",         "其他"),
+            (_one.eq("comp") & _sub(r"barter|others?|event service|gallery"),        "H_COMP_OTHER",    "Comp其他"),
+            (_one.eq("marketing"),                                                    "H_ADVERTISING",   "廣告及推廣"),
+            (_one.eq("sponsorship"),                                                  "H_SPONSORSHIP",   "贊助費"),
+            (_ph.str.contains("professional fee", case=False, na=False),             "H_PROFESSIONAL",  "專業服務費"),
         ]
         _gcnt = []
         for _m, _h, _l in _gmap:
@@ -675,6 +678,17 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_mm, "horizontal_id"] = _h
                 combined.loc[_mm, "horizontal_label"] = _l
         print("  [galaxy 項目組H→H] " + " | ".join(_gcnt))
+        # cleanup: galaxy y2=(24,25) 非 pt_class_H comp → H_OTHER（只用 pt_class_H 做 comp ground truth）
+        _COMPH_SET = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
+        _y2g = combined["year_bucket"].astype(str).str[:2]
+        _has_comp_ph = _one.str.eq("comp") & _go   # rows that WERE tagged by pt_class_H comp
+        _gl_2425_comp = _go & _y2g.isin(["24", "25"]) & combined["horizontal_id"].astype(str).str.strip().isin(_COMPH_SET)
+        _not_from_ph = _gl_2425_comp & ~_has_comp_ph
+        _rm_n = int(_not_from_ph.sum())
+        if _rm_n:
+            combined.loc[_not_from_ph, "horizontal_id"] = "H_OTHER"
+            combined.loc[_not_from_ph, "horizontal_label"] = "其他"
+        print(f"  [galaxy 非pt_class_H comp剷走] {_rm_n:,}行（y2=24/25 comp但無pt_class_H→其他）")
 
     # ── melco/mgm: 從 人工 剷走 Contract/Travel/ProfFees/Uniform（spent-23/24 only；25 唔郁）user acct dump ──
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
@@ -946,6 +960,19 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_sjp, "horizontal_id"] = "H_PROFESSIONAL"
             combined.loc[_sjp, "horizontal_label"] = "專業服務費"
         print(f"  [sjm comp 專業服務費→專業] {int(_sjp.sum())}行")
+
+    # E. sjm: comp 入面非 comp 嘅雜項 → H_OTHER（購貨-食品/Supplies/Low value = 費用，唔係贈品）
+    if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
+        _COMPH3 = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
+        _sj_ent = combined["entity"].astype(str).eq("sjm")
+        _sj_comp = combined["horizontal_id"].astype(str).str.strip().isin(_COMPH3)
+        _sj_ad = combined["account_desc"].astype(str).str.strip()
+        _bad_comp = _sj_ent & _sj_comp & _sj_ad.str.contains(
+            r"購貨\s*[-－]?\s*食品|Supplies.{0,15}Sanitary|Low value purchase|Low Value Purchase", regex=True, na=False)
+        if int(_bad_comp.sum()):
+            combined.loc[_bad_comp, "horizontal_id"] = "H_OTHER"
+            combined.loc[_bad_comp, "horizontal_label"] = "其他"
+        print(f"  [sjm comp 非贈品→其他] {int(_bad_comp.sum())}行（購貨食品/Supplies/Low value）")
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
