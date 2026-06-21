@@ -637,6 +637,32 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
         print(f"  [comp清理] 外部運輸/稅→其他={int(_c_oth.sum())} | Pre-Open→其他={int(_c_po.sum())} | FoodCost→其他={int(_c_fc.sum())} | Op供應→設施={int(_c_os.sum())} | 政府稅→其他={int(_c_gt.sum())}")
 
+    # ── vml 25: comp account_code final-authority override（account_code 比 分類1 更可靠；25 bucket only，唔郁已 tie 嘅 24/23）──
+    #   VML conf predominant_rules 已設呢啲係 comp accounts，但 row_horizontal_overrides.分類1 column_map 會蓋過佢。
+    #   prep_tableau 最後再 enforce account_code：新 raw 有「Comp類型」但未 kedro re-run → 用 account_code 做 proxy。
+    #   Future fix：VML conf row_horizontal_overrides 末加 {column_map: {col: "Comp類型",...}} → kedro re-run 後呢 block 可刪。
+    if "entity" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
+        _vml25 = combined["entity"].astype(str).eq("vml") & combined["year_bucket"].astype(str).str[:2].eq("25")
+        _vac = combined["account_code"].astype(str).str.strip()
+        _vml_comp_ac = [
+            (_vml25 & _vac.isin(["60001", "61001", "80541", "80544"]),
+             "H_HOTEL_ROOM", "Comp房間"),
+            (_vml25 & _vac.isin(["60002", "60003", "61002", "61003"]),
+             "H_FNB", "Comp餐飲"),
+            (_vml25 & _vac.isin(["60004", "60005"]),
+             "H_COMP_TICKET", "Comp贈票"),
+            (_vml25 & _vac.isin(["60007", "60010", "60099", "61007", "61010", "80185", "80410", "80580"]),
+             "H_COMP_OTHER", "Comp其他"),
+        ]
+        _vcnt = {}
+        for _m, _h, _l in _vml_comp_ac:
+            n = int(_m.sum())
+            if n:
+                combined.loc[_m, "horizontal_id"] = _h
+                combined.loc[_m, "horizontal_label"] = _l
+                _vcnt[_l] = n
+        print("  [vml 25 comp acct override] " + " | ".join(f"{k}={v}" for k, v in _vcnt.items()))
+
     # ── vml: COMPLIMENTARY OTHER → Comp活動場地（24 已咁 tag，23 冚晒落 comp其他；統一搬，修 23 會場 −1,024 + comp其他 +1,503）──
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
         _vco = (combined["entity"].astype(str) == "vml") \
