@@ -689,6 +689,16 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_not_from_ph, "horizontal_id"] = "H_OTHER"
             combined.loc[_not_from_ph, "horizontal_label"] = "其他"
         print(f"  [galaxy 非pt_class_H comp剷走] {_rm_n:,}行（y2=24/25 comp但無pt_class_H→其他）")
+        # galaxy 24-prefix Comp|Tax + Comp|Transport → H_COMP_OTHER（24 tie 需要；25 唔加 user 2026-06-21）
+        _tt24 = (
+            _go & _y2g.eq("24") & _one.eq("comp")
+            & _ph.str.contains(r"[|\-].*(tax|transport)", case=False, regex=True, na=False)
+            & combined["horizontal_id"].astype(str).str.strip().eq("H_OTHER")
+        )
+        if int(_tt24.sum()):
+            combined.loc[_tt24, "horizontal_id"] = "H_COMP_OTHER"
+            combined.loc[_tt24, "horizontal_label"] = "Comp其他"
+        print(f"  [galaxy 24 Comp Tax/Transport→Comp其他] {int(_tt24.sum()):,}行")
 
     # ── melco/mgm: 從 人工 剷走 Contract/Travel/ProfFees/Uniform（spent-23/24 only；25 唔郁）user acct dump ──
     if "entity" in combined.columns and "account_desc" in combined.columns and "horizontal_id" in combined.columns:
@@ -967,12 +977,14 @@ def run(fmt="csv", out_dir="data/tableau"):
         _sj_ent = combined["entity"].astype(str).eq("sjm")
         _sj_comp = combined["horizontal_id"].astype(str).str.strip().isin(_COMPH3)
         _sj_ad = combined["account_desc"].astype(str).str.strip()
-        _bad_comp = _sj_ent & _sj_comp & _sj_ad.str.contains(
-            r"購貨\s*[-－]?\s*食品|Supplies.{0,15}Sanitary|Low value purchase|Low Value Purchase", regex=True, na=False)
+        _bad_comp = _sj_ent & _sj_comp & (
+            _sj_ad.str.contains(r"購貨\s*[-－]?\s*食品|Supplies.{0,15}Sanitary|Low value purchase|Low Value Purchase", regex=True, na=False)
+            | _sj_ad.str.contains("各項招待費", na=False)
+        )
         if int(_bad_comp.sum()):
             combined.loc[_bad_comp, "horizontal_id"] = "H_OTHER"
             combined.loc[_bad_comp, "horizontal_label"] = "其他"
-        print(f"  [sjm comp 非贈品→其他] {int(_bad_comp.sum())}行（購貨食品/Supplies/Low value）")
+        print(f"  [sjm comp 非贈品→其他] {int(_bad_comp.sum())}行（購貨食品/Supplies/Low value/招待費）")
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
