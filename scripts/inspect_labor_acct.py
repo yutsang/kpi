@@ -22,28 +22,53 @@ def _s(x):
     return x.astype(str).str.strip().replace({"nan": "", "None": "", "NaN": ""})
 
 
+HQ_STAFF = {  # opex only 調整後（Table 2），年份 = recon_hq prefix key
+    "galaxy": {"23": 17082, "24": 14574, "25": 23950},
+    "wynn":   {"23": 6928,  "24": 8765,  "25": 10958},
+    "vml":    {"23": 790,   "24": 1457,  "25": 1253},
+    "melco":  {"23": 7218,  "24": 13912, "25": 27806},
+    "mgm":    {"23": 6357,  "24": 6829,  "25": 21467},
+    "sjm":    {"23": 0,     "24": 0,     "25": 142},
+}
+
+
 def run(ent, df):
-    L = [f"# inspect_labor_acct — {ent} opex 人工 by account（萬，recon basis：23/24=調整後,25=調整前）"]
+    L = [f"# inspect_labor_acct — {ent} opex 人工 by account（萬，recon basis）"]
     e = df[df["entity"].astype(str) == ent].copy()
     post = pd.to_numeric(e.get("調整後_萬", 0), errors="coerce").fillna(0.0)
-    pre = pd.to_numeric(e.get("調整前_萬", 0), errors="coerce").fillna(0.0)
-    yb = e["year_bucket"].astype(str)
-    y2 = yb.str[:2]
-    e["m"] = post.where(yb.isin(["23", "24"]), pre)   # exact-bucket recon basis（staff 用 exact）
-    e["bk"] = yb
+    pre  = pd.to_numeric(e.get("調整前_萬",  0), errors="coerce").fillna(0.0)
+    yb   = e["year_bucket"].astype(str)
+    y2   = yb.str[:2]
+    # recon_hq basis: 23=exact+調整後, 24-prefix=調整後, 25-prefix=調整前
+    e["m_pref"] = post.where(y2.isin(["23", "24"]), pre)   # prefix basis（與 recon_hq staff 一致）
+    e["y2"]  = y2
+    e["bk"]  = yb
     for c in ("horizontal_id", "final_capex_opex", "account_code", "account_desc"):
         e[c] = _s(e[c]) if c in e.columns else ""
     e["code"] = e["account_code"].str.replace(r"\.0$", "", regex=True)
     opex = ~e["final_capex_opex"].eq("Capex")
-    lab = e[(e.horizontal_id == "H_LABOR") & opex]
-    for yb_v in ("23", "24", "25"):
-        sub = lab[lab.bk == yb_v]
+    lab  = e[(e.horizontal_id == "H_LABOR") & opex]
+    hq_e = HQ_STAFF.get(ent, {})
+    for yr in ("23", "24", "25"):
+        if yr == "23":
+            sub = lab[lab.bk == "23"]
+        else:
+            sub = lab[lab.y2 == yr]
         if not len(sub):
             continue
-        L.append(f"\n{'='*60}\n## {ent} bucket {yb_v}  人工 Σ={sub['m'].sum():,.0f}萬（{len(sub):,}行）")
-        g = sub.groupby(["code", "account_desc"])["m"].sum().reset_index().sort_values("m", key=lambda s: s.abs(), ascending=False)
-        for _, r in g.head(15).iterrows():
-            L.append(f"   {r['code']:<11}{r['account_desc'][:30]:<30} {r['m']:>9,.0f}萬")
+        tot  = sub["m_pref"].sum()
+        hq   = hq_e.get(yr, 0)
+        flag = f"Δ={tot-hq:+,.0f}" if hq else ""
+        L.append(f"\n{'='*62}\n## {ent} {yr}-prefix  人工 Σ={tot:,.0f}萬  HQ={hq:,}  {flag}（{len(sub):,}行）")
+        g = sub.groupby(["code", "account_desc"])["m_pref"].sum().reset_index().sort_values("m_pref", key=lambda s: s.abs(), ascending=False)
+        for _, r in g.head(18).iterrows():
+            L.append(f"   {r['code']:<12}{r['account_desc'][:32]:<32} {r['m_pref']:>9,.0f}萬")
+        # also show by exact bucket if multiple
+        if yr != "23":
+            L.append(f"\n   ── exact bucket breakdown ──")
+            bg = sub.groupby("bk")["m_pref"].sum().reset_index().sort_values("bk")
+            for _, r in bg.iterrows():
+                L.append(f"      {r['bk']:<14} {r['m_pref']:>9,.0f}萬")
     out = ROOT / "results" / f"inspect_labor_acct_{ent}.txt"; out.parent.mkdir(exist_ok=True)
     out.write_text("\n".join(L), encoding="utf-8")
     print("\n".join(L)); print(f"\nwrote {out.relative_to(ROOT)}  ← paste 返嚟\n")
