@@ -37,11 +37,12 @@ HQ_COMP = {
 def _s(x): return x.astype(str).str.strip().replace({"nan": "", "None": "", "NaN": ""})
 
 
-def _m_exact(e, yr):
+def _m_comp(e):
+    """comp basis: 23=調整前, 24-prefix=調整後, 25=調整前 (user 2026-06-21)"""
     post = pd.to_numeric(e.get("調整後_萬", 0), errors="coerce").fillna(0.0)
     pre  = pd.to_numeric(e.get("調整前_萬",  0), errors="coerce").fillna(0.0)
-    yb   = e["year_bucket"].astype(str)
-    return post.where(yb.isin(["23", "24"]), pre)
+    y2   = e["year_bucket"].astype(str).str[:2]
+    return post.where(y2.eq("24"), pre)   # only 24-prefix → 調整後
 
 
 def run_galaxy(e, L):
@@ -55,7 +56,7 @@ def run_galaxy(e, L):
             sub = e[e["year_bucket"].astype(str) == "23"].copy()
         else:
             sub = e[e["year_bucket"].astype(str).str[:2] == yr].copy()
-        sub["m"] = _m_exact(sub, yr)
+        sub["m"] = _m_comp(sub)
         sub_comp = sub[sub["horizontal_id"].isin(COMP_H)]
         total = sub_comp["m"].sum()
         hq = HQ_COMP.get("galaxy", {}).get(yr, 0)
@@ -82,7 +83,7 @@ def run_wynn(e, L):
             sub = e[e["year_bucket"].astype(str) == "23"].copy()
         else:
             sub = e[e["year_bucket"].astype(str).str[:2] == yr].copy()
-        sub["m"] = _m_exact(sub, yr)
+        sub["m"] = _m_comp(sub)
         hid   = _s(sub["horizontal_id"]) if "horizontal_id" in sub.columns else pd.Series("", index=sub.index)
         ct    = _s(sub["comp_type"])     if "comp_type"     in sub.columns else pd.Series("", index=sub.index)
         ad    = sub["account_desc"].astype(str) if "account_desc" in sub.columns else pd.Series("", index=sub.index)
@@ -125,7 +126,7 @@ def run_mgm(e, L):
             sub = e[e["year_bucket"].astype(str) == "23"].copy()
         else:
             sub = e[e["year_bucket"].astype(str).str[:2] == yr].copy()
-        sub["m"] = _m_exact(sub, yr)
+        sub["m"] = _m_comp(sub)
         hid = _s(sub["horizontal_id"]) if "horizontal_id" in sub.columns else pd.Series("", index=sub.index)
         ct  = _s(sub["comp_type"])     if "comp_type"     in sub.columns else pd.Series("", index=sub.index)
         ad  = sub["account_desc"].astype(str) if "account_desc" in sub.columns else pd.Series("", index=sub.index)
@@ -164,7 +165,7 @@ def run_generic(ent, e, L):
             sub = e[e["year_bucket"].astype(str) == "23"].copy()
         else:
             sub = e[e["year_bucket"].astype(str).str[:2] == yr].copy()
-        sub["m"] = _m_exact(sub, yr)
+        sub["m"] = _m_comp(sub)
         hid = _s(sub["horizontal_id"]) if "horizontal_id" in sub.columns else pd.Series("", index=sub.index)
         sub_comp = sub[hid.isin(COMP_H)]
         total = sub_comp["m"].sum()

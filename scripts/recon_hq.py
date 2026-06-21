@@ -49,31 +49,34 @@ def main():
     pre = pd.to_numeric(df.get("調整前_萬", 0), errors="coerce").fillna(0.0)
     yb = df["year_bucket"].astype(str)
     y2 = yb.str[:2]
-    # capex = spent-year prefix（24=24+24_23SY；25=25+25_23SY+25_24SY）對 HQ capex golden；
-    # staff/comp = exact bucket（對 staff golden）。amount：spent/exact 23/24→調整後，25→調整前。
+    # capex/staff: 23/24-prefix=調整後, 25=調整前 (m_pref)
+    # comp basis（user 2026-06-21）: 23=調整前, 24-prefix(24+24_23SY)=調整後, 25=調整前
+    #   → m_comp = post.where(y2=="24", pre)  只 y2=="24" 用 post
     df["bk_exact"] = yb
     df["bk_pref"] = y2
     df["m_exact"] = post.where(yb.isin(["23", "24"]), pre)
     df["m_pref"] = post.where(y2.isin(["23", "24"]), pre)
+    df["m_comp"] = post.where(y2.eq("24"), pre)   # comp: only 24-prefix → 調整後; 23/25 → 調整前
     df["pre_amt"] = pre
     co = df.get("final_capex_opex", pd.Series("", index=df.index)).astype(str).str.strip()
     hid = df.get("horizontal_id", pd.Series("", index=df.index)).astype(str).str.strip()
     df["ent"] = df["entity"].astype(str)
 
     def ours(ent, metric, yr):
-        # golden 包期後（user 2026-06-20）：23=exact(調整後)、24=24+24_23SY(調整後)、25=25+25_23SY+25_24SY(調整前)。
-        # 全部 spent-year prefix + m_pref（= 調整後 23/24 prefix、調整前 25 prefix = amount_mop）。
+        # row filter: 23=exact "23"; 24/25 = spent-year prefix
         if yr == "23":
             m = (df["ent"] == ent) & (df["bk_exact"] == "23")
         else:
             m = (df["ent"] == ent) & (df["bk_pref"] == yr)
         if metric == "capex":
             m &= co.eq("Capex")
+            return df.loc[m, "m_pref"].sum()
         elif metric == "comp":
             m &= hid.isin(COMP_H)
+            return df.loc[m, "m_comp"].sum()   # comp-specific basis
         elif metric == "staff":
             m &= hid.eq("H_LABOR") & (~co.eq("Capex"))
-        return df.loc[m, "m_pref"].sum()
+            return df.loc[m, "m_pref"].sum()
 
     for metric in ("staff", "comp", "capex"):
         L.append(f"\n{'='*70}\n## {metric.upper()}（左 HQ｜右 我哋｜Δ=我哋−HQ）")

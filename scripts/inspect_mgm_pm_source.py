@@ -20,9 +20,10 @@ COMP_H = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
 USER_PM = {"23": 6355, "24": 3140, "25": 3210}
 
 
-def _amt_row(row_yb, post, pre):
+def _amt_comp(row_yb, post, pre):
+    """comp basis: 23=調整前, 24-prefix=調整後, 25=調整前 (user 2026-06-21)"""
     y2 = row_yb.str[:2]
-    return post.where(y2.isin(["23", "24"]), pre)
+    return post.where(y2.eq("24"), pre)   # only 24-prefix → 調整後
 
 
 def main():
@@ -34,7 +35,7 @@ def main():
     pre  = pd.to_numeric(mg.get("調整前_萬",  0), errors="coerce").fillna(0.0)
     yb   = mg["year_bucket"].astype(str)
     y2   = yb.str[:2]
-    mg["m"] = _amt_row(yb, post, pre)
+    mg["m"] = _amt_comp(yb, post, pre)
     mg["bk_pref"] = y2
 
     hid = mg["horizontal_id"].astype(str).str.strip() if "horizontal_id" in mg.columns else pd.Series("", index=mg.index)
@@ -114,7 +115,7 @@ def main():
     post_s = pd.to_numeric(sj.get("調整後_萬", 0), errors="coerce").fillna(0.0)
     pre_s  = pd.to_numeric(sj.get("調整前_萬",  0), errors="coerce").fillna(0.0)
     yb_s = sj["year_bucket"].astype(str); y2_s = yb_s.str[:2]
-    sj["m"] = _amt_row(yb_s, post_s, pre_s)
+    sj["m"] = _amt_comp(yb_s, post_s, pre_s)
     hid_s = sj["horizontal_id"].astype(str).str.strip() if "horizontal_id" in sj.columns else pd.Series("", index=sj.index)
     comp_s = hid_s.isin(COMP_H)
     HQ_SJM = {"23": 2970, "24": 6553, "25": 3575}
