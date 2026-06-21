@@ -681,7 +681,7 @@ def run(fmt="csv", out_dir="data/tableau"):
         # cleanup: galaxy y2=(24,25) 非 pt_class_H comp → H_OTHER（只用 pt_class_H 做 comp ground truth）
         _COMPH_SET = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
         _y2g = combined["year_bucket"].astype(str).str[:2]
-        _has_comp_ph = _one.str.eq("comp") & _go   # rows that WERE tagged by pt_class_H comp
+        _has_comp_ph = _one.eq("comp") & _go   # rows that WERE tagged by pt_class_H comp
         _gl_2425_comp = _go & _y2g.isin(["24", "25"]) & combined["horizontal_id"].astype(str).str.strip().isin(_COMPH_SET)
         _not_from_ph = _gl_2425_comp & ~_has_comp_ph
         _rm_n = int(_not_from_ph.sum())
