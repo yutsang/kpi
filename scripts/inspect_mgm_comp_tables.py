@@ -52,12 +52,22 @@ def main():
 
     hid = e["horizontal_id"]
     ct  = e["comp_type"]
+    ad  = e["account_desc"]
 
-    # 只看 Standard:Revenue comp_type 行
-    target = e[hid.isin(COMP_H) & ct.str.contains(TARGET_CT_RE, na=False)].copy()
+    # ── DEBUG: MGM H_COMP_OTHER distinct values ───────────────────────────────
+    L.append("\n── DEBUG: MGM H_COMP_OTHER unique (comp_type, account_desc) top 20 by Σ ──")
+    dbg = e[hid.isin(COMP_H)].groupby(["comp_type", "account_desc"])["m"].sum().reset_index()
+    dbg = dbg.sort_values("m", key=lambda s: s.abs(), ascending=False)
+    for _, r in dbg.head(20).iterrows():
+        L.append(f"  ct={r['comp_type'][:20]!r:<22} ad={r['account_desc'][:30]!r:<32}  {r['m']:>8,.0f}萬")
+
+    # 搜 comp_type OR account_desc（原欄位唔確定，兩個都搵）
+    _in_ct = ct.str.contains(TARGET_CT_RE, na=False)
+    _in_ad = ad.str.contains(TARGET_CT_RE, na=False)
+    target = e[hid.isin(COMP_H) & (_in_ct | _in_ad)].copy()
 
     if target.empty:
-        L.append("  !! 搵唔到 Target comp_type（Table Games/Slot/Other Operating）"); _w(); return
+        L.append("\n  !! 搵唔到 Target rows（comp_type 同 account_desc 都冇匹配）"); _w(); return
 
     L.append(f"\n總目標行數: {len(target):,}  Σ={target['m'].sum():,.0f}萬")
 
