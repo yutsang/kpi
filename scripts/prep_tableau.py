@@ -594,28 +594,38 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
         print(f"  [wynn 人工=Staff] 補入={int(_to_lab.sum())} | OutsideServ→專業={int(_os.sum())} | OpItems→設施={int(_eqp.sum())} | 其餘非Staff→其他={int(_oth.sum())}")
 
-    # ── galaxy opex staff cost 規律（user 2026-06-19）：opex + (account_desc 4 個 OR account_code 4 個) 先算人工 ──
+    # ── galaxy opex staff cost 規律（user 2026-06-19）：per-year allowlist（24/25 唔同）──
+    # 24: code in {8000960,8000000,8000150,8107500}（8000140 Casual Labor 唔計 24）
+    # 25: code in {7926000,8000140,8000150,8000960} OR desc in 4 個（規律驗過 2025）
     if "entity" in combined.columns and "account_desc" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
         _gl = combined["entity"].astype(str).eq("galaxy")
         _gopex = (~combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
                   if "final_capex_opex" in combined.columns else pd.Series(True, index=combined.index))
-        _gd = combined["account_desc"].astype(str).str.strip().isin(
-            ["Casual Labor", "Contract Services", "Outsourced Contract Labor", "Payroll - Direct Event Investment"])
-        _gc = combined["account_code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).isin(
-            ["7926000", "8000140", "8000150", "8000960"])
-        _gmatch = _gd | _gc
+        _gac = combined["account_code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
         _gy2 = combined["year_bucket"].astype(str).str[:2]
-        _g25 = _gy2.eq("25")           # spent-25：add + remove（規律驗過 2025）
-        _g2425 = _gy2.isin(["24", "25"])   # spent-24+25：subtractive 剷非命中（23 唔郁，account 唔同+有未tag staff）
+        _g24 = _gy2.eq("24")
+        _g25 = _gy2.eq("25")
         _ghl = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
-        _g_add = _gl & _gopex & _g25 & _gmatch & ~_ghl       # 只 spent-25 補入
-        _g_rm = _gl & _gopex & _g2425 & _ghl & ~_gmatch      # spent-24+25 非命中 → 其他
+        # 24 allowlist（code only）
+        _gmatch24 = _gac.isin(["8000960", "8000000", "8000150", "8107500"])
+        # 25 allowlist（code OR desc）
+        _gd25 = combined["account_desc"].astype(str).str.strip().isin(
+            ["Casual Labor", "Contract Services", "Outsourced Contract Labor", "Payroll - Direct Event Investment"])
+        _gmatch25 = _gd25 | _gac.isin(["7926000", "8000140", "8000150", "8000960"])
+        # add: allowlist rows not yet H_LABOR（24 adds 8000000/8107500；25 adds event-specific accounts）
+        _g_add24 = _gl & _gopex & _g24 & _gmatch24 & ~_ghl
+        _g_add25 = _gl & _gopex & _g25 & _gmatch25 & ~_ghl
+        # remove: H_LABOR rows outside respective allowlist
+        _g_rm24  = _gl & _gopex & _g24 & _ghl & ~_gmatch24
+        _g_rm25  = _gl & _gopex & _g25 & _ghl & ~_gmatch25
+        _g_add = _g_add24 | _g_add25
+        _g_rm  = _g_rm24  | _g_rm25
         if int(_g_add.sum()):
             combined.loc[_g_add, "horizontal_id"] = "H_LABOR"; combined.loc[_g_add, "horizontal_label"] = "人工成本"
         if int(_g_rm.sum()):
             combined.loc[_g_rm, "horizontal_id"] = "H_OTHER"; combined.loc[_g_rm, "horizontal_label"] = "其他"
         _aa = pd.to_numeric(combined.loc[_g_add, "amount_mop"], errors="coerce").abs().sum() / 1e4
-        _ar = pd.to_numeric(combined.loc[_g_rm, "amount_mop"], errors="coerce").abs().sum() / 1e4
+        _ar = pd.to_numeric(combined.loc[_g_rm,  "amount_mop"], errors="coerce").abs().sum() / 1e4
         print(f"  [galaxy 人工=opex+acct規律] 補入={int(_g_add.sum())}行/{_aa:,.0f}萬 | 剷非命中人工→其他={int(_g_rm.sum())}行/{_ar:,.0f}萬")
 
     # ── comp 清理：comp-H 入面非內部 comp 嘅行搬走（user 2026-06-19 comp dump）──
@@ -748,6 +758,20 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
                 _cnt += int(_m.sum())
         print(f"  [melco/mgm 人工剷 spent-23/24] {_cnt:,} 行")
+
+    # ── vml: 部門間人工分攤撥出（89001 INTERDEPARTMENT ALLOC-OTHER）唔係真正人工成本 → H_OTHER ──
+    if "entity" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
+        _vml_alloc = (
+            combined["entity"].astype(str).eq("vml")
+            & combined["account_code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).eq("89001")
+            & combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        )
+        n = int(_vml_alloc.sum())
+        if n:
+            combined.loc[_vml_alloc, "horizontal_id"] = "H_OTHER"
+            combined.loc[_vml_alloc, "horizontal_label"] = "其他"
+        _va = pd.to_numeric(combined.loc[_vml_alloc, "amount_mop"], errors="coerce").sum() / 1e4
+        print(f"  [vml 89001 部門間分攤→其他] {n}行/{_va:,.0f}萬")
 
     # ── capex staff 補返人工（項目組H mark 咗 staff 但 capex enforcement 搶咗去建設；user Table 1 capex+opex）──
     if "項目組H" in combined.columns and "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
