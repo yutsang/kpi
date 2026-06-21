@@ -1012,6 +1012,48 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_bad_comp, "horizontal_label"] = "其他"
         print(f"  [sjm comp 非贈品→其他] {int(_bad_comp.sum())}行（購貨食品/Supplies/Low value/招待費）")
 
+    # F. sjm 25 H_COMP_OTHER blank comp_type → H_ADVERTISING
+    # 25 raw 全行 comp_type 空白，H_COMP_OTHER 推廣費 ~747萬係 sjm25 over +729 嘅來源；
+    # 24/23 comp_type 有值（其他/禮品及禮劵）唔受此 condition 影響
+    if "entity" in combined.columns and "horizontal_id" in combined.columns:
+        _sjm25_mask = (
+            combined["entity"].astype(str).eq("sjm")
+            & combined["year_bucket"].astype(str).str[:2].eq("25")
+            & combined["horizontal_id"].astype(str).str.strip().eq("H_COMP_OTHER")
+            & combined.get("comp_type", pd.Series("", index=combined.index)).astype(str).str.strip().eq("")
+        )
+        if int(_sjm25_mask.sum()):
+            combined.loc[_sjm25_mask, "horizontal_id"] = "H_ADVERTISING"
+            combined.loc[_sjm25_mask, "horizontal_label"] = "廣告及推廣"
+        print(f"  [sjm 25 comp其他blank→廣告] {int(_sjm25_mask.sum())}行")
+
+    # G. mgm: comp 入面非 internal resource → 正確 H
+    # Airfare/Ferry = 運輸 → H_OTHER；Outside Comp = 外部 comp → H_OTHER；Other Electronic = 器具 → H_EQUIP
+    if "entity" in combined.columns and "horizontal_id" in combined.columns:
+        _COMPH_G = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
+        _mg = combined["entity"].astype(str).eq("mgm")
+        _mg_comp = combined["horizontal_id"].astype(str).str.strip().isin(_COMPH_G)
+        _mg_ad = combined.get("account_desc", pd.Series("", index=combined.index)).astype(str).str.strip()
+        _mg_ct = combined.get("comp_type", pd.Series("", index=combined.index)).astype(str).str.strip()
+        _mgm_fixes_g = [
+            (_mg & _mg_comp & (_mg_ad.eq("Airfare") | _mg_ct.eq("Airfare")),
+             "H_OTHER", "其他", "Airfare→其他"),
+            (_mg & _mg_comp & (_mg_ct.str.contains(r"^Outside Comp$", na=False) | _mg_ad.str.contains("Outside Comp", na=False)),
+             "H_OTHER", "其他", "外部Comp→其他"),
+            (_mg & _mg_comp & _mg_ad.eq("Other Electronic"),
+             "H_EQUIP", "設施及器具採購", "電子器具→設施"),
+            (_mg & _mg_comp & _mg_ct.str.contains(r"^Ferry", na=False),
+             "H_OTHER", "其他", "Ferry→其他"),
+        ]
+        _gmsgs = []
+        for _m, _hid, _lab, _tag in _mgm_fixes_g:
+            n = int(_m.sum())
+            _gmsgs.append(f"{_tag}={n}")
+            if n:
+                combined.loc[_m, "horizontal_id"] = _hid
+                combined.loc[_m, "horizontal_label"] = _lab
+        print("  [mgm comp非internal] " + " | ".join(_gmsgs))
+
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
     if _amtc and "entity" in combined.columns:
