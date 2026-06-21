@@ -1020,7 +1020,7 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined["entity"].astype(str).eq("sjm")
             & combined["year_bucket"].astype(str).str[:2].eq("25")
             & combined["horizontal_id"].astype(str).str.strip().eq("H_COMP_OTHER")
-            & combined.get("comp_type", pd.Series("", index=combined.index)).astype(str).str.strip().eq("")
+            & combined.get("comp_type", pd.Series("", index=combined.index)).astype(str).str.strip().isin(["", "nan", "None", "NaN"])
         )
         if int(_sjm25_mask.sum()):
             combined.loc[_sjm25_mask, "horizontal_id"] = "H_ADVERTISING"
@@ -1029,8 +1029,9 @@ def run(fmt="csv", out_dir="data/tableau"):
 
     # G. mgm: comp 入面非 internal resource → 正確 H
     # 注意：MGM comp_type 全部 blank，所有分類靠 account_desc + description
-    # Airfare/Ferry = 運輸; Outside Comp = 外部comp; Other Electronic = 器具;
-    # OC Trans Upfront Offer = 海外客運輸優惠; Travel Subsidy = 海外旅費補貼現金（非 internal resource）
+    # Airfare/Ferry = 運輸; Outside Comp = 外部comp; Other Electronic = 器具
+    # OC Trans Upfront Offer = 保留（HQ 計入 comp，移走會 over-correct 24 by ~1,083萬）
+    # Travel Subsidy (description) = 海外旅費補貼現金（非 internal resource）→ H_OTHER
     if "entity" in combined.columns and "horizontal_id" in combined.columns:
         _COMPH_G = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
         _mg = combined["entity"].astype(str).eq("mgm")
@@ -1046,8 +1047,6 @@ def run(fmt="csv", out_dir="data/tableau"):
              "H_EQUIP", "設施及器具採購", "電子器具→設施"),
             (_mg & _mg_comp & _mg_ad.str.contains(r"^Ferry", na=False),
              "H_OTHER", "其他", "Ferry→其他"),
-            (_mg & _mg_comp & _mg_ad.str.contains("OC Trans Upfront Offer", na=False),
-             "H_OTHER", "其他", "OC_Trans→其他"),
             (_mg & _mg_comp & _mg_ds.str.contains(r"Travel Subsid|International Travel Subsid|Promotional Cash for Overseas", case=False, regex=True, na=False),
              "H_OTHER", "其他", "海外旅費補貼→其他"),
         ]
