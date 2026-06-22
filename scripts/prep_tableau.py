@@ -114,31 +114,42 @@ def _gndicj(v):
 
 
 def golden_name_map():
-    """{alias: {dicj_norm: 項目名稱}} — 項目組要求 project name = golden DICJ 名稱 (per 承批公司)."""
+    """Return (gname, gname_ng):
+       gname    = {alias: {dicj_norm: 項目名稱}}            ← 每 dicj idxmax（fallback）
+       gname_ng = {alias: {(dicj_norm, NGcode): 項目名稱}}  ← per (DICJ,NG) 正解
+    同一 DICJ 嘅博彩(NG0)/非博彩(NG1-11)係兩個唔同項目名；舊 idxmax 只攞金額大嗰個 → 非博彩行冚博彩名。
+    用 golden「投資範疇」欄 → _cn_kw → NG code，回填時每行用 (dicj, ng_code) 對返正確名。"""
     gp = next((p for p in _GCAND if p.exists()), None)
     if not gp:
-        print("  ⚠ golden 檔揾唔到 → 唔 attach 項目名稱"); return {}
+        print("  ⚠ golden 檔揾唔到 → 唔 attach 項目名稱"); return {}, {}
     try:
         g = pd.read_excel(gp, sheet_name="Database combine", dtype=str)
     except Exception as e:
-        print(f"  ⚠ 讀 golden 失敗: {e}"); return {}
+        print(f"  ⚠ 讀 golden 失敗: {e}"); return {}, {}
     g.columns = [str(c).strip() for c in g.columns]
     dcol = next((c for c in g.columns if c.strip() in ("DICJ Code", "DICJ")), None)
     ncol = next((c for c in g.columns if "項目名稱" in str(c) or "项目名称" in str(c)), None)
     acol = next((c for c in g.columns if c.strip() == "Amount"), None)
     acomp = next((c for c in g.columns if "承批" in str(c)), None)
-    if not (dcol and ncol and acomp): return {}
+    ngcol = next((c for c in g.columns if c.strip() == "投資範疇"), None)  # NG theme（≠「投資範疇|是否博彩」）
+    if not (dcol and ncol and acomp): return {}, {}
     g["_a"] = g[acomp].map(_gname_alias)
     g["_d"] = g[dcol].astype(str).str.strip().map(_gndicj)
     g["_n"] = g[ncol].astype(str).str.strip()
+    g["_ng"] = g[ngcol].astype(str).map(_cn_kw) if ngcol else ""
     g["_amt"] = pd.to_numeric(g[acol].astype(str).str.replace(",", "", regex=False), errors="coerce").fillna(0.0) if acol else 0.0
     gg = g[g["_n"].ne("") & g["_n"].ne("nan") & g["_a"].notna()]
-    out = {}
+    out, out_ng = {}, {}
     for a in gg["_a"].unique():
         sub = gg[gg["_a"] == a]
         idx = sub.groupby("_d")["_amt"].apply(lambda s: s.abs().idxmax())   # 每 dicj 攞金額最大嗰個名
         out[a] = dict(zip(sub.loc[idx, "_d"], sub.loc[idx, "_n"]))
-    return out
+        if ngcol is not None:
+            sub2 = sub[sub["_ng"].ne("")]
+            if len(sub2):
+                idx2 = sub2.groupby(["_d", "_ng"])["_amt"].apply(lambda s: s.abs().idxmax())
+                out_ng[a] = {k: sub2.loc[i, "_n"] for k, i in idx2.items()}
+    return out, out_ng
 
 
 def run(fmt="csv", out_dir="data/tableau"):
@@ -147,9 +158,10 @@ def run(fmt="csv", out_dir="data/tableau"):
     from kpi.lib.conf import load_categories
     from kpi.pipelines.step2_tag_projects._logic import normalize_ng_code
     cats = load_categories()
-    gname = golden_name_map()
+    gname, gname_ng = golden_name_map()
     if gname:
-        print(f"  golden 名 map: {', '.join(f'{a}={len(m)}' for a, m in gname.items())}")
+        print(f"  golden 名 map: {', '.join(f'{a}={len(m)}' for a, m in gname.items())}"
+              f"  | (dicj,NG) keys: {', '.join(f'{a}={len(m)}' for a, m in gname_ng.items())}")
     frames = []
     for ent, com in ENTITIES.items():
         parquet = Path(f"data/{ent}/output/{com}_kpi_report.parquet")
@@ -334,14 +346,20 @@ def run(fmt="csv", out_dir="data/tableau"):
         # ── 項目名稱 = golden DICJ 名稱 (by dicj_code) — 項目組要求 project name = golden 名（roll-up 層）──
         # umbrella (golden 冇單一名，如 sjm 項目40=體育盛事 多個事件) → blank 用我哋 subproject 名頂上。
         _gm = gname.get(ent, {})
-        if _gm and "dicj_code" in df.columns:
-            df["項目名稱"] = df["dicj_code"].astype(str).fillna("").str.strip().map(_gndicj).map(_gm).fillna("")
+        _gmng = gname_ng.get(ent, {})
+        if (_gm or _gmng) and "dicj_code" in df.columns:
+            _dn = df["dicj_code"].astype(str).fillna("").str.strip().map(_gndicj)
+            _ngc = df["ng_code"].astype(str).str.strip() if "ng_code" in df.columns else pd.Series("", index=df.index)
+            # 每行先用 (dicj, ng_code) 對返正確名（修博彩/非博彩冚錯）；冇就 dicj idxmax fallback
+            _nm = [(_gmng.get((d, n)) or _gm.get(d, "")) for d, n in zip(_dn.tolist(), _ngc.tolist())]
+            df["項目名稱"] = pd.Series(_nm, index=df.index).fillna("")
+            _ng_used = sum(1 for d, n in zip(_dn.tolist(), _ngc.tolist()) if (d, n) in _gmng)
             if "subproject" in df.columns:
                 _bl = df["項目名稱"].astype(str).str.strip().isin(["", "nan", "None"])
                 df.loc[_bl, "項目名稱"] = df.loc[_bl, "subproject"].astype(str).str.strip()
             keep.append("項目名稱")
             _gn_blank = int(df["項目名稱"].astype(str).str.strip().isin(["", "nan", "None"]).sum())
-            print(f"  [{ent}] 項目名稱 ← golden(+subproject fallback): 仍 blank {_gn_blank:,}/{len(df):,}")
+            print(f"  [{ent}] 項目名稱 ← golden(dicj,NG對 {_ng_used:,}行)(+subproject fallback): 仍 blank {_gn_blank:,}/{len(df):,}")
 
         # ── H/V label 跟最新 categories.yml (id→label) re-map：改名(藝人演出費/Comp房間…)唔使重跑 pipeline ──
         _hl = {h["id"]: h["label"] for h in (cats.get("horizontals") or [])}
