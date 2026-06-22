@@ -45,7 +45,7 @@ def main():
             L.append(f"\n  ── {ng} ({g['ng_label'].iloc[0]}) Σ={g['pre'].sum():,.0f}萬 ──")
             for col in ("project", "subproject", "project_full", "項目組V"):
                 vals = g.groupby(col)["pre"].sum().sort_values(key=lambda s: s.abs(), ascending=False)
-                vals = vals[vals.index.astype(str).str.strip().ne("")]
+                vals = vals[[str(k).strip() != "" for k in vals.index]]
                 top = " | ".join(f"{str(k)[:26]}({v:,.0f})" for k, v in vals.head(3).items())
                 L.append(f"     {col:<12}: {top if top else '(全空)'}")
     _w(L)

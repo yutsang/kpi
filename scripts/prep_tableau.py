@@ -1004,6 +1004,37 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _nlab
         print("  [H紅旗修] " + " | ".join(_msgs))
 
+    # ── sjm: is_labor non-blank-non-0 → H_LABOR（user 2026-06-22：sjm 人工全 capex、靠 is_labor 識別）──
+    #   放 H紅旗修 之後（免 87999990 Renovation 被 人工→建設 undo）。capex 內部重分類，唔郁 capex total。
+    if "entity" in combined.columns and "is_labor" in combined.columns and "horizontal_id" in combined.columns:
+        _il = combined["is_labor"].astype(str).str.strip()
+        _il_on = ~_il.isin(["", "0", "0.0", "nan", "None", "NaN", "N", "n", "False", "false", "FALSE", "No", "no"])
+        _sj_lab = (combined["entity"].astype(str).eq("sjm") & _il_on
+                   & ~combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR"))
+        _n = int(_sj_lab.sum())
+        if _n:
+            combined.loc[_sj_lab, "horizontal_id"] = "H_LABOR"
+            combined.loc[_sj_lab, "horizontal_label"] = "人工成本"
+        _a = pd.to_numeric(combined.loc[_sj_lab, "amount_mop"], errors="coerce").abs().sum() / 1e4
+        print(f"  [sjm is_labor→人工] {_n}行/{_a:,.0f}萬")
+
+    # ── melco 23: intercompany labor / payroll allocation 剷出人工（user golden 23=4,172；allocation≠直接人工）──
+    #   只 melco 23（24 已 −388 唔郁；25 唔郁）。841000/841005 Interco Labor Charge、611199 Allocation A/C-Payroll → 其他。
+    if "entity" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
+        _meblob = (combined["account_code"].astype(str) + " "
+                   + combined.get("account_desc", pd.Series("", index=combined.index)).astype(str))
+        _me23 = (combined["entity"].astype(str).eq("melco")
+                 & combined["year_bucket"].astype(str).eq("23")
+                 & combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+                 & _meblob.str.contains(r"841000|841005|611199|Interco Labor Charge Alloc|Allocation A/C - Payroll",
+                                        case=False, regex=True, na=False))
+        _n2 = int(_me23.sum())
+        if _n2:
+            combined.loc[_me23, "horizontal_id"] = "H_OTHER"
+            combined.loc[_me23, "horizontal_label"] = "其他"
+        _a2 = pd.to_numeric(combined.loc[_me23, "amount_mop"], errors="coerce").sum() / 1e4
+        print(f"  [melco 23 allocation剷人工] {_n2}行/{_a2:,.0f}萬")
+
     # ── V 紅旗修（2026-06-20 audit）──
     # B. 藝術珍寶博物館（mgm）統一 → 內部設施-場館（user：博物館=場館；之前一半派咗 文藝展覽表演）
     if "vertical_label" in combined.columns and "subproject" in combined.columns:
