@@ -968,23 +968,26 @@ def run(fmt="csv", out_dir="data/tableau"):
     #         推廣/營銷/媒體/品牌/航空/銷售/展示/交通/配套 等→宣傳推廣；其餘(冇信心)→其他。
     if "ng_code" in combined.columns and "vertical_label" in combined.columns:
         _n1r = _ngc.eq("NG1") & combined["vertical_label"].astype(str).str.strip().eq("路演")
-        _nmx = (combined.get("project", pd.Series("", index=combined.index)).astype(str) + " "
-                + combined.get("subproject", pd.Series("", index=combined.index)).astype(str))
+        _proj = combined.get("project", pd.Series("", index=combined.index)).astype(str)   # 主名（唔好用 subproject，免噪音）
+        _nmx = (_proj + " " + combined.get("subproject", pd.Series("", index=combined.index)).astype(str))
+        _hasp = lambda pat: _proj.str.contains(pat, case=False, regex=True, na=False)     # 只睇 project 主名
         _has2 = lambda pat: _nmx.str.contains(pat, case=False, regex=True, na=False)
-        _road = _has2(r"路演|展銷|展销|銷售路演|road\s*show")
+        # 「其他項目」/「其他」generic project → 一定其他（即使 subproject 撞中路演）
+        _generic = _proj.str.strip().str.match(r"^\s*(?:其他項目|其他|其它項目|其它)\s*$", na=False)
+        _road = _hasp(r"路演|展銷|展销|銷售路演|road\s*show")          # 路演 只認 project 主名
         _concert = _has2(r"演唱會|演唱会|駐場|驻场|演出|表演|concert|residency|show\b")
         _theme = _has2(r"水上樂園|水上乐园|樂園|乐园|遊樂|游乐|water\s*park|主題遊")
         _exhib = _has2(r"展覽|展览|博物館|博物馆|exhibition|珍寶|艺术展|藝術展")
         _promo = _has2(r"推廣|推广|營銷|营销|媒體|媒体|廣告|广告|宣傳|宣传|品牌|marketing|航班|航線|航线|航空|"
                        r"辦事處|办事处|代表團|代表团|銷售|销售|客源|旅行社|OTA|網站|网站|市場|市场|代理|"
                        r"展示|交通|轎車|轿车|配套|套票|巴士|官網|官网|數字平台|数字平台")
-        # 優先順序（後者唔覆蓋前者）
-        _toRoad   = _n1r & _road
-        _toConcert= _n1r & ~_road & _concert
-        _toTheme  = _n1r & ~_road & ~_concert & _theme
-        _toExhib  = _n1r & ~_road & ~_concert & ~_theme & _exhib
-        _toPromo  = _n1r & ~_road & ~_concert & ~_theme & ~_exhib & _promo
-        _toOther  = _n1r & ~_road & ~_concert & ~_theme & ~_exhib & ~_promo
+        # 優先順序：generic→其他；然後 路演(project主名)→演出→遊樂→展覽→宣傳→其他
+        _toRoad   = _n1r & ~_generic & _road
+        _toConcert= _n1r & ~_generic & ~_road & _concert
+        _toTheme  = _n1r & ~_generic & ~_road & ~_concert & _theme
+        _toExhib  = _n1r & ~_generic & ~_road & ~_concert & ~_theme & _exhib
+        _toPromo  = _n1r & ~_generic & ~_road & ~_concert & ~_theme & ~_exhib & _promo
+        _toOther  = _n1r & (_generic | (~_road & ~_concert & ~_theme & ~_exhib & ~_promo))
         _vid_ok = "vertical_id" in combined.columns
         for _m, _lab, _vid in [(_toConcert, "演出表演", "V_CONCERT"),
                                (_toTheme, "內部設施-遊樂", "V_THEME_PARK"),
