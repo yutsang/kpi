@@ -963,28 +963,40 @@ def run(fmt="csv", out_dir="data/tableau"):
         _top = Counter(_newlab).most_common(14)
         print(f"  [V relabel] 改 {_nch:,} 行；新 V top: " + " | ".join(f"{k}={v}" for k, v in _top))
 
-    # ── NG1 路演 清理（user 2026-06-22：好多唔似路演；V 廣播/reset 令水上樂園/演唱會 冚入路演）──
-    #   路演/展銷 keyword→留路演；推廣/營銷/媒體/品牌/航空/銷售/辦事處 等→宣傳推廣；其餘(冇信心)→其他。
+    # ── NG1 路演 清理（user 2026-06-22：好多唔似路演；按 project 名分真 V，唔似就其他）──
+    #   優先：路演/展銷→留路演；演唱會/表演→演出表演；水上樂園/遊樂→內部設施-遊樂；展覽/博物館→文藝展覽表演；
+    #         推廣/營銷/媒體/品牌/航空/銷售/展示/交通/配套 等→宣傳推廣；其餘(冇信心)→其他。
     if "ng_code" in combined.columns and "vertical_label" in combined.columns:
         _n1r = _ngc.eq("NG1") & combined["vertical_label"].astype(str).str.strip().eq("路演")
         _nmx = (combined.get("project", pd.Series("", index=combined.index)).astype(str) + " "
                 + combined.get("subproject", pd.Series("", index=combined.index)).astype(str))
-        _road = _nmx.str.contains(r"路演|展銷|展销|銷售路演|road\s*show", case=False, regex=True, na=False)
-        _promo = _nmx.str.contains(
-            r"推廣|推广|營銷|营销|媒體|媒体|廣告|广告|宣傳|宣传|品牌|marketing|航班|航線|航线|航空|"
-            r"辦事處|办事处|代表團|代表团|銷售|销售|客源|旅行社|OTA|網站|网站|市場|市场|代理",
-            case=False, regex=True, na=False)
-        _toPromo = _n1r & ~_road & _promo
-        _toOther = _n1r & ~_road & ~_promo
-        if int(_toPromo.sum()):
-            combined.loc[_toPromo, "vertical_label"] = "宣傳推廣"
-            if "vertical_id" in combined.columns:
-                combined.loc[_toPromo, "vertical_id"] = "V_OVERSEAS_WEB_SEO"
-        if int(_toOther.sum()):
-            combined.loc[_toOther, "vertical_label"] = "其他"
-            if "vertical_id" in combined.columns:
-                combined.loc[_toOther, "vertical_id"] = "V_OTHER"
-        print(f"  [NG1路演清理] 留路演={int((_n1r & _road).sum())} 宣傳推廣={int(_toPromo.sum())} 其他={int(_toOther.sum())}")
+        _has2 = lambda pat: _nmx.str.contains(pat, case=False, regex=True, na=False)
+        _road = _has2(r"路演|展銷|展销|銷售路演|road\s*show")
+        _concert = _has2(r"演唱會|演唱会|駐場|驻场|演出|表演|concert|residency|show\b")
+        _theme = _has2(r"水上樂園|水上乐园|樂園|乐园|遊樂|游乐|water\s*park|主題遊")
+        _exhib = _has2(r"展覽|展览|博物館|博物馆|exhibition|珍寶|艺术展|藝術展")
+        _promo = _has2(r"推廣|推广|營銷|营销|媒體|媒体|廣告|广告|宣傳|宣传|品牌|marketing|航班|航線|航线|航空|"
+                       r"辦事處|办事处|代表團|代表团|銷售|销售|客源|旅行社|OTA|網站|网站|市場|市场|代理|"
+                       r"展示|交通|轎車|轿车|配套|套票|巴士|官網|官网|數字平台|数字平台")
+        # 優先順序（後者唔覆蓋前者）
+        _toRoad   = _n1r & _road
+        _toConcert= _n1r & ~_road & _concert
+        _toTheme  = _n1r & ~_road & ~_concert & _theme
+        _toExhib  = _n1r & ~_road & ~_concert & ~_theme & _exhib
+        _toPromo  = _n1r & ~_road & ~_concert & ~_theme & ~_exhib & _promo
+        _toOther  = _n1r & ~_road & ~_concert & ~_theme & ~_exhib & ~_promo
+        _vid_ok = "vertical_id" in combined.columns
+        for _m, _lab, _vid in [(_toConcert, "演出表演", "V_CONCERT"),
+                               (_toTheme, "內部設施-遊樂", "V_THEME_PARK"),
+                               (_toExhib, "文藝展覽表演", "V_ART_EXHIBITION"),
+                               (_toPromo, "宣傳推廣", "V_OVERSEAS_WEB_SEO"),
+                               (_toOther, "其他", "V_OTHER")]:
+            if int(_m.sum()):
+                combined.loc[_m, "vertical_label"] = _lab
+                if _vid_ok:
+                    combined.loc[_m, "vertical_id"] = _vid
+        print(f"  [NG1路演清理] 留路演={int(_toRoad.sum())} 演出={int(_toConcert.sum())} 遊樂={int(_toTheme.sum())} "
+              f"展覽={int(_toExhib.sum())} 宣傳推廣={int(_toPromo.sum())} 其他={int(_toOther.sum())}")
 
     # ── NG6 康養：設施/中心/診所/水療/會所 等 → 內部設施-康養（user 2026-06-18 §4：康養設施較細）──
     #   康養活動(活動/瑜伽節/講座) 維持；facility kw（含 subproject）先升做 內部設施-康養。
@@ -1184,6 +1196,21 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_id"] = _hid
                 combined.loc[_m, "horizontal_label"] = _lab
         print("  [mgm comp非internal] " + " | ".join(_gmsgs))
+
+    # ── capex final enforcement（user 2026-06-22：capex 只可以係 建設/設施器具/人工，唔好混 comp/其他/專業）──
+    #   所有 H 規則跑完後，capex 行 H ∉ {建設,設施,人工} → 建設（comp/其他/專業 等漏網全部收返建設）。
+    if "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
+        _cxf = combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+        _allow_cx = {"H_CONSTRUCTION", "H_EQUIP", "H_LABOR"}
+        _cx_bad = _cxf & ~combined["horizontal_id"].astype(str).str.strip().isin(_allow_cx)
+        _nb = int(_cx_bad.sum())
+        if _nb:
+            _byh = combined.loc[_cx_bad, "horizontal_label"].astype(str).value_counts().head(6).to_dict()
+            combined.loc[_cx_bad, "horizontal_id"] = "H_CONSTRUCTION"
+            combined.loc[_cx_bad, "horizontal_label"] = "建設與設施支出"
+            print(f"  [capex收編→建設] {_nb}行（capex 非建設/設施/人工 → 建設）：{_byh}")
+        else:
+            print("  [capex收編→建設] 0行（capex 已乾淨）")
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
