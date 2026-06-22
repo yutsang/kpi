@@ -963,6 +963,29 @@ def run(fmt="csv", out_dir="data/tableau"):
         _top = Counter(_newlab).most_common(14)
         print(f"  [V relabel] 改 {_nch:,} 行；新 V top: " + " | ".join(f"{k}={v}" for k, v in _top))
 
+    # ── NG1 路演 清理（user 2026-06-22：好多唔似路演；V 廣播/reset 令水上樂園/演唱會 冚入路演）──
+    #   路演/展銷 keyword→留路演；推廣/營銷/媒體/品牌/航空/銷售/辦事處 等→宣傳推廣；其餘(冇信心)→其他。
+    if "ng_code" in combined.columns and "vertical_label" in combined.columns:
+        _n1r = _ngc.eq("NG1") & combined["vertical_label"].astype(str).str.strip().eq("路演")
+        _nmx = (combined.get("project", pd.Series("", index=combined.index)).astype(str) + " "
+                + combined.get("subproject", pd.Series("", index=combined.index)).astype(str))
+        _road = _nmx.str.contains(r"路演|展銷|展销|銷售路演|road\s*show", case=False, regex=True, na=False)
+        _promo = _nmx.str.contains(
+            r"推廣|推广|營銷|营销|媒體|媒体|廣告|广告|宣傳|宣传|品牌|marketing|航班|航線|航线|航空|"
+            r"辦事處|办事处|代表團|代表团|銷售|销售|客源|旅行社|OTA|網站|网站|市場|市场|代理",
+            case=False, regex=True, na=False)
+        _toPromo = _n1r & ~_road & _promo
+        _toOther = _n1r & ~_road & ~_promo
+        if int(_toPromo.sum()):
+            combined.loc[_toPromo, "vertical_label"] = "宣傳推廣"
+            if "vertical_id" in combined.columns:
+                combined.loc[_toPromo, "vertical_id"] = "V_OVERSEAS_WEB_SEO"
+        if int(_toOther.sum()):
+            combined.loc[_toOther, "vertical_label"] = "其他"
+            if "vertical_id" in combined.columns:
+                combined.loc[_toOther, "vertical_id"] = "V_OTHER"
+        print(f"  [NG1路演清理] 留路演={int((_n1r & _road).sum())} 宣傳推廣={int(_toPromo.sum())} 其他={int(_toOther.sum())}")
+
     # ── NG6 康養：設施/中心/診所/水療/會所 等 → 內部設施-康養（user 2026-06-18 §4：康養設施較細）──
     #   康養活動(活動/瑜伽節/講座) 維持；facility kw（含 subproject）先升做 內部設施-康養。
     if "ng_code" in combined.columns and "vertical_label" in combined.columns:
