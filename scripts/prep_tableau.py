@@ -1000,6 +1000,26 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _nlab
         print("  [H紅旗修] " + " | ".join(_msgs))
 
+    # ── capex 資本化人工 hint recovery（FINAL；放 H紅旗修 之後，免上面 AUC→建設 條 rule undo）──
+    #   user 2026-06-22：唔注入，只 re-label 現有 row。capex 行有明確資本化人工 hint → H_LABOR：
+    #     ① 項目組H 含 'staff cost'/'人工成本'（galaxy AUC-Design&Dev 項目組親標 staff），OR
+    #     ② description 寫明 'Staff Cost'（galaxy 'Capitalization of Staff Costs'/'D&D Staff Cost'/'Cap. of Staff Costs'）。
+    #   只 galaxy 命中（vml/sjm/mgm capex 'staff' = 員工設施/reclass 假訊號，唔含 'Staff Cost'、亦無項目組H=staff）。
+    #   capex 內部重分類 → 唔郁 capex total tie、唔影響 opex staff。narrow set ⇒ 唔 overshoot。
+    if "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
+        _cx = combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+        _pthsc = combined.get("項目組H", pd.Series("", index=combined.index)).astype(str).str.contains(
+            r"staff\s*cost|人工成本", case=False, regex=True, na=False)
+        _dssc = combined.get("description", pd.Series("", index=combined.index)).astype(str).str.contains(
+            r"Staff\s*Cost", case=False, regex=True, na=False)
+        _caphint = _cx & (_pthsc | _dssc) & ~combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        _n = int(_caphint.sum())
+        if _n:
+            combined.loc[_caphint, "horizontal_id"] = "H_LABOR"
+            combined.loc[_caphint, "horizontal_label"] = "人工成本"
+        _amt = pd.to_numeric(combined.loc[_caphint, "amount_mop"], errors="coerce").abs().sum() / 1e4
+        print(f"  [capex資本化人工hint→人工] {_n}行/{_amt:,.0f}萬（項目組H=staff或desc含Staff Cost；galaxy）")
+
     # ── V 紅旗修（2026-06-20 audit）──
     # B. 藝術珍寶博物館（mgm）統一 → 內部設施-場館（user：博物館=場館；之前一半派咗 文藝展覽表演）
     if "vertical_label" in combined.columns and "subproject" in combined.columns:
