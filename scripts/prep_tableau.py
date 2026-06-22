@@ -1081,13 +1081,12 @@ def run(fmt="csv", out_dir="data/tableau"):
     # ── melco 23: intercompany labor / payroll allocation 剷出人工（user golden 23=4,172；allocation≠直接人工）──
     #   只 melco 23（24 已 −388 唔郁；25 唔郁）。841000/841005 Interco Labor Charge、611199 Allocation A/C-Payroll → 其他。
     if "entity" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
-        _meblob = (combined["account_code"].astype(str) + " "
-                   + combined.get("account_desc", pd.Series("", index=combined.index)).astype(str))
+        # 收窄：只 account_code 841000/841005/611199（唔好用 desc text，免捉埋 841010/841100/630120 → 過剷）
+        _mecode = combined["account_code"].astype(str).str.strip()
         _me23 = (combined["entity"].astype(str).eq("melco")
                  & combined["year_bucket"].astype(str).eq("23")
                  & combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
-                 & _meblob.str.contains(r"841000|841005|611199|Interco Labor Charge Alloc|Allocation A/C - Payroll",
-                                        case=False, regex=True, na=False))
+                 & _mecode.str.contains(r"^\s*(?:841000|841005|611199)\b", case=False, regex=True, na=False))
         _n2 = int(_me23.sum())
         if _n2:
             combined.loc[_me23, "horizontal_id"] = "H_OTHER"
