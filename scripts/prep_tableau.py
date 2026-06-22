@@ -1202,6 +1202,22 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = _lab
         print("  [mgm comp非internal] " + " | ".join(_gmsgs))
 
+    # ── comp gap 修（對 user golden ≤500）：剷出 comp 入面唔係贈送內部資源嘅嘢 ──
+    #   wynn：151010 Deposits / 184525 F&B Inventory（資產負債表項）；melco：624110 公用事業/Travel（非內部資源 comp）。
+    if "entity" in combined.columns and "horizontal_id" in combined.columns and "account_code" in combined.columns:
+        _COMPH2 = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
+        _incomp = combined["horizontal_id"].astype(str).str.strip().isin(_COMPH2)
+        _ent2 = combined["entity"].astype(str)
+        _code2 = combined["account_code"].astype(str).str.strip()
+        _wynn_rm = _ent2.eq("wynn") & _incomp & _code2.str.match(r"^\s*(?:151010|184525)\b")
+        _melco_rm = _ent2.eq("melco") & _incomp & _code2.str.match(r"^\s*624110\b")
+        for _m, _tag in [(_wynn_rm, "wynn Deposits/Inventory"), (_melco_rm, "melco 624110公用事業")]:
+            n = int(_m.sum())
+            if n:
+                combined.loc[_m, "horizontal_id"] = "H_OTHER"
+                combined.loc[_m, "horizontal_label"] = "其他"
+            print(f"  [comp gap修] {_tag}={n}行")
+
     # ── capex final enforcement（user 2026-06-22：capex 只可以係 建設/設施器具/人工，唔好混 comp/其他/專業）──
     #   所有 H 規則跑完後，capex 行 H ∉ {建設,設施,人工} → 建設（comp/其他/專業 等漏網全部收返建設）。
     if "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
