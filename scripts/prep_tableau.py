@@ -774,6 +774,24 @@ def run(fmt="csv", out_dir="data/tableau"):
         _va = pd.to_numeric(combined.loc[_vml_alloc, "amount_mop"], errors="coerce").sum() / 1e4
         print(f"  [vml 89001 部門間分攤→其他] {n}行/{_va:,.0f}萬")
 
+    # ── mgm: NG0 博彩 opex payroll 移出 H_LABOR（博彩營運人工 ≠ investment staff；user 2026-06-22 確認）──
+    #   只 MGM NG0 有 gaming opex payroll（其餘5家=0）；24 opex staff 10,193−3,152=7,041≈HQ6,829(Δ+212)。
+    #   只郁 opex（capex tie 維持 −5）；全年適用（principle year-agnostic，跑完核 25(+871)/23(+639) 唔好爆）。
+    if "entity" in combined.columns and "ng_code" in combined.columns and "horizontal_id" in combined.columns:
+        _mg_ng0 = (
+            combined["entity"].astype(str).eq("mgm")
+            & combined["ng_code"].astype(str).str.strip().str.upper().eq("NG0")
+            & combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        )
+        if "final_capex_opex" in combined.columns:
+            _mg_ng0 &= ~combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+        _nn = int(_mg_ng0.sum())
+        if _nn:
+            combined.loc[_mg_ng0, "horizontal_id"] = "H_OTHER"
+            combined.loc[_mg_ng0, "horizontal_label"] = "其他"
+        _aa = pd.to_numeric(combined.loc[_mg_ng0, "amount_mop"], errors="coerce").abs().sum() / 1e4
+        print(f"  [mgm NG0博彩人工→其他] {_nn}行/{_aa:,.0f}萬（博彩營運人工非investment staff）")
+
     # ── capex staff 補返人工（項目組H mark 咗 staff 但 capex enforcement 搶咗去建設；user Table 1 capex+opex）──
     if "項目組H" in combined.columns and "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
         _capstaff = combined["final_capex_opex"].astype(str).str.strip().eq("Capex") & \
