@@ -1175,7 +1175,13 @@ def run(fmt="csv", out_dir="data/tableau"):
         _mg_comp = combined["horizontal_id"].astype(str).str.strip().isin(_COMPH_G)
         _mg_ad = combined.get("account_desc", pd.Series("", index=combined.index)).astype(str).str.strip()
         _mg_ds = combined.get("description", pd.Series("", index=combined.index)).astype(str).str.strip()
+        _mg_code = combined.get("account_code", pd.Series("", index=combined.index)).astype(str).str.strip()
         _mgm_fixes_g = [
+            # 博彩 Table Games / gaming contra revenue（account 410xxx）+ Gaming Credit ≠ 贈送內部資源 → 其他
+            (_mg & _mg_comp & (_mg_code.str.match(r"^\s*410\d")
+                               | _mg_ad.str.contains("Gaming Credit|Table Games", case=False, na=False)
+                               | _mg_ds.str.contains("Gaming Credit", case=False, na=False)),
+             "H_OTHER", "其他", "博彩contra/TableGames→其他"),
             (_mg & _mg_comp & _mg_ad.eq("Airfare"),
              "H_OTHER", "其他", "Airfare→其他"),
             (_mg & _mg_comp & _mg_ad.str.contains("Outside Comp", na=False),
