@@ -6,6 +6,7 @@ A. galaxy 23 漏咗嘅 staff candidate（per-year allowlist 冇 23）
 B. galaxy 爭議 account（8107500 / 7926000 / allowlist code）by year × 係咪 H_LABOR
    → 量化 8107500 推高 galaxy 24 幾多
 C. vml staff candidate by year（80180 CONTRACT LABOR 等）→ 24 over / 25 under 該點郁
+D. mgm staff trace — 24_23SY 2,437萬 由邊嚟（真糧定 restatement/accrual）+ 7,547萬 全空-desc artifact
 
 Run（Windows）:  python scripts\investigate_staff_drill.py
 出 results\investigate_staff_drill.txt  ← paste 返嚟
@@ -50,6 +51,12 @@ def main():
     df["islab"] = df["hid"].eq("H_LABOR")
     df["kw"]    = df["desc"].str.contains(KW, case=False, regex=True, na=False)
     df["galpay"] = df["acode"].str.match(r"^(?:8000|8020|8221)")
+    df["yb"]    = df["year_bucket"].astype(str)
+    df["desc2"] = _s(df.get("description", pd.Series("", index=df.index)))
+    for _c, _n in [("成本中心", "cc"), ("source", "src"), ("憑證號", "vch"),
+                   ("調整一級", "adj1"), ("調整二級", "adj2"), ("take_flag", "tf"),
+                   ("netoff_flag", "nf"), ("vendor", "ven")]:
+        df[_n] = _s(df.get(_c, pd.Series("", index=df.index)))
 
     def yr3(sub):
         return [sub[sub.ry.eq(y)]["m"].sum() for y in ("23", "24", "25")]
@@ -114,6 +121,41 @@ def main():
             cells += f"{sy['m'].sum():>9,.0f}{sy[sy.islab]['m'].sum():>8,.0f}"
         L.append("   " + f"{r['acode']:<11}{(r['desc'] or '(空)')[:24]:<24}{(r['hid'] or '(空)')[:16]:<16}{cells}")
         seen += 1
+
+    # ── D. mgm staff trace ────────────────────────────────────────────────────
+    L.append("\n" + "=" * 80)
+    L.append("## D. mgm H_LABOR(opex) trace — 24_23SY 2,437萬 + 全空-desc 7,547萬 嫌疑")
+    L.append("   （MGM 24 +3,364 = exact-24 +927 ＋ 24_23SY 2,437；確認真糧 / restatement / accrual / artifact）")
+    mg = df[df.e.eq("mgm") & df.opex & df.islab].copy()
+
+    # D1. by year_bucket × source 總覽
+    L.append("\n   ── D1. by year_bucket × source（top 4 source per bucket）──")
+    for yb in sorted(mg["yb"].unique()):
+        sub = mg[mg.yb.eq(yb)]
+        parts = sub.groupby("src")["m"].sum().sort_values(key=lambda s: s.abs(), ascending=False)
+        ptxt = " | ".join(f"{(k or '(空)')[:18]}={v:,.0f}" for k, v in parts.head(4).items())
+        L.append(f"     {yb:<10}Σ={sub['m'].sum():>9,.0f}萬   {ptxt}")
+
+    # D2. 24_23SY 全部拆（成本中心 / 調整級 / take_flag / 憑證）
+    sy = mg[mg.yb.eq("24_23SY")]
+    L.append(f"\n   ── D2. mgm 24_23SY 全部 Σ={sy['m'].sum():,.0f}萬（{len(sy)}行）──")
+    L.append("     by 成本中心:")
+    for k, v in sy.groupby("cc")["m"].sum().sort_values(key=lambda s: s.abs(), ascending=False).head(8).items():
+        L.append(f"       cc={(k or '(空)'):<16}{v:>9,.0f}萬")
+    L.append("     by 調整一級/二級（睇係咪 23 restatement 撥入 24）:")
+    for (a1, a2), v in sy.groupby(["adj1", "adj2"])["m"].sum().sort_values(key=lambda s: s.abs(), ascending=False).head(6).items():
+        L.append(f"       {(a1 or '(空)')}/{(a2 or '(空)')}: {v:,.0f}萬")
+    L.append("     take_flag: " + " | ".join(f"{(k or '(空)')}={v:,.0f}" for k, v in sy.groupby("tf")["m"].sum().items()))
+    L.append("     netoff_flag: " + " | ".join(f"{(k or '(空)')}={v:,.0f}" for k, v in sy.groupby("nf")["m"].sum().items()))
+
+    # D3. 全空-desc（account_desc 且 description 空）H_LABOR — artifact 嫌疑
+    bl = mg[mg.desc.eq("") & mg.desc2.eq("")]
+    L.append(f"\n   ── D3. mgm H_LABOR account_desc+description 都空 Σ={bl['m'].sum():,.0f}萬（{len(bl)}行）──")
+    L.append("     by year_bucket × account_code:")
+    for (yb, ac), v in bl.groupby(["yb", "acode"])["m"].sum().sort_values(key=lambda s: s.abs(), ascending=False).head(12).items():
+        L.append(f"       {yb:<10}code={(ac or '(空)'):<10}{v:>9,.0f}萬")
+    L.append("     by source: " + " | ".join(f"{(k or '(空)')[:16]}={v:,.0f}" for k, v in bl.groupby("src")["m"].sum().sort_values(key=lambda s: s.abs(), ascending=False).head(5).items()))
+
     _w()
 
 
