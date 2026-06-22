@@ -595,7 +595,8 @@ def run(fmt="csv", out_dir="data/tableau"):
         print(f"  [wynn 人工=Staff] 補入={int(_to_lab.sum())} | OutsideServ→專業={int(_os.sum())} | OpItems→設施={int(_eqp.sum())} | 其餘非Staff→其他={int(_oth.sum())}")
 
     # ── galaxy opex staff cost 規律（user 2026-06-19）：per-year allowlist（24/25 唔同）──
-    # 24: code in {8000960,8000000,8000150,8107500}（8000140 Casual Labor 唔計 24）
+    # 24: code in {8000960,8000000,8000150}（8000140 Casual Labor 唔計 24；8107500 Event Service Fee
+    #     項目組H 標 others 唔係 staff → 剔走，galaxy 24 由 +1,934 落 −620 ✓）
     # 25: code in {7926000,8000140,8000150,8000960} OR desc in 4 個（規律驗過 2025）
     if "entity" in combined.columns and "account_desc" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
         _gl = combined["entity"].astype(str).eq("galaxy")
@@ -606,13 +607,13 @@ def run(fmt="csv", out_dir="data/tableau"):
         _g24 = _gy2.eq("24")
         _g25 = _gy2.eq("25")
         _ghl = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
-        # 24 allowlist（code only）
-        _gmatch24 = _gac.isin(["8000960", "8000000", "8000150", "8107500"])
+        # 24 allowlist（code only；8107500 Event Service Fee 項目組H=others 已剔走）
+        _gmatch24 = _gac.isin(["8000960", "8000000", "8000150"])
         # 25 allowlist（code OR desc）
         _gd25 = combined["account_desc"].astype(str).str.strip().isin(
             ["Casual Labor", "Contract Services", "Outsourced Contract Labor", "Payroll - Direct Event Investment"])
         _gmatch25 = _gd25 | _gac.isin(["7926000", "8000140", "8000150", "8000960"])
-        # add: allowlist rows not yet H_LABOR（24 adds 8000000/8107500；25 adds event-specific accounts）
+        # add: allowlist rows not yet H_LABOR（24 adds 8000000；25 adds event-specific accounts）
         _g_add24 = _gl & _gopex & _g24 & _gmatch24 & ~_ghl
         _g_add25 = _gl & _gopex & _g25 & _gmatch25 & ~_ghl
         # remove: H_LABOR rows outside respective allowlist
