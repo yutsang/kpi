@@ -53,7 +53,7 @@ def main():
             g = pd.read_excel(gp, sheet_name="Database combine", dtype=str)
             g.columns = [str(c).strip() for c in g.columns]
             L.append(f"\n  ── Database combine 欄名({len(g.columns)}) ──\n  {list(g.columns)}")
-            ngcol = next((c for c in g.columns if "項目性質" in c or "Section" in c or c.strip() in ("NG", "ng_code", "NG Code")), None)
+            ngcol = next((c for c in g.columns if ("投資範疇" in c and "博彩" not in c) or "項目性質" in c or "Section" in c or c.strip() in ("NG", "ng_code", "NG Code")), None)
             dcol = next((c for c in g.columns if c.strip() in ("DICJ Code", "DICJ")), None)
             ncol = next((c for c in g.columns if "項目名稱" in str(c) or "项目名称" in str(c)), None)
             acomp = next((c for c in g.columns if "承批" in str(c)), None)
