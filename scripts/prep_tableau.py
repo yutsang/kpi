@@ -1221,6 +1221,21 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_label"] = "其他"
             print(f"  [comp gap修] {_tag}={n}行")
 
+        # ── galaxy comp 撈返（user 2026-06-22：令 galaxy comp ≤500，唔注入只 re-label）──
+        #   galaxy comp 偏低（23 冇項目組H + 部分 Comp 帳落咗 H_OTHER）。撈返 Comp-nature account → comp其他。
+        #   小帳全年撈；大 External Transportation/Tourism Tax 只 galaxy 23 撈（24/25 撈會 overshoot）。
+        _gxo = _ent2.eq("galaxy") & ~combined["horizontal_id"].astype(str).str.strip().isin(_COMPH2)
+        _gcode = combined["account_code"].astype(str).str.strip()
+        _y2g = combined["year_bucket"].astype(str).str[:2]
+        _gx_small = _gxo & _gcode.str.match(r"^\s*(?:7151000|7141073|7141078|6410200|7131000|7120100)\b")
+        _gx_23big = _gxo & _y2g.eq("23") & _gcode.str.match(r"^\s*(?:7153000|7151020)\b")
+        _gx_back = _gx_small | _gx_23big
+        ng = int(_gx_back.sum())
+        if ng:
+            combined.loc[_gx_back, "horizontal_id"] = "H_COMP_OTHER"
+            combined.loc[_gx_back, "horizontal_label"] = "Comp其他"
+        print(f"  [galaxy comp撈返] 小帳全年+大帳23 = {ng}行")
+
     # ── capex final enforcement（user 2026-06-22：capex 只可以係 建設/設施器具/人工，唔好混 comp/其他/專業）──
     #   所有 H 規則跑完後，capex 行 H ∉ {建設,設施,人工} → 建設（comp/其他/專業 等漏網全部收返建設）。
     if "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
