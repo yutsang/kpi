@@ -1325,10 +1325,19 @@ def run(fmt="csv", out_dir="data/tableau"):
     #     capex→ final_capex_opex = Capex
     if "year_bucket" in combined.columns:
         combined["報告年"] = combined["year_bucket"].astype(str).str[:2]
+        # ── 25 = 報告 = amount_mop（user 2026-06-23：wynn 等 native 調整後金額/調整金額 對 25 唔 reconcile，
+        #    令「調整前」偏 +104；25 根本未調整，報告值 = amount_mop，直接覆寫 調整前 for 25）──
+        _is25 = combined["報告年"].eq("25")
+        _amt_w = pd.to_numeric(combined.get("amount_mop", 0), errors="coerce").fillna(0.0) / 1e4
+        if "調整前_萬" in combined.columns:
+            _before = pd.to_numeric(combined.loc[_is25, "調整前_萬"], errors="coerce").fillna(0.0).sum()
+            combined.loc[_is25, "調整前_萬"] = _amt_w[_is25]
+            _after = _amt_w[_is25].sum()
+            print(f"  [25=報告修正] 調整前_萬(25) ← amount_mop：Σ {_before:,.0f} → {_after:,.0f}萬（差 {_after-_before:+,.0f}）")
         _rp_post = pd.to_numeric(combined.get("調整後_萬", 0), errors="coerce").fillna(0.0)
         _rp_pre = pd.to_numeric(combined.get("調整前_萬", 0), errors="coerce").fillna(0.0)
-        combined["對數金額_萬"] = _rp_pre.where(combined["報告年"].eq("25"), _rp_post)
-        print(f"  [對數欄] 加 報告年(23/24/25) + 對數金額_萬（調整後23/24+調整前25）")
+        combined["對數金額_萬"] = _rp_pre.where(_is25, _rp_post)
+        print(f"  [對數欄] 加 報告年(23/24/25) + 對數金額_萬（調整後23/24+調整前25=報告)")
     print(f"Cols: {list(combined.columns)}")
 
     # ── cube / cube-detail: ONE aggregated file = cross-tab source (no union, no stitching) ──
