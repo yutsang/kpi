@@ -1056,6 +1056,44 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_vmh, "horizontal_label"] = "專業服務費"
             print(f"  [vml H_OTHER 90011→專業] {int(_vmh.sum())}行")
 
+    # ── 減 V_OTHER（user 2026-06-23：comp/staff/capex 已 tie 唔好郁；只改 vertical_*，純 V relabel 唔影響三個 metric）──
+    if "vertical_id" in combined.columns and "vertical_label" in combined.columns:
+        _entx = combined["entity"].astype(str)
+        _spx = combined.get("subproject", pd.Series("", index=combined.index)).astype(str)
+        _pjx = combined.get("project", pd.Series("", index=combined.index)).astype(str)
+        _blobx = (_spx + " " + _pjx)
+        _ngcx = combined.get("ng_code", pd.Series("", index=combined.index)).astype(str).str.strip()
+        def _cvo():
+            return combined["vertical_id"].astype(str).str.strip().eq("V_OTHER")
+        def _setv(mask, lab, vid):
+            n = int(mask.sum())
+            if n:
+                combined.loc[mask, "vertical_label"] = lab
+                combined.loc[mask, "vertical_id"] = vid
+            return n
+        # sjm 項目37 → 改名「國際推廣活動」（推廣費8,355+廣告網站4,227 為主）+ V=宣傳推廣；subproject 用項目名回填
+        _sj37 = _entx.eq("sjm") & (_pjx.str.strip().eq("項目37") | _spx.str.strip().eq("項目37"))
+        _ns37 = 0
+        if int(_sj37.sum()):
+            combined.loc[_sj37, "project"] = "國際推廣活動"
+            _spb37 = combined["subproject"].astype(str).str.strip()
+            combined.loc[_sj37 & _spb37.isin(["", "項目37"]), "subproject"] = "國際推廣活動"
+            _ns37 = _setv(_sj37 & _cvo(), "宣傳推廣", "V_OVERSEAS_WEB_SEO")
+        # galaxy NG1 V_OTHER → 宣傳推廣（會員計劃/promotions/research/news/website/branding/language）
+        _g1 = _setv(_cvo() & _entx.eq("galaxy") & _ngcx.eq("NG1") & _blobx.str.contains(
+            r"membership|service\s*quality|promotion|market\s*research|news\s*clip|website|branding|"
+            r"new\s*image|language|sales\s*promo|tailor\s*made", case=False, regex=True, na=False),
+            "宣傳推廣", "V_OVERSEAS_WEB_SEO")
+        # galaxy NG1 V_OTHER → 國際代表團隊（海外 manpower/增聘團隊/sales team/MICE team）
+        _g2 = _setv(_cvo() & _entx.eq("galaxy") & _ngcx.eq("NG1") & _blobx.str.contains(
+            r"manpower.*overseas|增聘|add\s*regional\s*MICE|add\s*sales\s*team|MICE\s*team", case=False, regex=True, na=False),
+            "國際代表團隊及海外辦事處", "V_REGIONAL_TEAM")
+        # vml V_OTHER facility（Cotai Arena 升級/HVAC/infrastructure）→ 內部設施-其他
+        _v1 = _setv(_cvo() & _entx.eq("vml") & _blobx.str.contains(
+            r"HVAC|cotai\s*arena|\barena\b|infrastructure|hosting", case=False, regex=True, na=False),
+            "內部設施-其他", "V_PROPERTY_UPGRADE")
+        print(f"  [減V_OTHER] sjm項目37→宣傳={_ns37} galaxy宣傳={_g1} galaxy代表團隊={_g2} vml內部設施={_v1}")
+
     # ── NG6 康養：設施/中心/診所/水療/會所 等 → 內部設施-康養（user 2026-06-18 §4：康養設施較細）──
     #   康養活動(活動/瑜伽節/講座) 維持；facility kw（含 subproject）先升做 內部設施-康養。
     if "ng_code" in combined.columns and "vertical_label" in combined.columns:
