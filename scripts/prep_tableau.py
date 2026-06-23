@@ -950,11 +950,12 @@ def run(fmt="csv", out_dir="data/tableau"):
                 if _has(s, ("媒體", "Media", "media", "推廣", "KOL", "宣傳", "Promo")): return "宣傳推廣"
                 return "美食-其他"
             if v == "V_COMMUNITY":
-                # 社區活化拆 3：建設類分內/外（公共片區=外）；其餘=政府公益（user 2026-06-18 §2 sjm 新馬路）
+                # 社區活化拆 3：建設類大多數→外部（user 2026-06-23：社區活化多數喺外部）；
+                #   內部只限葡京酒店；其餘（非建設）=政府公益（user 2026-06-18 §2 sjm 新馬路）
                 _con = _has(s, ("建設", "工程", "設施", "裝修", "Construction", "Renovation", "renovation",
                                 "重整", "碼頭", "環境美化", "Deposits paid", "CIP", "活化計劃"))
                 if _con:
-                    return "外部設施-社區活化" if _has(s, ("新馬路", "片區", "碼頭", "福隆新街", "公共", "環境美化")) else "內部設施-社區活化"
+                    return "內部設施-社區活化" if _has(s, ("葡京", "Lisboa", "lisboa", "Grand Lisboa")) else "外部設施-社區活化"
                 return "政府、公益及社區活動"
             return cur
         _newlab = [_relabel(v, n, s, c) for v, n, s, c in zip(_vid, _ngl, _basis, _cur)]
