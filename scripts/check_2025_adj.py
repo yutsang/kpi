@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception: pass
+import warnings
+warnings.filterwarnings("ignore")   # 靜音 openpyxl Print area 等 noise
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -77,15 +79,16 @@ def main():
             L.append(f"   ⏳ adj 未放：data\\{ent}\\raw\\{ent}_2025_adj.xlsx（放咗再跑）")
             continue
         try:
-            xls = pd.ExcelFile(adj)
-            adjsheets = xls.sheet_names
+            adjsheets = pd.ExcelFile(adj).sheet_names
         except Exception as e:
             L.append(f"   !! adj 讀取失敗：{e}"); continue
-        adjcols = []
-        for sh in adjsheets:
-            adjcols += _cols(adj, sh)
-        adjcols = list(dict.fromkeys(adjcols))
-        L.append(f"   adj 檔：{ent}_2025_adj.xlsx  sheet={adjsheets}  欄數={len(adjcols)}")
+        adj_tab = sheets[0]   # 標準 tab — adj 應該有呢張（唔好 union 全部 sheet）
+        if adj_tab not in adjsheets:
+            L.append(f"   ⚠ adj 冇標準 tab「{adj_tab}」→ 要喺 adj 整一張同名 tab，或話我改 SRC。")
+            L.append(f"      adj sheets(前40)：{adjsheets[:40]}")
+            continue
+        adjcols = list(dict.fromkeys(_cols(adj, adj_tab)))
+        L.append(f"   adj 檔：{ent}_2025_adj.xlsx  用 tab=「{adj_tab}」  欄數={len(adjcols)}")
 
         rs, as_ = set(rawcols), set(adjcols)
         missing = [c for c in rawcols if c not in as_]   # raw 有 adj 冇
