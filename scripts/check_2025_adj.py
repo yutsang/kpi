@@ -21,14 +21,14 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "results" / "check_2025_adj.txt"
 
-# 現有 2025 raw（檔名, tab(s)）—— 從 conf yearly_sources year 2025
+# (檔名, 候選 tab：標準 adj tab 行先，揾唔到 fallback 現有 raw tab) — user 2026-06-23 標準化 tab 名
 SRC = {
     "galaxy": ("galaxy_2025.xlsx", ["Combine(clean)"]),
-    "sjm":    ("sjm_2025.xlsx",    ["25", "24", "23"]),
-    "wynn":   ("wynn_2025.xlsx",   ["Opex&Capex匯總"]),
-    "vml":    ("vml_2025.xlsx",    ["25JE"]),
+    "sjm":    ("sjm_2025.xlsx",    ["表格1", "25", "24", "23"]),       # 標準=表格1(單tab);現有3-bucket → vlookup
+    "wynn":   ("wynn_2025.xlsx",   ["報告投資支出明細賬", "Opex&Capex匯總"]),  # 標準改名
+    "vml":    ("vml_2025.xlsx",    ["投資支出明細賬", "25JE"]),          # 標準改名
     "melco":  ("melco_2025.xlsx",  ["Data"]),
-    "mgm":    ("mgm_2025.xlsx",    ["data"]),
+    "mgm":    ("mgm_2025.xlsx",    ["data"]),                          # mgm 手調，僅參考
 }
 # kedro 關鍵欄 hint（adj 一定要有，先可以直接換）
 KEY = {
@@ -61,11 +61,18 @@ def main():
             L.append(f"   !! 現有 raw 揾唔到：{raw.relative_to(ROOT)}");
         rawcols = []
         if raw.exists():
-            for sh in sheets:
-                rawcols += _cols(raw, sh)
-            rawcols = list(dict.fromkeys(rawcols))   # dedupe 保序
-            L.append(f"   現有 raw：{fn}  tab={sheets}  欄數={len(rawcols)}")
-            L.append(f"      現有欄位（adj 要跟住放）：{rawcols}")
+            try:
+                _avail = set(pd.ExcelFile(raw).sheet_names)
+            except Exception as e:
+                _avail = set(); L.append(f"   !! 開現有 raw 失敗：{e}")
+            _used = next((sh for sh in sheets if sh in _avail), None)
+            if _used is None:
+                L.append(f"   !! 候選 tab {sheets} 一個都唔喺 {fn}（現有 tab：{sorted(_avail)}）")
+            else:
+                rawcols = list(dict.fromkeys(_cols(raw, _used)))
+                _std = "✓標準" if _used == sheets[0] else f"⚠fallback(標準={sheets[0]})"
+                L.append(f"   現有 raw：{fn}  用 tab=「{_used}」{_std}  欄數={len(rawcols)}")
+                L.append(f"      現有欄位（adj 要跟住放）：{rawcols}")
         if not adj.exists():
             L.append(f"   ⏳ adj 未放：data\\{ent}\\raw\\{ent}_2025_adj.xlsx（放咗再跑）")
             continue
