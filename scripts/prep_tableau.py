@@ -1028,6 +1028,34 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_to_gov2, "vertical_id"] = "V_COMMUNITY"
         print(f"  [NG1 roadshow→路演] 收編={int(_to_road2.sum())}行（非政府）；政府roadshow→政府公益={int(_to_gov2.sum())}行")
 
+    # ── vml V_OTHER 用項目組V歸返真V（user 2026-06-23 減其他；項目組V=ground truth，只收明確嗰幾類）──
+    #   可持續發展/數字化轉型/其他 → 留其他（cross-cutting，冇真 V）。
+    if "vertical_id" in combined.columns and "項目組V" in combined.columns:
+        _vmo = combined["entity"].astype(str).eq("vml") & combined["vertical_id"].astype(str).str.strip().eq("V_OTHER")
+        _ptv = combined["項目組V"].astype(str).str.strip()
+        _vml_ptv = {"國際演唱會": ("演出表演", "V_CONCERT"),
+                    "數字化營銷": ("宣傳推廣", "V_OVERSEAS_WEB_SEO"),
+                    "海外宣傳媒體費用": ("宣傳推廣", "V_OVERSEAS_WEB_SEO"),
+                    "參與海外路演與宣傳活動": ("路演", "V_OVERSEAS_ROADSHOW")}
+        _nmv = 0
+        for _k, (_lab, _vid) in _vml_ptv.items():
+            _m = _vmo & _ptv.eq(_k)
+            if int(_m.sum()):
+                combined.loc[_m, "vertical_label"] = _lab
+                combined.loc[_m, "vertical_id"] = _vid
+                _nmv += int(_m.sum())
+        print(f"  [vml V_OTHER用項目組V歸真V] {_nmv}行（國際演唱會→演出/數字化營銷+海外媒體→宣傳/海外路演→路演）")
+
+    # ── vml H_OTHER 90011-xxx SERVICE EXP → 專業服務費（項組H=專業服務費；非投資但有真 H）──
+    if "horizontal_id" in combined.columns and "account_code" in combined.columns:
+        _vmh = (combined["entity"].astype(str).eq("vml")
+                & combined["horizontal_id"].astype(str).str.strip().eq("H_OTHER")
+                & combined["account_code"].astype(str).str.strip().str.startswith("90011"))
+        if int(_vmh.sum()):
+            combined.loc[_vmh, "horizontal_id"] = "H_PROFESSIONAL"
+            combined.loc[_vmh, "horizontal_label"] = "專業服務費"
+            print(f"  [vml H_OTHER 90011→專業] {int(_vmh.sum())}行")
+
     # ── NG6 康養：設施/中心/診所/水療/會所 等 → 內部設施-康養（user 2026-06-18 §4：康養設施較細）──
     #   康養活動(活動/瑜伽節/講座) 維持；facility kw（含 subproject）先升做 內部設施-康養。
     if "ng_code" in combined.columns and "vertical_label" in combined.columns:
