@@ -1071,14 +1071,14 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[mask, "vertical_label"] = lab
                 combined.loc[mask, "vertical_id"] = vid
             return n
-        # sjm 項目37 → 改名「國際推廣活動」（推廣費8,355+廣告網站4,227 為主）+ V=宣傳推廣；subproject 用項目名回填
+        # sjm 項目37 → 改名「國際推廣活動」（推廣費8,355+廣告網站4,227 為主）+ V=宣傳推廣（全部行，唔理現時V，免分裂）；subproject 用項目名回填
         _sj37 = _entx.eq("sjm") & (_pjx.str.strip().eq("項目37") | _spx.str.strip().eq("項目37"))
         _ns37 = 0
         if int(_sj37.sum()):
             combined.loc[_sj37, "project"] = "國際推廣活動"
             _spb37 = combined["subproject"].astype(str).str.strip()
             combined.loc[_sj37 & _spb37.isin(["", "項目37"]), "subproject"] = "國際推廣活動"
-            _ns37 = _setv(_sj37 & _cvo(), "宣傳推廣", "V_OVERSEAS_WEB_SEO")
+            _ns37 = _setv(_sj37, "宣傳推廣", "V_OVERSEAS_WEB_SEO")   # 全部 項目37 → 宣傳推廣（唔淨係 V_OTHER）
         # galaxy NG1 V_OTHER → 宣傳推廣（會員計劃/promotions/research/news/website/branding/language）
         _g1 = _setv(_cvo() & _entx.eq("galaxy") & _ngcx.eq("NG1") & _blobx.str.contains(
             r"membership|service\s*quality|promotion|market\s*research|news\s*clip|website|branding|"
