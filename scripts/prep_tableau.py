@@ -625,8 +625,9 @@ def run(fmt="csv", out_dir="data/tableau"):
         _g24 = _gy2.eq("24")
         _g25 = _gy2.eq("25")
         _ghl = combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
-        # 24 allowlist（code only；8107500 Event Service Fee 項目組H=others 已剔走）
-        _gmatch24 = _gac.isin(["8000960", "8000000", "8000150"])
+        # 24 allowlist（code only；8107500 已剔走；2026-06-23 加員工福利 pension/medical/housing/bonus/internship 收返 −619）
+        _gmatch24 = _gac.isin(["8000960", "8000000", "8000150",
+                               "8020020", "8020030", "8000020", "8000130", "8020130"])
         # 25 allowlist（code OR desc）
         _gd25 = combined["account_desc"].astype(str).str.strip().isin(
             ["Casual Labor", "Contract Services", "Outsourced Contract Labor", "Payroll - Direct Event Investment"])
@@ -747,7 +748,7 @@ def run(fmt="csv", out_dir="data/tableau"):
         # galaxy 24-prefix Comp|Tax + Comp|Transport → H_COMP_OTHER（24 tie 需要；25 唔加 user 2026-06-21）
         _tt24 = (
             _go & _y2g.eq("24") & _one.eq("comp")
-            & _ph.str.contains(r"[|\-].*(tax|transport)", case=False, regex=True, na=False)
+            & _ph.str.contains(r"[|\-].*(?:tax|transport)", case=False, regex=True, na=False)
             & combined["horizontal_id"].astype(str).str.strip().eq("H_OTHER")
         )
         if int(_tt24.sum()):
@@ -1188,6 +1189,26 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "horizontal_id"] = _h
                 combined.loc[_m, "horizontal_label"] = _l
         print("  [sjm 23 推廣費→comp] " + " | ".join(_sjc))
+
+    # ── sjm 24: 推廣費喺 comp 但無房/餐/票 desc 字 → 廣告（user 2026-06-23：24 +675 over，剷無內部資源字嘅）──
+    if "entity" in combined.columns and "horizontal_id" in combined.columns and "account_code" in combined.columns:
+        _COMPH_SJ = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
+        _sj24 = (combined["entity"].astype(str).eq("sjm")
+                 & combined["year_bucket"].astype(str).eq("24")
+                 & combined["account_code"].astype(str).str.contains("72040050", na=False)
+                 & combined["horizontal_id"].astype(str).str.strip().isin(_COMPH_SJ))
+        _sj24blob = (combined.get("account_desc", pd.Series("", index=combined.index)).astype(str) + " "
+                     + combined.get("description", pd.Series("", index=combined.index)).astype(str) + " "
+                     + combined.get("subproject", pd.Series("", index=combined.index)).astype(str))
+        _sj24_keep = _sj24blob.str.contains(
+            r"酒店|客房|住宿|hotel|\broom\b|餐飲|餐|食品|飲料|宴|f&b|\bfood\b|beverage|dinner|菜單|禮品|禮劵|礼品|礼券|門票|入場|\bticket\b|voucher|gift",
+            case=False, regex=True, na=False)
+        _sj24_rm = _sj24 & ~_sj24_keep
+        n24 = int(_sj24_rm.sum())
+        if n24:
+            combined.loc[_sj24_rm, "horizontal_id"] = "H_ADVERTISING"
+            combined.loc[_sj24_rm, "horizontal_label"] = "廣告及推廣"
+        print(f"  [sjm 24 推廣費非內部資源→廣告] {n24}行")
 
     # G. mgm: comp 入面非 internal resource → 正確 H
     # 注意：MGM comp_type 全部 blank，所有分類靠 account_desc + description
