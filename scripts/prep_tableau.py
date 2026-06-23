@@ -1167,6 +1167,28 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_sjm25_mask, "horizontal_label"] = "廣告及推廣"
         print(f"  [sjm 25 comp其他blank→廣告] {int(_sjm25_mask.sum())}行")
 
+    # ── sjm 23: 推廣費(72040050)有 房/餐/票 desc 字 → 由廣告撈入 comp（user 2026-06-23：23差1,714,填差不多嘅入comp）──
+    #   sjm comp = 推廣費 subset；23 撈唔夠。只 23（24 +675 over 唔加、25 −17 ok 唔郁）。涉酒店/客房→房、餐飲→食飲、禮品禮劵/票→贈票。
+    if "entity" in combined.columns and "horizontal_id" in combined.columns and "account_code" in combined.columns:
+        _sj23 = (combined["entity"].astype(str).eq("sjm")
+                 & combined["year_bucket"].astype(str).eq("23")
+                 & combined["account_code"].astype(str).str.contains("72040050", na=False)
+                 & combined["horizontal_id"].astype(str).str.strip().isin(["H_ADVERTISING", "H_SPONSORSHIP", "H_OTHER"]))
+        _sjblob = (combined.get("account_desc", pd.Series("", index=combined.index)).astype(str) + " "
+                   + combined.get("description", pd.Series("", index=combined.index)).astype(str) + " "
+                   + combined.get("subproject", pd.Series("", index=combined.index)).astype(str))
+        _sj_room = _sj23 & _sjblob.str.contains(r"酒店|客房|住宿|hotel|\broom\b", case=False, regex=True, na=False)
+        _sj_fnb  = _sj23 & ~_sj_room & _sjblob.str.contains(r"餐飲|餐|食品|飲料|宴|f&b|\bfood\b|beverage|dinner|菜單", case=False, regex=True, na=False)
+        _sj_tkt  = _sj23 & ~_sj_room & ~_sj_fnb & _sjblob.str.contains(r"禮品|禮劵|礼品|礼券|門票|入場|\bticket\b|voucher|gift", case=False, regex=True, na=False)
+        _sjc = []
+        for _m, _h, _l in [(_sj_room, "H_HOTEL_ROOM", "Comp房間"), (_sj_fnb, "H_FNB", "Comp餐飲"), (_sj_tkt, "H_COMP_TICKET", "Comp贈票")]:
+            n = int(_m.sum())
+            _sjc.append(f"{_l}={n}")
+            if n:
+                combined.loc[_m, "horizontal_id"] = _h
+                combined.loc[_m, "horizontal_label"] = _l
+        print("  [sjm 23 推廣費→comp] " + " | ".join(_sjc))
+
     # G. mgm: comp 入面非 internal resource → 正確 H
     # 注意：MGM comp_type 全部 blank，所有分類靠 account_desc + description
     # Airfare/Ferry = 運輸; Outside Comp = 外部comp; Other Electronic = 器具
