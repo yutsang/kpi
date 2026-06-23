@@ -1476,20 +1476,17 @@ def run(fmt="csv", out_dir="data/tableau"):
             r"\btax\b|稅|tourism\s*tax|government\s*tax", case=False, regex=True, na=False)
         _ob = _oh & ~_keep
         # 超額opex staff(salaries/payroll，喺其他嗰啲)/分攤/服務費/cost recovery/pre-open → 專業服務費
-        #   （user 2026-06-23：超額 staff 唔喺 H_LABOR，去專業唔影響 staff golden=14,574）
+        #   user 2026-06-23：staff 唔留其他（難解釋）→專業（唔喺 H_LABOR，唔影響 staff golden=14,574）。
+        #   「不要太多」+「維護要留真維護」+「foodcost/COGS/supplies/運輸 留其他冇問題、其他 ~1% 合理」
+        #   → 唔搬運輸/食品/花落維護，淨係 staff + 分攤/服務 → 專業。
         _toProf = _ob & _ad2.str.contains(
             r"salar|payroll|wages|casual\s*labor|\bbonus\b|薪金|薪酬|工資|員工薪|staff\s*cost|"
             r"allocation|interdept|inter\s*depart|interco|cost\s*recovery|分攤|recharge|pre[\s-]*open|開業前|"
-            r"service\s*exp|service\s*fee|management\s*fee|subscription|membership|dues", case=False, regex=True, na=False)
-        # 運輸/travel/花 → 維護費（運營）。user 2026-06-23「不要太多」：唔搬 foodcost/COGS/supplies/雜耗，留其他。
-        _toMaint = _ob & ~_toProf & _ad2.str.contains(
-            r"transport|travel|limo|airfare|ferry|lodging|運輸|舟車|交通|flower|花|裝飾|decorat", case=False, regex=True, na=False)
-        _np = int(_toProf.sum()); _nm = int(_toMaint.sum())
+            r"service\s*exp|service\s*fee|management\s*fee", case=False, regex=True, na=False)
+        _np = int(_toProf.sum())
         if _np:
             combined.loc[_toProf, "horizontal_id"] = "H_PROFESSIONAL"; combined.loc[_toProf, "horizontal_label"] = "專業服務費"
-        if _nm:
-            combined.loc[_toMaint, "horizontal_id"] = "H_MAINTENANCE"; combined.loc[_toMaint, "horizontal_label"] = "維護費"
-        print(f"  [H_OTHER減→真H] 專業(staff/分攤/服務/preopen)={_np}行 維護(運輸/花)={_nm}行（留 食品COGS/博彩contra/稅）")
+        print(f"  [H_OTHER減→專業] staff/分攤/服務/preopen={_np}行（運輸/食品COGS/雜耗 留其他;博彩contra/稅留;維護保持真維護）")
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
