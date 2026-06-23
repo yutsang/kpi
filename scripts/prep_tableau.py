@@ -964,33 +964,35 @@ def run(fmt="csv", out_dir="data/tableau"):
         _top = Counter(_newlab).most_common(14)
         print(f"  [V relabel] 改 {_nch:,} 行；新 V top: " + " | ".join(f"{k}={v}" for k, v in _top))
 
-    # ── NG1 路演 清理（user 2026-06-22：好多唔似路演；按 project 名分真 V，唔似就其他）──
-    #   優先：路演/展銷→留路演；演唱會/表演→演出表演；水上樂園/遊樂→內部設施-遊樂；展覽/博物館→文藝展覽表演；
-    #         推廣/營銷/媒體/品牌/航空/銷售/展示/交通/配套 等→宣傳推廣；其餘(冇信心)→其他。
+    # ── NG1 路演 清理（user 2026-06-23：V 睇 SUBPROJECT！大 project 名有「路演」但 subproject 全係演唱會/media/tradeshow）──
+    #   subproject 分：演唱會/tour/fan meeting→演出表演；tradeshow/roadshow/展銷/showcase/IMEX→留路演；
+    #   遊樂→內部設施-遊樂；展覽/博物館→文藝展覽；media/marketing/品牌/visit/opening/贊助→宣傳推廣；其餘→其他。
     if "ng_code" in combined.columns and "vertical_label" in combined.columns:
         _n1r = _ngc.eq("NG1") & combined["vertical_label"].astype(str).str.strip().eq("路演")
-        _proj = combined.get("project", pd.Series("", index=combined.index)).astype(str)   # 主名（唔好用 subproject，免噪音）
-        _nmx = (_proj + " " + combined.get("subproject", pd.Series("", index=combined.index)).astype(str))
-        _hasp = lambda pat: _proj.str.contains(pat, case=False, regex=True, na=False)     # 只睇 project 主名
-        _has2 = lambda pat: _nmx.str.contains(pat, case=False, regex=True, na=False)
-        # 「其他項目」/「其他」generic project → 一定其他（即使 subproject 撞中路演）
-        _generic = _proj.str.strip().str.match(r"^\s*(?:其他項目|其他|其它項目|其它)\s*$", na=False)
-        _road = _hasp(r"路演|展銷|展销|銷售路演|road\s*show")          # 路演 只認 project 主名
-        _concert = _has2(r"演唱會|演唱会|駐場|驻场|演出|表演|concert|residency|show\b")
-        _theme = _has2(r"水上樂園|水上乐园|樂園|乐园|遊樂|游乐|water\s*park|主題遊")
-        _exhib = _has2(r"展覽|展览|博物館|博物馆|exhibition|珍寶|艺术展|藝術展")
-        _promo = _has2(r"推廣|推广|營銷|营销|媒體|媒体|廣告|广告|宣傳|宣传|品牌|marketing|航班|航線|航线|航空|"
-                       r"辦事處|办事处|代表團|代表团|銷售|销售|客源|旅行社|OTA|網站|网站|市場|市场|代理|"
-                       r"展示|交通|轎車|轿车|配套|套票|巴士|官網|官网|數字平台|数字平台")
-        # 優先順序：generic→其他；然後 路演(project主名)→演出→遊樂→展覽→宣傳→其他
-        _toRoad   = _n1r & ~_generic & _road
-        _toConcert= _n1r & ~_generic & ~_road & _concert
-        _toTheme  = _n1r & ~_generic & ~_road & ~_concert & _theme
-        _toExhib  = _n1r & ~_generic & ~_road & ~_concert & ~_theme & _exhib
-        _toPromo  = _n1r & ~_generic & ~_road & ~_concert & ~_theme & ~_exhib & _promo
-        _toOther  = _n1r & (_generic | (~_road & ~_concert & ~_theme & ~_exhib & ~_promo))
+        _sp = combined.get("subproject", pd.Series("", index=combined.index)).astype(str)
+        _proj = combined.get("project", pd.Series("", index=combined.index)).astype(str)
+        _bv = _sp.where(_sp.str.strip().ne(""), _proj)   # subproject 為主（granular），空就 project
+        _hb = lambda pat: _bv.str.contains(pat, case=False, regex=True, na=False)
+        _concert = _hb(r"演唱會|演唱会|concert|world\s*tour|asia\s*tour|fan[\s-]*meeting|fan-?con|live\s*in\s*maca|"
+                       r"駐場|symphony|presents|festival|巡演|演出|\bgala\b|idol|k-?pop|fan\s*concert")
+        _road = _hb(r"路演|展銷|展销|roadshow|trade\s*show|tradeshow|showcase|sales.{0,15}roadshow|"
+                    r"mice\s*expo|meetings\s*show|商務交流|展會|\bIMEX\b|\bIBTM\b|\bITB\b|\bILTM\b|\bILTM\b|tradeshows")
+        _theme = _hb(r"水上樂園|水上乐园|樂園|乐园|遊樂|游乐|water\s*park|主題遊")
+        _exhib = _hb(r"exhibition|展覽|展览|博物館|masterpieces|harry\s*potter|珍寶|藝術展")
+        _promo = _hb(r"media|marketing|campaign|\bOTA\b|content|agency|social|\bKOL\b|partnership|press|brand|"
+                     r"推廣|推广|營銷|营销|品牌|廣告|广告|宣傳|宣传|opening|anniversary|visit|launch|placement|"
+                     r"boosting|\bSEM\b|tracker|listening|translation|collateral|distribution|sponsor|activation|"
+                     r"航班|航線|航空|辦事處|代表團|客源|旅行社|市場|展示|交通|配套|官網|數字平台")
+        # 優先：演出 > 路演 > 遊樂 > 展覽 > 宣傳 > 其他
+        _toConcert = _n1r & _concert
+        _toRoad    = _n1r & ~_concert & _road
+        _toTheme   = _n1r & ~_concert & ~_road & _theme
+        _toExhib   = _n1r & ~_concert & ~_road & ~_theme & _exhib
+        _toPromo   = _n1r & ~_concert & ~_road & ~_theme & ~_exhib & _promo
+        _toOther   = _n1r & ~_concert & ~_road & ~_theme & ~_exhib & ~_promo
         _vid_ok = "vertical_id" in combined.columns
         for _m, _lab, _vid in [(_toConcert, "演出表演", "V_CONCERT"),
+                               (_toRoad, "路演", "V_OVERSEAS_ROADSHOW"),
                                (_toTheme, "內部設施-遊樂", "V_THEME_PARK"),
                                (_toExhib, "文藝展覽表演", "V_ART_EXHIBITION"),
                                (_toPromo, "宣傳推廣", "V_OVERSEAS_WEB_SEO"),
@@ -999,7 +1001,7 @@ def run(fmt="csv", out_dir="data/tableau"):
                 combined.loc[_m, "vertical_label"] = _lab
                 if _vid_ok:
                     combined.loc[_m, "vertical_id"] = _vid
-        print(f"  [NG1路演清理] 留路演={int(_toRoad.sum())} 演出={int(_toConcert.sum())} 遊樂={int(_toTheme.sum())} "
+        print(f"  [NG1路演清理(subproject)] 演出={int(_toConcert.sum())} 路演={int(_toRoad.sum())} 遊樂={int(_toTheme.sum())} "
               f"展覽={int(_toExhib.sum())} 宣傳推廣={int(_toPromo.sum())} 其他={int(_toOther.sum())}")
 
     # ── NG6 康養：設施/中心/診所/水療/會所 等 → 內部設施-康養（user 2026-06-18 §4：康養設施較細）──
