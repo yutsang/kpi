@@ -1464,6 +1464,33 @@ def run(fmt="csv", out_dir="data/tableau"):
         elif int(_mgc.sum()):
             print(f"  [移除 mgm 項目CAPEX-5/6] 跳過：{int(_mgc.sum())}行有金額，唔 drop（保 tie）")
 
+    # ── H_OTHER 結構性 overhead 合理 reclass → 真H（user 2026-06-23：項目組緊盯comp/staff/capex，對其他breakdown冇概念）──
+    #   只郁 H_OTHER，唔掂 comp/staff/capex（H_LABOR/comp5類/capex flag 全唔變）→ tie 不變。
+    #   留死症唔郁：salaries/payroll(staff)、博彩 contra/table games/slot revenue(gaming)、tax/稅。
+    if "horizontal_id" in combined.columns and "account_desc" in combined.columns:
+        _oh = combined["horizontal_id"].astype(str).str.strip().eq("H_OTHER")
+        _ad2 = combined["account_desc"].astype(str)
+        _keep = _ad2.str.contains(
+            r"salar|payroll|wages|casual\s*labor|\bbonus\b|薪金|薪酬|工資|員工薪|"
+            r"contra|table\s*games\s*revenue|slot\s*revenue|gaming\s*credit|"
+            r"\btax\b|稅|tourism\s*tax|government\s*tax", case=False, regex=True, na=False)
+        _ob = _oh & ~_keep
+        # 分攤/服務費/cost recovery/pre-open → 專業服務費
+        _toProf = _ob & _ad2.str.contains(
+            r"allocation|interdept|inter\s*depart|interco|cost\s*recovery|分攤|recharge|pre[\s-]*open|開業前|"
+            r"service\s*exp|service\s*fee|management\s*fee|subscription|membership|dues", case=False, regex=True, na=False)
+        # 運輸/travel/食品成本/花 → 維護費（運營）
+        _toMaint = _ob & ~_toProf & _ad2.str.contains(
+            r"transport|travel|limo|airfare|ferry|lodging|運輸|舟車|交通|"
+            r"food\s*cost|cost\s*of\s*sales|\bCOS\b|food\s*and\s*bever|食品成本|"
+            r"flower|花|裝飾|decorat|supplies|consumable|uniform|stationery|cleaning|communicat|utilit", case=False, regex=True, na=False)
+        _np = int(_toProf.sum()); _nm = int(_toMaint.sum())
+        if _np:
+            combined.loc[_toProf, "horizontal_id"] = "H_PROFESSIONAL"; combined.loc[_toProf, "horizontal_label"] = "專業服務費"
+        if _nm:
+            combined.loc[_toMaint, "horizontal_id"] = "H_MAINTENANCE"; combined.loc[_toMaint, "horizontal_label"] = "維護費"
+        print(f"  [H_OTHER減→真H] 專業(分攤/服務/preopen)={_np}行 維護(運輸/食品/花/雜)={_nm}行（留 salaries/博彩contra/稅）")
+
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
     if _amtc and "entity" in combined.columns:
