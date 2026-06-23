@@ -1292,6 +1292,20 @@ def run(fmt="csv", out_dir="data/tableau"):
             for e in sorted(_pre):
                 _d = _pre[e] - _post.get(e, 0.0)
                 print(f"      {e:<7} Σ前={_pre[e]/1e6:>9,.1f}M  Σ後={_post.get(e,0)/1e6:>9,.1f}M  Δ={_d/1e6:.4f}M")
+
+    # ── 對數用 helper 欄（user 2026-06-23：comp/staff/capex 對好嘅數要喺 Tableau 一拉就對）──
+    #   報告年 = year_bucket 前綴（24 包 24_23SY；25 包 25_24SY/25_23SY）。
+    #   對數金額_萬 = 調整後(23/24) + 調整前(25)，三個 metric(comp/staff/capex)同一 basis。
+    #   Tableau: SUM(對數金額_萬) by 報告年 × entity，filter:
+    #     comp → horizontal_id ∈ {H_HOTEL_ROOM,H_VENUE,H_FNB,H_COMP_TICKET,H_COMP_OTHER}
+    #     staff→ horizontal_id = H_LABOR AND final_capex_opex ≠ Capex
+    #     capex→ final_capex_opex = Capex
+    if "year_bucket" in combined.columns:
+        combined["報告年"] = combined["year_bucket"].astype(str).str[:2]
+        _rp_post = pd.to_numeric(combined.get("調整後_萬", 0), errors="coerce").fillna(0.0)
+        _rp_pre = pd.to_numeric(combined.get("調整前_萬", 0), errors="coerce").fillna(0.0)
+        combined["對數金額_萬"] = _rp_pre.where(combined["報告年"].eq("25"), _rp_post)
+        print(f"  [對數欄] 加 報告年(23/24/25) + 對數金額_萬（調整後23/24+調整前25）")
     print(f"Cols: {list(combined.columns)}")
 
     # ── cube / cube-detail: ONE aggregated file = cross-tab source (no union, no stitching) ──
