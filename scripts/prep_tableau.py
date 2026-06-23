@@ -1004,8 +1004,9 @@ def run(fmt="csv", out_dir="data/tableau"):
         print(f"  [NG1路演清理(subproject)] 演出={int(_toConcert.sum())} 路演={int(_toRoad.sum())} 遊樂={int(_toTheme.sum())} "
               f"展覽={int(_toExhib.sum())} 宣傳推廣={int(_toPromo.sum())} 其他={int(_toOther.sum())}")
 
-    # ── NG1 反向：subproject 有 roadshow/tradeshow → 路演（user 2026-06-23：有 roadshow/tradeshow 應入路演，除非政府相關）──
-    #   keying SUBPROJECT（唔好用 project 主名，免 vml「展銷路演」大 project 全中）；政府(MGTO/政府/特區/旅遊局)留原 V。
+    # ── NG1 反向：subproject 有 roadshow/tradeshow → 路演；政府(MGTO/政府/特區/旅遊局)→ 政府、公益及社區活動 ──
+    #   user 2026-06-23：roadshow/tradeshow 應入路演，除非政府相關→政府公益(V_COMMUNITY)，唔可以留宣傳推廣。
+    #   keying SUBPROJECT（唔好用 project 主名，免 vml「展銷路演」大 project 全中）。
     if "ng_code" in combined.columns and "vertical_label" in combined.columns:
         _n1b = _ngc.eq("NG1")
         _spb = combined.get("subproject", pd.Series("", index=combined.index)).astype(str)
@@ -1013,14 +1014,18 @@ def run(fmt="csv", out_dir="data/tableau"):
         _road_sp = _spb.str.contains(r"road\s*show|roadshow|trade\s*show|tradeshow|路演|展銷|展销", case=False, regex=True, na=False)
         _gov = (_spb + " " + _pjb).str.contains(
             r"MGTO|政府|特區|特区|參與.*政府|参与.*政府|government\s*tourism|tourism\s*office|旅遊局|旅游局", case=False, regex=True, na=False)
-        _already = combined["vertical_label"].astype(str).str.strip().eq("路演")
-        _to_road2 = _n1b & _road_sp & ~_gov & ~_already
+        _vl = combined["vertical_label"].astype(str).str.strip()
+        _to_road2 = _n1b & _road_sp & ~_gov & ~_vl.eq("路演")
+        _to_gov2 = _n1b & _road_sp & _gov & ~_vl.eq("政府、公益及社區活動")
         if int(_to_road2.sum()):
             combined.loc[_to_road2, "vertical_label"] = "路演"
             if "vertical_id" in combined.columns:
                 combined.loc[_to_road2, "vertical_id"] = "V_OVERSEAS_ROADSHOW"
-        _kept_gov = int((_n1b & _road_sp & _gov).sum())
-        print(f"  [NG1 roadshow→路演] 收編={int(_to_road2.sum())}行（非政府 roadshow/tradeshow 入路演）；政府roadshow留原V={_kept_gov}行")
+        if int(_to_gov2.sum()):
+            combined.loc[_to_gov2, "vertical_label"] = "政府、公益及社區活動"
+            if "vertical_id" in combined.columns:
+                combined.loc[_to_gov2, "vertical_id"] = "V_COMMUNITY"
+        print(f"  [NG1 roadshow→路演] 收編={int(_to_road2.sum())}行（非政府）；政府roadshow→政府公益={int(_to_gov2.sum())}行")
 
     # ── NG6 康養：設施/中心/診所/水療/會所 等 → 內部設施-康養（user 2026-06-18 §4：康養設施較細）──
     #   康養活動(活動/瑜伽節/講座) 維持；facility kw（含 subproject）先升做 內部設施-康養。
