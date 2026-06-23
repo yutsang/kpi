@@ -36,8 +36,10 @@ SRC = {
 KEY = {
     "amount金額":   ["amount", "金額", "debit", "credit", "adjusted_amount", "amount - amended", "entry voucher", "expense amount", "25_amt"],
     "調整adjust":   ["調整", "adjust"],
-    "account_code": ["account_code", "ledger_account_id", "ledger account", "科目代", "account code"],
-    "account_desc": ["account_desc", "ledger_account", "支出性質", "account desc", "科目名"],
+    "account_code": ["account_code", "ledger_account_id", "ledger account", "科目代", "account code",
+                     "a/c code", "cost element", "account", "科目"],
+    "account_desc": ["account_desc", "ledger_account", "支出性質", "account desc", "科目名", "a/c name",
+                     "nature of expense", "expense description", "account description", "cost element descr"],
     "project項目":  ["project", "項目", "initiative", "subproject", "project name", "project code"],
     "ng性質":       ["ng_theme", "項目性質", "項目類型", "section", "ng11", "ng_"],
     "capex_opex":   ["capex", "opex", "ledger type", "資本", "capex_opex"],
