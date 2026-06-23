@@ -1383,6 +1383,35 @@ def run(fmt="csv", out_dir="data/tableau"):
         else:
             print("  [capex收編→建設] 0行（capex 已乾淨）")
 
+    # ── capex 建設行 → 內部設施（user 2026-06-23：全部建設 capex 嘅活動V → 內部設施，連 show production；純V，tie由capex flag定）──
+    if "vertical_label" in combined.columns and "final_capex_opex" in combined.columns:
+        _cxf2 = combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+        _vlc2 = combined["vertical_label"].astype(str).str.strip()
+        _CAPMAP = {"演出表演": "內部設施-場館", "會展活動": "內部設施-場館", "體育賽事": "內部設施-場館",
+                   "文藝展覽表演": "內部設施-場館", "節日慶典": "內部設施-場館",
+                   "特別菜單或宴會": "內部設施-餐廳", "美食-其他": "內部設施-餐廳", "康養活動": "內部設施-康養",
+                   "宣傳推廣": "內部設施-其他", "路演": "內部設施-其他", "海上活動": "內部設施-其他"}
+        _ncap = 0
+        for _src, _dst in _CAPMAP.items():
+            _m = _cxf2 & _vlc2.eq(_src)
+            if int(_m.sum()):
+                combined.loc[_m, "vertical_label"] = _dst
+                if "vertical_id" in combined.columns:
+                    combined.loc[_m, "vertical_id"] = "V_PROPERTY_UPGRADE"
+                _ncap += int(_m.sum())
+        print(f"  [capex活動V→內部設施] {_ncap}行")
+
+    # ── melco Marketing/Maketing → 宣傳推廣（user 2026-06-23：明顯 marketing 行誤標；行喺 capex 轉換後，確保宣傳贏）──
+    if "vertical_label" in combined.columns and "subproject" in combined.columns:
+        _mm = (combined["entity"].astype(str).eq("melco")
+               & combined["subproject"].astype(str).str.strip().str.lower().str.match(r"mar?keting$")
+               & ~combined["vertical_label"].astype(str).str.strip().eq("宣傳推廣"))
+        if int(_mm.sum()):
+            combined.loc[_mm, "vertical_label"] = "宣傳推廣"
+            if "vertical_id" in combined.columns:
+                combined.loc[_mm, "vertical_id"] = "V_OVERSEAS_WEB_SEO"
+            print(f"  [melco Marketing→宣傳推廣] {int(_mm.sum())}行")
+
     # ── 移除 mgm 項目CAPEX-5/6（user 2026-06-23：冇value冇dicj；只喺 0值先 drop，tie 不變）──
     if "entity" in combined.columns and "project" in combined.columns:
         _mgc = combined["entity"].astype(str).eq("mgm") & combined["project"].astype(str).str.contains(r"項目CAPEX-[56]", na=False)
