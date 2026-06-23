@@ -1081,30 +1081,6 @@ def run(fmt="csv", out_dir="data/tableau"):
                 _byent[_e] = _v / 1e4
         print(f"  [capex is_labor→人工(全家)] {_n}行 | " + " ".join(f"{k}={v:,.0f}萬" for k, v in _byent.items()))
 
-    # ── capex staff 加大（user 2026-06-23：capex staff 想加大）：capex 行 account_desc/desc 有清晰薪金字 → 人工 ──
-    #   只用清晰 payroll term（Basic Salary/Payroll/Salaries/Wages/工資/薪金/人工成本），唔用 'staff' 單字(免員工設施)。
-    #   只 capex（opex 已 tie 唔郁）；放 is_labor 後。Table 1 全部 under → 加只會收窄，唔 overshoot。
-    if "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns and "account_desc" in combined.columns:
-        _cx2 = combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
-        _blob2 = (combined["account_desc"].astype(str) + " "
-                  + combined.get("description", pd.Series("", index=combined.index)).astype(str))
-        _paykw = _blob2.str.contains(
-            r"Basic Salary|\bPayroll\b|Salaries|\bWages?\b|工資|薪金|薪資|人工成本|Staff Cost|Casual Labou?r|Contract Labou?r",
-            case=False, regex=True, na=False)
-        _cappay = _cx2 & _paykw & ~combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
-        _np = int(_cappay.sum())
-        if _np:
-            _bye2 = {}
-            _t = combined.loc[_cappay].copy()
-            _t["_a"] = pd.to_numeric(_t["amount_mop"], errors="coerce").abs()
-            for _e, _v in _t.groupby(_t["entity"].astype(str))["_a"].sum().items():
-                _bye2[_e] = _v / 1e4
-            combined.loc[_cappay, "horizontal_id"] = "H_LABOR"
-            combined.loc[_cappay, "horizontal_label"] = "人工成本"
-            print(f"  [capex薪金keyword→人工(加大)] {_np}行 | " + " ".join(f"{k}={v:,.0f}萬" for k, v in _bye2.items()))
-        else:
-            print("  [capex薪金keyword→人工(加大)] 0行")
-
     # ── melco 23: intercompany labor / payroll allocation 剷出人工（user golden 23=4,172；allocation≠直接人工）──
     #   只 melco 23（24 已 −388 唔郁；25 唔郁）。841000/841005 Interco Labor Charge、611199 Allocation A/C-Payroll → 其他。
     if "entity" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:

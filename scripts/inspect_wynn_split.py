@@ -61,7 +61,7 @@ def main():
         vals = df[c].astype(str).str.strip()
         nun = vals.nunique()
         if nun <= 25 and nun > 1:
-            g = pd.Series(amt[iscap].values, index=df.index).groupby(vals).sum()
+            g = amt.where(iscap, 0.0).groupby(vals).sum()
             if g.abs().sum() < 1:
                 continue
             L.append(f"\n     [{c}] {nun} distinct:")
