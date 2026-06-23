@@ -847,6 +847,21 @@ def run(fmt="csv", out_dir="data/tableau"):
         combined["subproject"] = [_strip_pre(n, c) for n, c in
                                   zip(combined["subproject"].tolist(), combined["subproject code"].tolist())]
         print(f"  [subproject名去碼前綴] {_before:,} 行")
+        # galaxy section 碼前綴（B1.9 / B1.10 / B11.6 …，唔係 subproject code，要額外剝）
+        _secre = r"^[A-Za-z]{1,2}\d{1,2}\.\d{1,2}[\s\-:_．、]+"
+        _sjc = combined["subproject"].astype(str)
+        _stripped = _sjc.str.replace(_secre, "", regex=True).str.strip()
+        _usec = _sjc.str.contains(_secre, regex=True, na=False) & _stripped.ne("")
+        if int(_usec.sum()):
+            combined.loc[_usec, "subproject"] = _stripped[_usec]
+            print(f"  [subproject去section碼(B1.9等)] {int(_usec.sum())} 行")
+    # blank fallback（melco 22 行 raw Project ID 空、連 dicj 都空 → 填未分類，免 Tableau 出空白）
+    for _bc in ("project", "subproject"):
+        if _bc in combined.columns:
+            _bb = combined[_bc].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
+            if int(_bb.sum()):
+                combined.loc[_bb, _bc] = "未分類項目"
+                print(f"  [blank {_bc}→未分類項目] {int(_bb.sum())} 行")
     for _c in ("dicj code", "project", "subproject code", "subproject"):
         if _c in combined.columns:
             _nb = int(combined[_c].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"]).sum())
@@ -1367,6 +1382,18 @@ def run(fmt="csv", out_dir="data/tableau"):
             print(f"  [capex收編→建設] {_nb}行（capex 非建設/設施/人工 → 建設）：{_byh}")
         else:
             print("  [capex收編→建設] 0行（capex 已乾淨）")
+
+    # ── 移除 mgm 項目CAPEX-5/6（user 2026-06-23：冇value冇dicj；只喺 0值先 drop，tie 不變）──
+    if "entity" in combined.columns and "project" in combined.columns:
+        _mgc = combined["entity"].astype(str).eq("mgm") & combined["project"].astype(str).str.contains(r"項目CAPEX-[56]", na=False)
+        _amt0 = pd.to_numeric(combined.get("amount_mop", 0), errors="coerce").fillna(0).abs() < 1
+        _pre0 = pd.to_numeric(combined.get("調整前_萬", 0), errors="coerce").fillna(0).abs() < 0.01
+        _mgdrop = _mgc & _amt0 & _pre0
+        if int(_mgdrop.sum()):
+            combined = combined[~_mgdrop].copy()
+            print(f"  [移除 mgm 項目CAPEX-5/6] {int(_mgdrop.sum())} 行（0值）")
+        elif int(_mgc.sum()):
+            print(f"  [移除 mgm 項目CAPEX-5/6] 跳過：{int(_mgc.sum())}行有金額，唔 drop（保 tie）")
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
