@@ -19,11 +19,14 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "results" / "inspect_adj_detail.txt"
 
-# (adj 檔, 標準 tab)
+# (adj 檔, 候選 tab：試第一個存在嘅)
 ADJ = {
-    "galaxy": ("galaxy_2025_adj.xlsx", "Combine(clean)"),
-    "wynn":   ("wynn_2025_adj.xlsx",   "報告投資支出明細賬"),
-    "melco":  ("melco_2025_adj.xlsx",  "Data"),
+    "galaxy": ("galaxy_2025_adj.xlsx", ["Combine(clean)"]),
+    "wynn":   ("wynn_2025_adj.xlsx",   ["報告投資支出明細賬", "Opex&Capex匯總"]),
+    "vml":    ("vml_2025_adj.xlsx",    ["投資支出明細賬", "25JE"]),
+    "melco":  ("melco_2025_adj.xlsx",  ["Data"]),
+    "mgm":    ("mgm_2025_adj.xlsx",    ["data", "combine", "Data"]),       # user 話原名原 tab
+    "sjm":    ("sjm_2025_adj.xlsx",    ["表格1", "25", "24", "23"]),        # user 話原名原 tab
 }
 # kedro 要嘅 logical 欄 + alias（lowercase substring 比對）
 REQ = {
@@ -63,8 +66,8 @@ REQ = {
         ("capex_opex",        ["ledger type", "\\bcapex\\b"]),
         ("project",           ["project name - amended", "項目名稱", "项目名称"]),
         ("ng11性質",          ["項目性質"]),
-        ("account_code",      ["ledger_account_id", "ledger account", "wd账户", "wd ledger"]),
-        ("account_desc",      ["ledger_account", "支出性質"]),
+        ("account_code",      ["ledger_account_id", "wd账户", "wd ledger"]),
+        ("account_desc",      ["ledger_account\\b", "支出性質"]),
         ("description",       ["line_memo", "spend_category"]),
         ("unique_id",         ["kpmg唯一識別", "唯一識別"]),
         ("comp_nature",       ["comp性質-cn", "comp性質"]),
@@ -72,6 +75,39 @@ REQ = {
         ("payroll人工",       ["kp識別人工", "識別人工", "人工成本分類"]),
         ("⚑H分類:建築設施設備劃分", ["建築設施設備劃分", "設施設備劃分", "區分設施", "設施建設", "建設與設施"]),
         ("⚑H分類:KP识别表演演出", ["kp识别表演演出", "識別表演", "表演演出", "kp识别表演"]),
+    ],
+    "vml": [
+        ("amount金額",        ["mop amt", "調整金額", "amount"]),
+        ("調整",              ["accrual or adjustment", "調整數", "調整金額"]),
+        ("capex_opex",        ["capex_opex", "capex/opex重分類", "\\bcapex\\b"]),
+        ("project",           ["subproject", "project", "項目名稱"]),
+        ("ng11性質",          ["項目類型", "項目性質"]),
+        ("account_code",      ["a/c code", "\\baccount\\b", "科目"]),
+        ("account_desc",      ["a/c name", "account name", "科目名"]),
+        ("⚑分類1(V/H)",       ["分類1", "分類2", "類別", "nature"]),
+    ],
+    "mgm": [
+        ("amount金額",        ["debit minus credit", "25_amt", "金額"]),
+        ("capex_opex",        ["capex_opex", "capex/opex"]),
+        ("project",           ["project_code", "項目"]),
+        ("ng11性質",          ["section.1", "\\bsection\\b", "項目類型"]),
+        ("account_code",      ["ledger account", "\\baccount\\b"]),
+        ("account_desc",      ["ledger hierarchy level 5", "ledger hierarchy", "hierarchy level"]),
+        ("description",       ["journal line memo", "line memo"]),
+        ("year/bucket",       ["25_amt", "period", "accounting date"]),
+        ("⚑Source(H rules)",  ["\\bsource\\b", "spend category", "campaign", "event"]),
+    ],
+    "sjm": [
+        ("amount金額",        ["val/coarea crcy", "金額", "amount"]),
+        ("capex_opex",        ["capex/opex", "報告capex"]),
+        ("project",           ["project name", "承批公司項目序號"]),
+        ("ng11性質",          ["項目類型"]),
+        ("account_code",      ["cost element\\b", "科目代"]),
+        ("account_desc",      ["cost element descr", "科目名"]),
+        ("description",       ["\\bdescription\\b"]),
+        ("unique_id",         ["唯一識別碼"]),
+        ("year/bucket",       ["fiscal year", "項目期間", "period"]),
+        ("⚑分類(V/H)",        ["分類1", "娛樂表演", "staff cost", "restaurant", "是否計入內部資源", "comp"]),
     ],
 }
 
@@ -92,11 +128,18 @@ def _find(cols, aliases):
 
 def main():
     L = ["# inspect_adj_detail —— kedro 要嘅 source 欄喺 adj 揾（對名+alias）"]
-    for ent, (fn, tab) in ADJ.items():
+    for ent, (fn, tabs) in ADJ.items():
         adj = ROOT / "data" / ent / "raw" / fn
-        L.append(f"\n{'='*74}\n## {ent}  adj={fn}  tab={tab}")
         if not adj.exists():
-            L.append(f"   !! adj 揾唔到"); continue
+            L.append(f"\n{'='*74}\n## {ent}  !! adj 揾唔到：{fn}"); continue
+        try:
+            avail = pd.ExcelFile(adj).sheet_names
+        except Exception as e:
+            L.append(f"\n{'='*74}\n## {ent}  !! 開檔失敗：{e}"); continue
+        tab = next((t for t in tabs if t in avail), None)
+        L.append(f"\n{'='*74}\n## {ent}  adj={fn}  tab={tab}")
+        if tab is None:
+            L.append(f"   ⚠ 候選 tab {tabs} 一個都冇。adj sheets(前40)：{avail[:40]}"); continue
         try:
             df = pd.read_excel(adj, sheet_name=tab, dtype=object, nrows=8)
         except Exception as e:
