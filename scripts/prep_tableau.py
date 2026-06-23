@@ -1401,6 +1401,18 @@ def run(fmt="csv", out_dir="data/tableau"):
                 _ncap += int(_m.sum())
         print(f"  [capex活動V→內部設施] {_ncap}行")
 
+    # ── 政府公益 capex 社區建設 → 外部設施-社區活化（user 2026-06-23：福隆/藝術裝置/活化建築；SME 唔郁）──
+    if "vertical_label" in combined.columns and "final_capex_opex" in combined.columns:
+        _gpb = (combined["subproject"].astype(str) + " " + combined.get("project", pd.Series("", index=combined.index)).astype(str))
+        _gpc = (combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+                & combined["vertical_label"].astype(str).str.strip().eq("政府、公益及社區活動")
+                & ~_gpb.str.contains(r"中小企|中小企業|\bSME\b|數字化|電子平台", case=False, regex=True, na=False))
+        if int(_gpc.sum()):
+            combined.loc[_gpc, "vertical_label"] = "外部設施-社區活化"
+            if "vertical_id" in combined.columns:
+                combined.loc[_gpc, "vertical_id"] = "V_COMMUNITY"
+            print(f"  [政府公益capex社區建設→外部設施-社區活化] {int(_gpc.sum())}行")
+
     # ── melco Marketing/Maketing → 宣傳推廣（user 2026-06-23：明顯 marketing 行誤標；行喺 capex 轉換後，確保宣傳贏）──
     if "vertical_label" in combined.columns and "subproject" in combined.columns:
         _mm = (combined["entity"].astype(str).eq("melco")
