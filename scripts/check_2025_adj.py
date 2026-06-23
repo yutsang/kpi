@@ -65,6 +65,7 @@ def main():
                 rawcols += _cols(raw, sh)
             rawcols = list(dict.fromkeys(rawcols))   # dedupe 保序
             L.append(f"   現有 raw：{fn}  tab={sheets}  欄數={len(rawcols)}")
+            L.append(f"      現有欄位（adj 要跟住放）：{rawcols}")
         if not adj.exists():
             L.append(f"   ⏳ adj 未放：data\\{ent}\\raw\\{ent}_2025_adj.xlsx（放咗再跑）")
             continue
