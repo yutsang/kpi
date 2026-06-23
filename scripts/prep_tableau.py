@@ -1368,6 +1368,34 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_gx_back, "horizontal_label"] = "Comp其他"
         print(f"  [galaxy comp撈返] 小帳全年+大帳23 = {ng}行")
 
+    # ── capex staff 收返人工（user 2026-06-23：capex staff 可加大、只 tie 過 opex；趁 capex收編→建設 之前，由建設/其他收返）──
+    if "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns and "account_desc" in combined.columns:
+        _csm = combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+        _csnl = ~combined["horizontal_id"].astype(str).str.strip().eq("H_LABOR")
+        _cssd = combined["account_desc"].astype(str).str.contains(
+            r"salar|payroll|wages|casual\s*labor|\bbonus\b|staff\s*cost|薪金|薪酬|工資|員工薪|員工福利|人工成本", case=False, regex=True, na=False)
+        _cs2 = _csm & _csnl & _cssd
+        if int(_cs2.sum()):
+            _csbe = (pd.to_numeric(combined.loc[_cs2, "amount_mop"], errors="coerce").abs()
+                     .groupby(combined.loc[_cs2, "entity"].astype(str)).sum() / 1e4)
+            combined.loc[_cs2, "horizontal_id"] = "H_LABOR"; combined.loc[_cs2, "horizontal_label"] = "人工成本"
+            print(f"  [capex staff收返人工] {int(_cs2.sum())}行 | " + " ".join(f"{k}={v:,.0f}萬" for k, v in _csbe.items()))
+
+    # ── galaxy H_OTHER 可移真H（user 2026-06-23 減其他；非comp非staff，光明正大）──
+    if "entity" in combined.columns and "account_code" in combined.columns and "horizontal_id" in combined.columns:
+        _gxo = combined["entity"].astype(str).eq("galaxy") & combined["horizontal_id"].astype(str).str.strip().eq("H_OTHER")
+        _gac2 = combined["account_code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        _nmv = 0
+        for _codes, _hid, _hlab in [(["7710100", "8500020"], "H_ADVERTISING", "廣告及推廣"),
+                                    (["8107500"], "H_PROFESSIONAL", "專業服務費"),
+                                    (["7931300", "7932300"], "H_EQUIP", "設施及器具採購")]:
+            _m = _gxo & _gac2.isin(_codes)
+            if int(_m.sum()):
+                combined.loc[_m, "horizontal_id"] = _hid; combined.loc[_m, "horizontal_label"] = _hlab
+                _nmv += int(_m.sum())
+        if _nmv:
+            print(f"  [galaxy H_OTHER可移] {_nmv}行（Special Events/Commission→廣告、Event Service→專業、supplies→設施）")
+
     # ── capex final enforcement（user 2026-06-22：capex 只可以係 建設/設施器具/人工，唔好混 comp/其他/專業）──
     #   所有 H 規則跑完後，capex 行 H ∉ {建設,設施,人工} → 建設（comp/其他/專業 等漏網全部收返建設）。
     if "final_capex_opex" in combined.columns and "horizontal_id" in combined.columns:
