@@ -300,7 +300,8 @@ def main():
         # the lv1 value (user-confirmed 24/25 layouts: vml-24 & sjm-25 use the multi-flag form).
         ADJUST_MAP = {
             "galaxy": {"調整金額": ["adjustment_amount", "調整金額"],   # 24/23=adjustment_amount; 25=調整金額(raw)
-                       "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
+                       "調整一級": ["adjust_lv1", "一級調整"],   # 25=一級調整(raw); 24/23=adjust_lv1(tied)
+                       "調整二級": ["adjust_lv2", "二級調整"]},  # 25=二級調整(raw); 24/23=adjust_lv2(tied)
             "wynn":   {"調整金額": ["adjustment_amount", "調整金額"],
                        "調整一級": ["adjust_lv1", "調整項目名稱-調整數不重合"],
                        "調整二級": ["adjust_lv2", "事項備註"]},
