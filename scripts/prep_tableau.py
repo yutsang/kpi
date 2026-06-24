@@ -186,6 +186,22 @@ def run(fmt="csv", out_dir="data/tableau"):
         if len(df)==0:
             print(f"⚠️  {ent}: 0 rows for year 23/24/25 — skip"); continue
 
+        # galaxy: join tagged_rows to retrieve 人工|一/二級標簽 (step5 drops these cols; needed for comp/staff 25)
+        if ent == "galaxy":
+            _tr_path = Path(f"data/{ent}/interim/{com}_tagged_rows.parquet")
+            if _tr_path.exists():
+                _tr = pd.read_parquet(_tr_path)
+                _tc1, _tc2 = "人工|一級標簽", "人工|二級標簽"
+                if _tc1 in _tr.columns and len(_tr) == len(df):
+                    df = df.reset_index(drop=True)
+                    df[_tc1] = _tr[_tc1].reset_index(drop=True).values
+                    if _tc2 in _tr.columns:
+                        df[_tc2] = _tr[_tc2].reset_index(drop=True).values
+                    print(f"  [galaxy tagged_rows join] 人工|一/二級標簽 接上（{len(_tr):,} rows）")
+                else:
+                    _r = f"col absent" if _tc1 not in _tr.columns else f"row cnt {len(_tr)}≠{len(df)}"
+                    print(f"  [galaxy tagged_rows join] !! 接唔到 ({_r})")
+
         # Add columns
         df["entity"] = ent
         # Year bucket from report_period: '25' / '25_24SY' / '25_23SY' / '24' / '24_23SY' etc.
@@ -295,6 +311,24 @@ def run(fmt="csv", out_dir="data/tableau"):
                     _ser = _ser.where(~_ser.isin(["", "nan", "None"]), _v)
             df[_name] = _ser.replace({"nan": "", "None": ""})
             keep.append(_name)
+
+        # galaxy 25: 填 blank 項目組H from 人工|一級標簽=Comp (project-team ground truth; step5 had dropped these cols)
+        if ent == "galaxy" and "人工|一級標簽" in df.columns and "項目組H" in df.columns:
+            _y25g = df["year_bucket"].astype(str).str.startswith("25")
+            _blank_ph = df["項目組H"].astype(str).str.strip().isin(["", "nan", "None"])
+            _is_comp25 = _y25g & _blank_ph & df["人工|一級標簽"].astype(str).str.strip().eq("Comp")
+            if int(_is_comp25.sum()):
+                _sub2 = (df["人工|二級標簽"].astype(str).str.strip().str.lower()
+                         if "人工|二級標簽" in df.columns else pd.Series("", index=df.index))
+                _ph_new = pd.Series("", index=df.index, dtype=object)
+                _ph_new[_is_comp25 & _sub2.eq("room")]                      = "Comp|Room"
+                _ph_new[_is_comp25 & _sub2.isin(["f&b", "service charge"])] = "Comp|F&B"
+                _ph_new[_is_comp25 & _sub2.eq("tax")]                        = "Comp|Tax"
+                _ph_new[_is_comp25 & _sub2.eq("ticket")]                     = "Comp|Ticket"
+                _ph_new[_is_comp25 & _ph_new.eq("")]                         = "Comp|Others"
+                df.loc[_is_comp25, "項目組H"] = _ph_new[_is_comp25]
+                _bkt = dict(_ph_new[_is_comp25].value_counts().head(6))
+                print(f"  [galaxy 25 pt_class_H←人工|一級標簽=Comp] {int(_is_comp25.sum()):,}行填入 ← {_bkt}")
 
         # unified-raw extra cols (user 2026-06-14: carry every column incl remarks into Tableau)
         for _u in ("project_code", "dicj_code", "adjustment_amount", "adjusted_amount",
