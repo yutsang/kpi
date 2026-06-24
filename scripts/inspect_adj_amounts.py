@@ -26,7 +26,7 @@ ENT = {
     "vml":    ("vml_2025_adj.xlsx",    ["投資支出明細賬"], ["MOP Amt"], ["調整金額", "調整數"], ["調整後金額"], ["CAPEX_OPEX"]),
     "melco":  ("melco_2025_adj.xlsx",  ["Data"], ["Amount - Amended"], ["調整金額"], [], ["Ledger Type"]),
     "sjm":    ("sjm_2025_adj.xlsx",    ["表格1", "25"], ["Val/COArea Crcy"], ["調整金額"], [], ["CAPEX/OPEX"]),
-    "mgm":    ("mgm_2025.xlsx",        ["data"], ["Debit minus Credit", "25_Amt"], ["期後調整金額", "調整金額", "調整數"], [], ["Capex_Opex", "Capex/Opex"]),
+    "mgm":    ("mgm_2025.xlsx",        ["data"], ["Debit minus Credit"], ["25_Adj", "24_Adj", "23_Adj"], [], ["Capex_Opex", "Capex/Opex"]),
 }
 
 
@@ -72,10 +72,13 @@ def main():
         except Exception as e:
             L.append(f"   !! 讀失敗：{e}"); continue
         cols = list(df.columns)
-        amtc = _pick(cols, amts); adjc = _pick(cols, adjs); aftc = _pick(cols, afts) if afts else None; coc = _pick(cols, cos)
-        L.append(f"   tab={tab} 行={len(df):,} | amount={amtc!r} 調整={adjc!r} 調整後={aftc!r} capex={coc!r}")
+        amtc = _pick(cols, amts); aftc = _pick(cols, afts) if afts else None; coc = _pick(cols, cos)
+        adjcs = [c for c in (_pick(cols, [a]) for a in adjs) if c is not None]   # 多欄加總（mgm 3 個 _Adj）
+        L.append(f"   tab={tab} 行={len(df):,} | amount={amtc!r} 調整={adjcs} 調整後={aftc!r} capex={coc!r}")
         amt = _num(df[amtc]) / 1e4 if amtc else pd.Series(0.0, index=df.index)
-        adj = _num(df[adjc]) / 1e4 if adjc else pd.Series(0.0, index=df.index)
+        adj = pd.Series(0.0, index=df.index)
+        for _c in adjcs:
+            adj = adj + _num(df[_c]) / 1e4
         aft = _num(df[aftc]) / 1e4 if aftc else (amt + adj)   # 冇 native 調整後 → amount+調整
         co = df[coc].map(_co) if coc else pd.Series("其他/空", index=df.index)
         g = pd.DataFrame({"co": co, "amount": amt, "調整": adj, "調整後": aft})
