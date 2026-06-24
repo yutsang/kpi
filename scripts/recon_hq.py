@@ -21,12 +21,13 @@ ENTS = ["galaxy", "wynn", "vml", "melco", "mgm", "sjm"]
 COMP_H = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
 
 HQ = {
-    "capex": {"galaxy": {"23": 27449, "24": 117129, "25": 131838},  # 25=131838 (2026-06-24 換項目組adj+Capex/Opex欄重分類後 golden)
-              "wynn": {"23": 75211, "24": 125999, "25": 141056},
-              "vml": {"23": 70470, "24": 361175, "25": 135760},
-              "melco": {"23": 35281, "24": 106029, "25": 127111},  # 23=35281 user 2026-06-23 raw+67M入capex(intended)
-              "mgm": {"23": 33644, "24": 129071, "25": 155597},
-              "sjm": {"23": 26143, "24": 173735, "25": 157955}},
+    # 2026-06-24 整個 deliverable 轉調整後：capex 25 golden = 調整後（galaxy 122,929/wynn 139,186/vml 134,692/melco 106,994/mgm 63,272/sjm 117,736）
+    "capex": {"galaxy": {"23": 27449, "24": 117129, "25": 122929},
+              "wynn": {"23": 75211, "24": 125999, "25": 139186},
+              "vml": {"23": 70470, "24": 361175, "25": 134692},
+              "melco": {"23": 35281, "24": 106029, "25": 106994},
+              "mgm": {"23": 33644, "24": 129071, "25": 63272},
+              "sjm": {"23": 26143, "24": 173735, "25": 117736}},
     # comp golden（user 2026-06-22 新表：23/24=調整後, 25=報告(調整前)）
     "comp": {"galaxy": {"23": 32204, "24": 55321, "25": 91883}, "wynn": {"23": 14232, "24": 24459, "25": 21488},
              "vml": {"23": 6173, "24": 6335, "25": 9145}, "melco": {"23": 3247, "24": 6374, "25": 8424},  # vml25=9145(項目組已改折扣，照舊)
@@ -57,8 +58,8 @@ def main():
     df["bk_exact"] = yb
     df["bk_pref"] = y2
     df["m_exact"] = post.where(yb.isin(["23", "24"]), pre)
-    df["m_pref"] = post.where(y2.isin(["23", "24"]), pre)
-    df["m_comp"] = pre.where(y2.eq("25"), post)   # comp: 25 → 調整前(報告); 23/24 → 調整後
+    df["m_pref"] = post   # 2026-06-24 整個 deliverable 轉調整後：全年用 調整後
+    df["m_comp"] = post   # 同上：comp 全年 調整後
     df["pre_amt"] = pre
     co = df.get("final_capex_opex", pd.Series("", index=df.index)).astype(str).str.strip()
     hid = df.get("horizontal_id", pd.Series("", index=df.index)).astype(str).str.strip()
