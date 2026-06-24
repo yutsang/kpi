@@ -399,6 +399,16 @@ def run(fmt="csv", out_dir="data/tableau"):
     print(f"\nCombined: {len(combined):,} rows, {combined['amount_mop'].sum()/1e6:.0f}M total")
     print(f"year_bucket values: {sorted(combined['year_bucket'].unique())}")
 
+    # ── galaxy capex/opex 正規化（user 2026-06-24：換 adj 後 capex 來自「人工|一級標簽」=Capex 才 Capex，其他 Opex）──
+    #   conf capex_opex→人工|一級標簽；呢度確保非 "Capex" 值 → Opex（現有檔 Capex/Opex 乾淨則 no-op）。
+    if "final_capex_opex" in combined.columns and "entity" in combined.columns:
+        _gx25 = combined["entity"].astype(str).eq("galaxy") & combined["year_bucket"].astype(str).str.startswith("25")
+        _notcap = ~combined["final_capex_opex"].astype(str).str.strip().eq("Capex")
+        _gxfix = _gx25 & _notcap & ~combined["final_capex_opex"].astype(str).str.strip().eq("Opex")
+        if int(_gxfix.sum()):
+            combined.loc[_gxfix, "final_capex_opex"] = "Opex"
+            print(f"  [galaxy capex正規化] {int(_gxfix.sum())}行 非Capex非Opex值 → Opex")
+
     # ── 4 層 project 欄改清晰名 (方便查睇) ──
     #   dicj code        = DICJ 碼 (粗)
     #   project          = DICJ 大項目名 (= golden 項目名稱)；原生 project 名欄 drop 走由佢接手
