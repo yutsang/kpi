@@ -369,7 +369,7 @@ def main():
             # carry all year cols even after melt), so resolve by report_period prefix.
             if _alias == "mgm" and "report_period" in df.columns:
                 _rp_m = df["report_period"].astype(str).fillna("")
-                _adj_m = pd.Series(pd.NA, index=df.index, dtype="float64")
+                _adj_m = pd.Series(float("nan"), index=df.index, dtype="float64")
                 for _pfx, _c in [("25", "25_Adj"), ("24_23", "23_調整金額"),
                                   ("24", "24_Adj"), ("24", "24_調整金額"), ("23", "調整金額")]:
                     if _c not in df.columns: continue
@@ -377,7 +377,7 @@ def main():
                     _adj_m = _adj_m.where(~_mask, pd.to_numeric(df[_c], errors="coerce"))
                 df["調整金額"] = _adj_m
                 if "調整金額" not in _adjust_names: _adjust_names.append("調整金額")
-                _post_m = pd.Series(pd.NA, index=df.index, dtype="float64")
+                _post_m = pd.Series(float("nan"), index=df.index, dtype="float64")
                 for _pfx, _c in [("24_23", "23_調整后"), ("24", "24_調整后"), ("23", "調整後金額")]:
                     if _c not in df.columns: continue
                     _mask = _rp_m.str.startswith(_pfx) & _post_m.isna()
