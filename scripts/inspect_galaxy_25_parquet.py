@@ -97,6 +97,42 @@ def main():
             desc_str = str(desc.iloc[0])[:40] if len(desc) else ""
             L.append(f"    {str(ac):<15} {desc_str:<42} rows={cnt:,}  Σ={amt:,.0f}萬")
 
+    # ── 5. 人工|一級標簽 + 人工|二級標簽 — pt_class_H source ──────────────────
+    L += ["", "=" * 70, "## 5. 人工|一級標簽 + 人工|二級標簽 (user says concat = pt_class_H)"]
+    col1, col2 = "人工|一級標簽", "人工|二級標簽"
+    for col in [col1, col2]:
+        if col in d25.columns:
+            s = d25[col].astype(str).str.strip()
+            nb = s.ne("").sum()
+            L.append(f"\n  [{col}]  {nb:,}/{n:,} non-blank ({nb/n*100:.1f}%)  top values:")
+            for v, c in s.value_counts().head(20).items():
+                L.append(f"    {repr(str(v))[:55]:<57} {c:,}")
+        else:
+            L.append(f"  [{col}]  !! NOT IN PARQUET — 可能被 step5 drop 或唔存在於 raw")
+
+    # Combo if both found
+    if col1 in d25.columns and col2 in d25.columns:
+        combo = (d25[col1].astype(str).str.strip() + "|" + d25[col2].astype(str).str.strip()).str.strip("|")
+        L.append(f"\n  concat 一級|二級 top25 values (= pt_class_H equivalent):")
+        for v, c in combo.value_counts().head(25).items():
+            L.append(f"    {str(v)[:60]:<62} {c:,}")
+    elif col1 not in d25.columns or col2 not in d25.columns:
+        # Try tagged_rows parquet
+        tagged = ROOT / "data" / "galaxy" / "interim" / "company_1_tagged_rows.parquet"
+        L.append(f"\n  嘗試 tagged_rows.parquet ({tagged.name})...")
+        if tagged.exists():
+            tr = pd.read_parquet(tagged)
+            tr25 = tr[tr.get("report_period", tr.get("year_bucket", pd.Series(dtype=str))).astype(str).str.startswith("25")]
+            for col in [col1, col2]:
+                if col in tr25.columns:
+                    s = tr25[col].astype(str).str.strip()
+                    nb = s.ne("").sum()
+                    L.append(f"  tagged_rows [{col}]  {nb:,}/{len(tr25):,} non-blank  top5: {dict(s.value_counts().head(5))}")
+                else:
+                    L.append(f"  tagged_rows [{col}]  NOT FOUND")
+        else:
+            L.append("  tagged_rows.parquet 亦唔存在")
+
     _w(L)
 
 
