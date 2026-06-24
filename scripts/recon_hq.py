@@ -21,7 +21,7 @@ ENTS = ["galaxy", "wynn", "vml", "melco", "mgm", "sjm"]
 COMP_H = {"H_HOTEL_ROOM", "H_VENUE", "H_FNB", "H_COMP_TICKET", "H_COMP_OTHER"}
 
 HQ = {
-    "capex": {"galaxy": {"23": 27449, "24": 117129, "25": 128630},  # 25=128630 user 2026-06-22 JE capex/opex重分類後對好,收
+    "capex": {"galaxy": {"23": 27449, "24": 117129, "25": 131838},  # 25=131838 (2026-06-24 換項目組adj+Capex/Opex欄重分類後 golden)
               "wynn": {"23": 75211, "24": 125999, "25": 141056},
               "vml": {"23": 70470, "24": 361175, "25": 135760},
               "melco": {"23": 35281, "24": 106029, "25": 127111},  # 23=35281 user 2026-06-23 raw+67M入capex(intended)
