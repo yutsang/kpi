@@ -299,7 +299,7 @@ def main():
         # each flag col holds 'Y' when the row IS that adjustment type, so the col's NAME becomes
         # the lv1 value (user-confirmed 24/25 layouts: vml-24 & sjm-25 use the multi-flag form).
         ADJUST_MAP = {
-            "galaxy": {"調整金額": ["adjustment_amount"],
+            "galaxy": {"調整金額": ["adjustment_amount", "調整金額"],   # 24/23=adjustment_amount; 25=調整金額(raw)
                        "調整一級": ["adjust_lv1"], "調整二級": ["adjust_lv2"]},
             "wynn":   {"調整金額": ["adjustment_amount", "調整金額"],
                        "調整一級": ["adjust_lv1", "調整項目名稱-調整數不重合"],
@@ -358,7 +358,8 @@ def main():
         # col → fully computed (mgm has no 調整金額 → 調整後金額 = amount).
         _amt_col = cols.get("amount")
         if _amt_col and _amt_col in df.columns:
-            _NATIVE_POST = {"galaxy": ["adjusted_amount"], "vml": ["調整後金額"], "sjm": ["2023年度調整后"]}
+            _NATIVE_POST = {"galaxy": ["adjusted_amount", "調整後金額"],   # 24/23=adjusted_amount; 25=調整後金額(raw)
+                            "vml": ["調整後金額"], "sjm": ["2023年度調整后"]}
             _native = pd.Series("", index=df.index, dtype="object")
             for _c in _NATIVE_POST.get(_alias, []):
                 if _c in df.columns:
