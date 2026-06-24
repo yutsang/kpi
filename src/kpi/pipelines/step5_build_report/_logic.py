@@ -318,8 +318,7 @@ def main():
             "melco":  {"調整金額": ["adjustment_amount", "調整金額"],
                        "調整一級": ["adjust_lv1", "初步識別調整類型", "調整類別"],
                        "調整二級": ["adjust_lv2", "初步識別調整事項", "調整事項"]},
-            "sjm":    {"調整金額": ["調整金額", "2024年度調整", "2023年度調整"],
-                       "調整一級": {"cols": ["adjust_lv1"], "flags": [
+            "sjm":    {"調整一級": {"cols": ["adjust_lv1"], "flags": [   # 調整金額 → per-bucket (見下)
                            "用於計算酒店贈房支出的贈房單價超過ADR部分的支出", "酒店客房改造支出",
                            "不符合“吸引外國客源”定義的相關投資支出",
                            "未在原投資計劃明確列示且其後未被認可的新增項目投資支出",
@@ -356,56 +355,58 @@ def main():
             _adjust_names.append(_tgt)
         if _adjust_names:
             print(f"  [adjust] coalesced {_adjust_names} for {_alias}", flush=True)
-        # 調整後金額: KEEP the project team's native post-adjustment col where a row has one, ELSE COMPUTE
-        # = amount + 調整金額 (added on 25-buckets only — 24/23 amount is already post-adjustment, so
-        # adding would double-count). Native per entity: galaxy adjusted_amount / vml 調整後金額 /
-        # sjm 2023年度調整后. wynn/melco: fully computed. MGM: per-bucket (25_Adj/24_Adj/24_調整金額/etc.)
-        # handled below and stored in df["調整後金額"] before _NATIVE_POST picks it up.
+        # ── 調整後金額 / 調整金額 (per row) ──────────────────────────────────────────────────────
+        # 兩種金額制式:
+        #  • bucket_amount_cols 家 (MGM/SJM): step0.5 已將 amount 欄設成「金額+調整=調整後」, 所以
+        #    amount 欄本身就係 POST-adjustment。調整 delta 逐 bucket 由原欄取 —— 用 report_period
+        #    *精準* 配對 (NOT startswith：因 "25_24SY".startswith("25") 會撞 25 bucket 攞錯 25_Adj)。
+        #    調整後金額 = amount 欄 (已 post)；調整前 = 調整後 − 調整金額 (prep_tableau 計)。
+        #  • 其餘 (galaxy/wynn/vml/melco): amount 欄係 PRE-adjustment → 調整後 = native 調整後金額,
+        #    否則 amount + 調整金額 (只加 25 buckets；24/23 amount 已 final, 加會 double-count)。
         _amt_col = cols.get("amount")
         if _amt_col and _amt_col in df.columns:
-            # ── MGM per-bucket 調整金額 & 調整後金額 ──────────────────────────────────────────────
-            # 25-file: 25_Adj/24_Adj (no native post-adj); 24-file: 24_調整金額/24_調整后/23_調整金額/
-            # 23_調整后; 23-file: 調整金額/調整後金額. Cross-bucket coalesce is unsafe (wide-format rows
-            # carry all year cols even after melt), so resolve by report_period prefix.
-            if _alias == "mgm" and "report_period" in df.columns:
-                _rp_m = df["report_period"].astype(str).fillna("")
-                _adj_m = pd.Series(float("nan"), index=df.index, dtype="float64")
-                for _pfx, _c in [("25", "25_Adj"), ("24_23", "23_調整金額"),
-                                  ("24", "24_Adj"), ("24", "24_調整金額"), ("23", "調整金額")]:
-                    if _c not in df.columns: continue
-                    _mask = _rp_m.str.startswith(_pfx) & _adj_m.isna()
-                    _adj_m = _adj_m.where(~_mask, pd.to_numeric(df[_c], errors="coerce"))
-                df["調整金額"] = _adj_m
-                if "調整金額" not in _adjust_names: _adjust_names.append("調整金額")
-                _post_m = pd.Series(float("nan"), index=df.index, dtype="float64")
-                for _pfx, _c in [("24_23", "23_調整后"), ("24", "24_調整后"), ("23", "調整後金額")]:
-                    if _c not in df.columns: continue
-                    _mask = _rp_m.str.startswith(_pfx) & _post_m.isna()
-                    _post_m = _post_m.where(~_mask, pd.to_numeric(df[_c], errors="coerce"))
-                _base_m = pd.to_numeric(df[_amt_col], errors="coerce")
-                df["調整後金額"] = _post_m.where(_post_m.notna(), _base_m + _adj_m.fillna(0.0))
-                if "調整後金額" not in _adjust_names: _adjust_names.append("調整後金額")
-                print(f"  [adjust-mgm] per-bucket 調整金額/後 wired", flush=True)
-            _NATIVE_POST = {"galaxy": ["adjusted_amount", "調整後金額"],   # 24/23=adjusted_amount; 25=調整後金額(raw)
-                            "vml": ["調整後金額"], "sjm": ["2023年度調整后"],
-                            "mgm": ["調整後金額"]}   # use MGM's pre-computed per-bucket value above
-            _native = pd.Series("", index=df.index, dtype="object")
-            for _c in _NATIVE_POST.get(_alias, []):
-                if _c in df.columns:
-                    _s = df[_c].astype("string").fillna("").str.strip()
-                    _native = _native.mask(_native.isin(_BLNK), _s)
-            _native_num = pd.to_numeric(_native.astype(str).str.replace(",", "", regex=False),
-                                        errors="coerce")
             _base = pd.to_numeric(df[_amt_col], errors="coerce")
-            _delta = (pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0)
-                      if "調整金額" in df.columns else pd.Series(0.0, index=df.index))
-            _rp = (df["report_period"].astype("string").fillna("")
-                   if "report_period" in df.columns else pd.Series("", index=df.index))
-            _computed = _base + _delta.where(_rp.str.startswith("25"), 0.0)
-            df["調整後金額"] = _native_num.where(_native_num.notna(), _computed)
-            if "調整後金額" not in _adjust_names:
-                _adjust_names.append("調整後金額")
-            print(f"  [adjust] 調整後金額 = native(if any) else amount+調整金額(25) for {_alias}", flush=True)
+            _PER_BUCKET_ADJ = {
+                "mgm": {"25": "25_Adj", "25_24SY": "24_Adj", "25_23SY": "23_Adj",
+                        "24": "24_調整金額", "24_23SY": "23_調整金額", "23": "調整金額"},
+                "sjm": {"25": "25調整金額", "25_24SY": "24調整金額", "25_23SY": "23調整金額",
+                        "24": "2024年度調整", "24_23SY": "2023年度調整"},   # 23 bucket: 已 final, 無 adjust
+            }
+            if _alias in _PER_BUCKET_ADJ and "report_period" in df.columns:
+                _rp = df["report_period"].astype(str).fillna("")
+                _adj_m = pd.Series(float("nan"), index=df.index, dtype="float64")
+                _found, _missing = [], []
+                for _bk, _c in _PER_BUCKET_ADJ[_alias].items():
+                    if _c not in df.columns:
+                        _missing.append(f"{_bk}:{_c}"); continue
+                    _found.append(f"{_bk}:{_c}")
+                    _adj_m = _adj_m.where(~_rp.eq(_bk), pd.to_numeric(df[_c], errors="coerce"))
+                df["調整金額"] = _adj_m
+                df["調整後金額"] = _base          # amount 欄已係調整後 (step0.5 已加 adjust)
+                for _t in ("調整金額", "調整後金額"):
+                    if _t not in _adjust_names:
+                        _adjust_names.append(_t)
+                print(f"  [adjust] {_alias}: per-bucket 調整金額 Σ={_adj_m.sum()/1e4:,.0f}萬 "
+                      f"found={_found} missing={_missing}", flush=True)
+            else:
+                _NATIVE_POST = {"galaxy": ["adjusted_amount", "調整後金額"],   # 24/23=adjusted_amount; 25=調整後金額
+                                "vml": ["調整後金額"]}
+                _native = pd.Series("", index=df.index, dtype="object")
+                for _c in _NATIVE_POST.get(_alias, []):
+                    if _c in df.columns:
+                        _s = df[_c].astype("string").fillna("").str.strip()
+                        _native = _native.mask(_native.isin(_BLNK), _s)
+                _native_num = pd.to_numeric(_native.astype(str).str.replace(",", "", regex=False),
+                                            errors="coerce")
+                _delta = (pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0)
+                          if "調整金額" in df.columns else pd.Series(0.0, index=df.index))
+                _rp = (df["report_period"].astype("string").fillna("")
+                       if "report_period" in df.columns else pd.Series("", index=df.index))
+                _computed = _base + _delta.where(_rp.str.startswith("25"), 0.0)
+                df["調整後金額"] = _native_num.where(_native_num.notna(), _computed)
+                if "調整後金額" not in _adjust_names:
+                    _adjust_names.append("調整後金額")
+                print(f"  [adjust] 調整後金額 = native(if any) else amount+調整金額(25) for {_alias}", flush=True)
         # unified-raw reference cols (項目組 own labels — reference only, OUR taxonomy is canonical)
         # unified-raw extra cols — carry through so the 大表 / Tableau keep EVERY column the
         # project team put in the tied raw (user 2026-06-14: "take care of any column 包括 remarks").
