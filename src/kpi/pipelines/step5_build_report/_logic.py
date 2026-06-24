@@ -290,7 +290,7 @@ def main():
         # canon in the unified 23-tie files (adjustment_amount/adjusted_amount/adjust_lv1/lv2), Chinese
         # in the native 24/25 files (調整金額/調整後金額/2024年度調整/…). Coalesce each entity's variants
         # (first non-blank wins) into 4 stable Chinese-named cols so 大表 + Tableau expose them
-        # uniformly across ALL years. mgm omitted — its data tab carries no adjustment cols.
+        # uniformly across ALL years. MGM uses per-bucket col names (25_Adj/24_Adj etc.), handled below.
         _ALIAS = {"company_1": "galaxy", "company_2": "sjm", "company_3": "wynn",
                   "company_4": "vml", "company_5": "melco", "company_6": "mgm"}
         _alias = cfg.get("alias") or _ALIAS.get(company, "")
@@ -318,13 +318,17 @@ def main():
             "melco":  {"調整金額": ["adjustment_amount", "調整金額"],
                        "調整一級": ["adjust_lv1", "初步識別調整類型", "調整類別"],
                        "調整二級": ["adjust_lv2", "初步識別調整事項", "調整事項"]},
-            "sjm":    {"調整金額": ["調整金額", "2024年度調整", "2023年度調整"],
-                       "調整一級": {"cols": ["adjust_lv1"], "flags": [
-                           "用於計算酒店贈房支出的贈房單價超過ADR部分的支出", "酒店客房改造支出",
-                           "不符合“吸引外國客源”定義的相關投資支出", "未完全實現投資目的的投資支出",
-                           "與投資項目無關的贈房及餐飲支出",
-                           "2025年度計劃與2023年度計劃期後調整之間的報告投資金額跨期調整"]},
-                       "調整二級": ["adjust_lv2", "調整事項"]},
+            “sjm”:    {“調整金額”: [“調整金額”, “2024年度調整”, “2023年度調整”],
+                       “調整一級”: {“cols”: [“adjust_lv1”], “flags”: [
+                           “用於計算酒店贈房支出的贈房單價超過ADR部分的支出”, “酒店客房改造支出”,
+                           “不符合“吸引外國客源”定義的相關投資支出”,
+                           “未在原投資計劃明確列示且其後未被認可的新增項目投資支出”,
+                           “2026年1-4月入賬的支出計入2025年報告投資金額”,
+                           “不符合期後事項定義的投資金額”,
+                           “未完全實現投資目的的投資支出”]},
+                       “調整二級”: [“adjust_lv2”, “調整事項”]},
+            “mgm”:    {“調整一級”: [“Adj_lv1”, “adjust_lv1”, “調整項目名稱”],
+                       “調整二級”: [“Adj_lv2”, “adjust_lv2”, “調整事項備註”, “調整事項”]},
         }
         _BLNK = ["", "nan", "None", "NaN", "<NA>", "NaT"]
         _NUM_TGT = {"調整金額", "調整後金額"}   # amounts → numeric (Tableau '#' measure); lv1/lv2 stay text
@@ -355,12 +359,36 @@ def main():
         # 調整後金額: KEEP the project team's native post-adjustment col where a row has one, ELSE COMPUTE
         # = amount + 調整金額 (added on 25-buckets only — 24/23 amount is already post-adjustment, so
         # adding would double-count). Native per entity: galaxy adjusted_amount / vml 調整後金額 /
-        # sjm 2023年度調整后. Numeric → Tableau treats it as a '#' measure. wynn/melco/mgm have no native
-        # col → fully computed (mgm has no 調整金額 → 調整後金額 = amount).
+        # sjm 2023年度調整后. wynn/melco: fully computed. MGM: per-bucket (25_Adj/24_Adj/24_調整金額/etc.)
+        # handled below and stored in df["調整後金額"] before _NATIVE_POST picks it up.
         _amt_col = cols.get("amount")
         if _amt_col and _amt_col in df.columns:
+            # ── MGM per-bucket 調整金額 & 調整後金額 ──────────────────────────────────────────────
+            # 25-file: 25_Adj/24_Adj (no native post-adj); 24-file: 24_調整金額/24_調整后/23_調整金額/
+            # 23_調整后; 23-file: 調整金額/調整後金額. Cross-bucket coalesce is unsafe (wide-format rows
+            # carry all year cols even after melt), so resolve by report_period prefix.
+            if _alias == "mgm" and "report_period" in df.columns:
+                _rp_m = df["report_period"].astype(str).fillna("")
+                _adj_m = pd.Series(pd.NA, index=df.index, dtype="float64")
+                for _pfx, _c in [("25", "25_Adj"), ("24_23", "23_調整金額"),
+                                  ("24", "24_Adj"), ("24", "24_調整金額"), ("23", "調整金額")]:
+                    if _c not in df.columns: continue
+                    _mask = _rp_m.str.startswith(_pfx) & _adj_m.isna()
+                    _adj_m = _adj_m.where(~_mask, pd.to_numeric(df[_c], errors="coerce"))
+                df["調整金額"] = _adj_m
+                if "調整金額" not in _adjust_names: _adjust_names.append("調整金額")
+                _post_m = pd.Series(pd.NA, index=df.index, dtype="float64")
+                for _pfx, _c in [("24_23", "23_調整后"), ("24", "24_調整后"), ("23", "調整後金額")]:
+                    if _c not in df.columns: continue
+                    _mask = _rp_m.str.startswith(_pfx) & _post_m.isna()
+                    _post_m = _post_m.where(~_mask, pd.to_numeric(df[_c], errors="coerce"))
+                _base_m = pd.to_numeric(df[_amt_col], errors="coerce")
+                df["調整後金額"] = _post_m.where(_post_m.notna(), _base_m + _adj_m.fillna(0.0))
+                if "調整後金額" not in _adjust_names: _adjust_names.append("調整後金額")
+                print(f"  [adjust-mgm] per-bucket 調整金額/後 wired", flush=True)
             _NATIVE_POST = {"galaxy": ["adjusted_amount", "調整後金額"],   # 24/23=adjusted_amount; 25=調整後金額(raw)
-                            "vml": ["調整後金額"], "sjm": ["2023年度調整后"]}
+                            "vml": ["調整後金額"], "sjm": ["2023年度調整后"],
+                            "mgm": ["調整後金額"]}   # use MGM's pre-computed per-bucket value above
             _native = pd.Series("", index=df.index, dtype="object")
             for _c in _NATIVE_POST.get(_alias, []):
                 if _c in df.columns:
