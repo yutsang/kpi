@@ -266,9 +266,13 @@ def _do_bucket_amount_cols(df: pd.DataFrame, ys: dict, cfg: dict):
             print(f"  [bucket_amount_cols] {bk}: amount col {a_name!r} not in raw — skipped", flush=True)
             continue
         a = pd.to_numeric(df[a_name], errors="coerce").fillna(0.0)
-        if adj_name and adj_name in df.columns:
-            a = a + pd.to_numeric(df[adj_name], errors="coerce").fillna(0.0)
-        nz = a != 0.0
+        _adj = (pd.to_numeric(df[adj_name], errors="coerce").fillna(0.0)
+                if adj_name and adj_name in df.columns else pd.Series(0.0, index=df.index))
+        a = a + _adj
+        # 保留「post 金額=0 但有調整」嘅行（e.g. SJM 調整事項Y：25調整金額=−25跨年 全額撤回），
+        # 等 調整前/調整數/調整後 三維度顯示得到（amount_mop=0 → 對 tie 零貢獻，prep_tableau
+        # zero-drop 亦因 調整前_萬≠0 而保留）。原本 nz=a!=0 會將呢啲純調整行直接 drop。
+        nz = (a != 0.0) | (_adj != 0.0)
         sub = df[nz].copy()
         sub[amt_col] = a[nz].values
         sub["report_period"] = bk
