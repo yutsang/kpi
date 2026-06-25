@@ -364,8 +364,13 @@ def main():
         #  • 其餘 (galaxy/wynn/vml/melco): amount 欄係 PRE-adjustment → 調整後 = native 調整後金額,
         #    否則 amount + 調整金額 (只加 25 buckets；24/23 amount 已 final, 加會 double-count)。
         _amt_col = cols.get("amount")
-        if _amt_col and _amt_col in df.columns:
-            _base = pd.to_numeric(df[_amt_col], errors="coerce")
+        # base = canonical amount_mop（= tie 嘅金額）。唔好用 raw cols['amount']：wynn cols['amount']=
+        # 'Entry Voucher Amount' 同 amount_mop 唔同步（2024 amount_add_cols 改咗 amount_mop / Net-off /
+        # 欄名尾空格）→ 調整後 = raw_base+調整 會偏離 amount_mop+調整，令 wynn 25 系列 調整後 多 ~110萬。
+        # amount_mop 永遠係 step0.5 後嘅 canonical 金額；當 調整=0 時 調整後 = amount_mop 先 tie。
+        _base_col = "amount_mop" if "amount_mop" in df.columns else _amt_col
+        if _base_col and _base_col in df.columns:
+            _base = pd.to_numeric(df[_base_col], errors="coerce")
             _PER_BUCKET_ADJ = {
                 "mgm": {"25": "25_Adj", "25_24SY": "24_Adj", "25_23SY": "23_Adj",
                         "24": "24_調整金額", "24_23SY": "23_調整金額", "23": "調整金額"},
