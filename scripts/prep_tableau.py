@@ -1533,20 +1533,9 @@ def run(fmt="csv", out_dir="data/tableau"):
             combined.loc[_toProf, "horizontal_id"] = "H_PROFESSIONAL"; combined.loc[_toProf, "horizontal_label"] = "專業服務費"
         print(f"  [H_OTHER減→專業] staff/分攤/服務/preopen={_np}行（運輸/食品COGS/雜耗 留其他;博彩contra/稅留;維護保持真維護）")
 
-    # ── 調整≈0 嘅行 → 強制 調整前 = 調整後 = amount_mop（canonical 終值）──
-    # 冇調整就 pre=post=amount_mop。修 wynn Net-off comp 行：step5 base 仲攞 gross 令 調整後/前 含返
-    # gross，但 amount_mop 最後 netoff 做 ~0（幾蚊殘餘，唔好靠 amount_mop threshold）。一定要喺 combine
-    # + relabel *之後* 用終值 amount_mop。SJM 全額撤回行(調整≠0)唔受影響，保留 調整前=原額、調整後=0。
-    if all(c in combined.columns for c in ["amount_mop", "調整_萬", "調整前_萬", "調整後_萬"]):
-        _amt萬 = pd.to_numeric(combined["amount_mop"], errors="coerce").fillna(0.0) / 1e4
-        _d0 = pd.to_numeric(combined["調整_萬"], errors="coerce").fillna(0.0).abs() <= 0.005
-        if int(_d0.sum()):
-            _leak = (pd.to_numeric(combined.loc[_d0, "調整後_萬"], errors="coerce").fillna(0.0).sum()
-                     - _amt萬[_d0].sum())
-            combined.loc[_d0, "調整後_萬"] = _amt萬[_d0]
-            combined.loc[_d0, "調整前_萬"] = _amt萬[_d0]
-            combined.loc[_d0, "調整_萬"] = 0.0
-            print(f"  [調整=0行→調整前後=amount_mop] {int(_d0.sum()):,} 行（修正 net-off gross Δ調整後={_leak:,.0f}萬）")
+    # ── wynn 25 bucket 調整後 對 golden 仍有 ~0.05%(+110萬) 殘差：net-off comp gross 經 step5 base
+    # 漏入 調整後/前，但散落埋有調整嘅行，無得乾淨隔離。tie 金額 amount_mop 100% 正確，0.05% 接受。
+    # (試過多個 prep/step5 fix 都唔得或會掂到其他家 → 唔再為 0.05% display 殘差全局改 調整維度。)
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
