@@ -1189,6 +1189,7 @@ def run(fmt="csv", out_dir="data/tableau"):
         _hid = combined["horizontal_id"].astype(str).str.strip()
         _ad = combined["account_desc"].astype(str).str.strip()
         _ent = combined["entity"].astype(str)
+        _vl = combined.get("vertical_label", pd.Series("", index=combined.index)).astype(str).str.strip()
         # 項目組H=staff 豁免：項目組親標 staff 嘅 capex 人工（galaxy AUC-Design&Dev）唔好被 人工→建設 搬走
         # （user 2026-06-22：呢啲係真·資本化人工 hint，capex 內部保留做 H_LABOR；只 galaxy 命中，wynn 項目組H空不受影響）
         _pthx = combined.get("項目組H", pd.Series("", index=combined.index)).astype(str).str.contains(
@@ -1203,6 +1204,13 @@ def run(fmt="csv", out_dir="data/tableau"):
             (_hid.eq("H_FNB") & _ad.str.contains("Promotional chip", case=False, na=False), "H_ADVERTISING", "廣告及推廣", "餐飲→廣告(籌碼)"),
             (_hid.eq("H_COMP_OTHER") & _ad.str.contains("Apple Product", case=False, na=False), "H_EQUIP", "設施及器具採購", "comp其他→設施(Apple)"),
             (_hid.eq("H_COMP_OTHER") & _ad.str.contains(r"TRAVEL & ENT TRANSP|TRAVEL CUSTOMER|Comp External - Transp|^Transportation$", case=False, regex=True, na=False), "H_OTHER", "其他", "comp其他→其他(運輸)"),
+            # 2026-06-26 audit 紅旗修：
+            # #1 galaxy Marketing-Barter 喺 H_其他（同一 account 大部分已喺廣告）→ 廣告
+            (_hid.eq("H_OTHER") & _ent.eq("galaxy") & _ad.str.contains(r"Marketing\s*-\s*Barter", case=False, regex=True, na=False), "H_ADVERTISING", "廣告及推廣", "galaxy Barter→廣告"),
+            # #2 melco Media（媒體廣告，唔係藝人費）落咗藝人 → 廣告
+            (_hid.eq("H_PERFORMER") & _ent.eq("melco") & _ad.str.contains(r"^Media\b", case=False, regex=True, na=False), "H_ADVERTISING", "廣告及推廣", "melco Media→廣告"),
+            # #3 melco 宣傳推廣V 嘅藝人費（promotion 理應廣告為主）→ 廣告
+            (_hid.eq("H_PERFORMER") & _ent.eq("melco") & _vl.eq("宣傳推廣"), "H_ADVERTISING", "廣告及推廣", "melco 宣傳推廣藝人→廣告"),
         ]
         _msgs = []
         for _m, _nid, _nlab, _tag in _fixes:
