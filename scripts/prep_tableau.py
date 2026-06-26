@@ -414,6 +414,15 @@ def run(fmt="csv", out_dir="data/tableau"):
         df["調整後_萬"] = _post / 1e4
         df["調整_萬"] = _adj / 1e4
         df["調整前_萬"] = (_post - _adj) / 1e4
+        # amount_mop≈0 且 調整≈0 嘅行（e.g. wynn Net-off comp：gross 被 netoff 做 0，但 step5 base 仲
+        # 攞住 gross → 調整前/後 含返 gross）→ 三維度歸 0，免得 調整後 多咗 net-off gross。SJM 全額撤回行
+        # (調整≠0) 唔受影響，保留 調整前=原額。
+        _amt0 = pd.to_numeric(df["amount_mop"], errors="coerce").fillna(0.0).abs() <= 0.5
+        _adj0 = _adj.abs() <= 0.5
+        _z = _amt0 & _adj0
+        if int(_z.sum()):
+            df.loc[_z, ["調整前_萬", "調整_萬", "調整後_萬"]] = 0.0
+            print(f"  [調整 0金額0調整行歸0] {ent}: {int(_z.sum()):,} 行 / 原調整前Σ={(_post[_z]).sum()/1e4:,.0f}萬")
         keep += ["調整前_萬", "調整_萬", "調整後_萬"]
 
         sub = df[keep].copy()

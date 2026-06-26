@@ -363,21 +363,12 @@ def main():
         #    調整後金額 = amount 欄 (已 post)；調整前 = 調整後 − 調整金額 (prep_tableau 計)。
         #  • 其餘 (galaxy/wynn/vml/melco): amount 欄係 PRE-adjustment → 調整後 = native 調整後金額,
         #    否則 amount + 調整金額 (只加 25 buckets；24/23 amount 已 final, 加會 double-count)。
-        # base = original_amount（step0.5 設嘅 canonical bucketed 金額；mgm/sjm = 已 bucket 金額）。
-        # ⚠ wynn 已知 0.05% 殘差(調整後 +110萬/25 bucket)：raw 嘅 Entry Voucher 欄 2024 檔 header 尾有
-        # 空格、2025 檔冇 → combine 變兩條欄；step5 base(及 original_amount, 經 cols['amount'] 有空格嗰條)
-        # = 209,806，但 prep 整 amount_mop 用冇空格嗰條 = 209,702，差 104萬 → 調整後承繼。step5 內無得
-        # 乾淨修（amount_mop 未 populate）；正解 = 項目組 raw 去 header 尾空格 統一兩條欄。
+        # base = raw cols['amount']（step5 階段已 populated）。注意：wynn Net-off comp 行嘅 base 仲攞住
+        # gross（amount_mop 喺 prep 先 netoff 做 0），令 調整前/後 會含返嗰 gross → prep_tableau 用
+        # 「amount_mop≈0 且 調整≈0 → 三維度歸 0」收返（見 prep 調整前/後 block）。
         _amt_col = cols.get("amount")
-        _oa = (pd.to_numeric(df["original_amount"], errors="coerce")
-               if "original_amount" in df.columns else None)
-        if _oa is not None and bool(_oa.notna().any()):
-            _base = _oa
-        elif _amt_col and _amt_col in df.columns:
+        if _amt_col and _amt_col in df.columns:
             _base = pd.to_numeric(df[_amt_col], errors="coerce")
-        else:
-            _base = None
-        if _base is not None:
             _PER_BUCKET_ADJ = {
                 "mgm": {"25": "25_Adj", "25_24SY": "24_Adj", "25_23SY": "23_Adj",
                         "24": "24_調整金額", "24_23SY": "23_調整金額", "23": "調整金額"},
