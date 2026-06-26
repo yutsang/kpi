@@ -414,15 +414,6 @@ def run(fmt="csv", out_dir="data/tableau"):
         df["調整後_萬"] = _post / 1e4
         df["調整_萬"] = _adj / 1e4
         df["調整前_萬"] = (_post - _adj) / 1e4
-        # amount_mop≈0 且 調整≈0 嘅行（e.g. wynn Net-off comp：gross 被 netoff 做 0，但 step5 base 仲
-        # 攞住 gross → 調整前/後 含返 gross）→ 三維度歸 0，免得 調整後 多咗 net-off gross。SJM 全額撤回行
-        # (調整≠0) 唔受影響，保留 調整前=原額。
-        _amt0 = pd.to_numeric(df["amount_mop"], errors="coerce").fillna(0.0).abs() <= 0.5
-        _adj0 = _adj.abs() <= 0.5
-        _z = _amt0 & _adj0
-        if int(_z.sum()):
-            df.loc[_z, ["調整前_萬", "調整_萬", "調整後_萬"]] = 0.0
-            print(f"  [調整 0金額0調整行歸0] {ent}: {int(_z.sum()):,} 行 / 原調整前Σ={(_post[_z]).sum()/1e4:,.0f}萬")
         keep += ["調整前_萬", "調整_萬", "調整後_萬"]
 
         sub = df[keep].copy()
@@ -1541,6 +1532,20 @@ def run(fmt="csv", out_dir="data/tableau"):
         if _np:
             combined.loc[_toProf, "horizontal_id"] = "H_PROFESSIONAL"; combined.loc[_toProf, "horizontal_label"] = "專業服務費"
         print(f"  [H_OTHER減→專業] staff/分攤/服務/preopen={_np}行（運輸/食品COGS/雜耗 留其他;博彩contra/稅留;維護保持真維護）")
+
+    # ── amount_mop≈0 且 調整≈0 嘅行 → 調整前/數/後 歸 0（用終值 amount_mop）──
+    # wynn Net-off comp 行：gross 喺 step5 base 仲在 → 調整前/後 含返 gross，但 amount_mop 最後 netoff 做 0。
+    # 呢個一定要喺 combine + relabel *之後* 做（per-entity 段嗰刻 amount_mop 仲係 gross）。
+    # SJM 全額撤回行(調整≠0)唔受影響，保留 調整前=原額、調整後=0。
+    if all(c in combined.columns for c in ["amount_mop", "調整_萬", "調整前_萬", "調整後_萬"]):
+        _a0 = pd.to_numeric(combined["amount_mop"], errors="coerce").fillna(0.0).abs() <= 0.5
+        _d0 = pd.to_numeric(combined["調整_萬"], errors="coerce").fillna(0.0).abs() <= 0.005
+        _zz = _a0 & _d0
+        _zn = int(_zz.sum())
+        if _zn:
+            _was = pd.to_numeric(combined.loc[_zz, "調整後_萬"], errors="coerce").fillna(0.0).abs().sum()
+            combined.loc[_zz, ["調整前_萬", "調整_萬", "調整後_萬"]] = 0.0
+            print(f"  [0金額0調整→調整維度歸0] {_zn:,} 行（剷 net-off gross 調整後Σ={_was:,.0f}萬）")
 
     # ── tie-safe 剔走全 0 行（amount_mop + 調整前/調整/調整後 全 0）。對任何 sum 貢獻 0 → tie 不變（user 要 ensure tie）──
     _amtc = [c for c in ["amount_mop", "調整前_萬", "調整_萬", "調整後_萬"] if c in combined.columns]
