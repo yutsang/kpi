@@ -414,6 +414,23 @@ def main():
                 if "調整後金額" not in _adjust_names:
                     _adjust_names.append("調整後金額")
                 print(f"  [adjust] 調整後金額 = native(if any) else amount+調整金額(25) for {_alias}", flush=True)
+        # ── 調整一級 100% 覆蓋（user 2026-07-06：lv2 空可以唔理，lv1 要全有）────────────────────
+        # (a) 清 "0"/"0.0" 垃圾值（mgm 24 調整項目名稱 常數 0 會被 coalesce 撿到）；
+        # (b) 有調整(調整金額≠0)但 lv1 空 → 「未分類調整」— raw 冇標(sjm 24/melco 24/mgm 25 等)，
+        #     Tableau lv1 dimension 唔會跌空白；項目組 backfill raw 後自動被真值取代。
+        if "調整金額" in df.columns:
+            for _t in ("調整一級", "調整二級"):
+                if _t in df.columns:
+                    df[_t] = df[_t].astype("string").fillna("").str.strip().replace({"0": "", "0.0": ""})
+            if "調整一級" not in df.columns:
+                df["調整一級"] = ""
+                _adjust_names.append("調整一級")
+            _adjnz = pd.to_numeric(df["調整金額"], errors="coerce").fillna(0.0).ne(0.0)
+            _lv1b = df["調整一級"].astype("string").fillna("").str.strip().isin(_BLNK)
+            _fb = _adjnz & _lv1b
+            if int(_fb.sum()):
+                df.loc[_fb, "調整一級"] = "未分類調整"
+                print(f"  [adjust] 調整一級 fallback→未分類調整: {int(_fb.sum()):,} 行 (raw 冇標)", flush=True)
         # unified-raw reference cols (項目組 own labels — reference only, OUR taxonomy is canonical)
         # unified-raw extra cols — carry through so the 大表 / Tableau keep EVERY column the
         # project team put in the tied raw (user 2026-06-14: "take care of any column 包括 remarks").
