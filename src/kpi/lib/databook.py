@@ -78,25 +78,20 @@ def build_user_prompt(table_md: str, *, context: dict[str, Any] | None = None,
 
 def generate_notes(table: pd.DataFrame | str, *, context: dict[str, Any] | None = None,
                    unit: str = "萬 MOP", lang: str = "zh", extra_instructions: str = "",
-                   wb: Workbench | None = None, model: str = "5.5",
+                   wb: Workbench | None = None, model: str | None = None,
                    dry: bool = False) -> dict:
     """由表生成 {headline, commentary[], flags[]}。dry=True 唔出網，只回構建好嘅 prompt。"""
     table_md = table if isinstance(table, str) else df_to_markdown(table)
     system = NOTE_SYSTEM_ZH if lang.lower().startswith("zh") else NOTE_SYSTEM_EN
     user = build_user_prompt(table_md, context=context, unit=unit, extra_instructions=extra_instructions)
-    if dry:
-        return {"_dry": True, "system": system, "user": user, "model": MODELS_display(model)}
     wb = wb or Workbench(model=model)
+    if dry:
+        return {"_dry": True, "system": system, "user": user, "model": wb.resolve_model(model)}
     out = wb.chat_json(user, system=system, model=model)
     out.setdefault("headline", "")
     out.setdefault("commentary", [])
     out.setdefault("flags", [])
     return out
-
-
-def MODELS_display(model: str) -> str:
-    from .workbench import MODELS
-    return MODELS.get(model, model)
 
 
 def _cli() -> None:
@@ -106,7 +101,7 @@ def _cli() -> None:
     ap.add_argument("table", nargs="?", help="表格檔（.tsv/.csv/.xlsx；index 為第一欄）")
     ap.add_argument("--lang", default="zh", help="zh / en")
     ap.add_argument("--unit", default="萬 MOP")
-    ap.add_argument("--model", default="5.5")
+    ap.add_argument("--model", default=None, help="alias/實名；預設由 config")
     ap.add_argument("--context", default="", help="k=v;k=v，例如 entity=mgm;year=25")
     ap.add_argument("--dry", action="store_true", help="唔出網，只印會送出嘅 prompt")
     a = ap.parse_args()
