@@ -392,6 +392,8 @@ class Template:
         # 建 schema lookup by (grp_match, sub)
         for c in range(self.anchor or 1, self.maxcol + 1):
             grp, sub = self.col_gs[c]
+            if not sub:                      # row6 空（縱向合併表頭）→ 用 row5 文字做 sub
+                sub = canon_sub(ws.cell(self.grow, c).value)
             match = None
             for row in TARGET_SCHEMA:
                 if canon_sub(row["sub"]) == sub and (row["grp"] == "" or _grp_match(grp, row["grp"])):
@@ -477,22 +479,28 @@ def find_overlay_file(root: Path, scope: str, company: str) -> Path | None:
 
 
 def build_overlay(path: Path, log) -> dict[str, dict]:
-    """source_2 per-範疇檔 → {項目序號名稱: {sub_nkey: value}}（只攞 OVERLAY_SUBS）。"""
+    """source_2 per-範疇檔 → {項目序號: {sub_canon: value}}（掃全部 sheet，只攞 OVERLAY_SUBS）。"""
     try:
         wb = load_wb(path)
     except Exception as e:
         log(f"      ⚠ overlay 開唔到 {path.name}: {e}")
         return {}
-    ws = wb.active
-    projs, subrow, anchor, gm, maxcol = extract(ws, log)
-    out = {}
-    for p in projs:
-        d = {}
-        for (g, s), v in p.by_gs.items():
-            if s in OVERLAY_SUBS and _s(v) != "":
-                d[s] = v
-        if d:
-            out[_seqkey(p.seq)] = d
+    out: dict[str, dict] = {}
+    log(f"      overlay 檔 sheets: {wb.sheetnames}")
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        projs, subrow, anchor, gm, maxcol = extract(ws, log)
+        if anchor is None or not projs:
+            log(f"      overlay sheet {sn!r}: anchor={anchor} 項目={len(projs)} → 跳過")
+            continue
+        found = 0
+        for p in projs:
+            d = {s: v for (g, s), v in p.by_gs.items() if s in OVERLAY_SUBS and _s(v) != ""}
+            if d:
+                out[_seqkey(p.seq)] = d
+                found += 1
+        log(f"      overlay sheet {sn!r}: {len(projs)} 項目, {found} 個有覆蓋值 "
+            f"(序號: {[_seqkey(p.seq) for p in projs]})")
     wb.close()
     return out
 
@@ -570,6 +578,8 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
         if ofile:
             log(f"  overlay 檔: {ofile.relative_to(root).as_posix()}")
             overlay = build_overlay(ofile, log)
+            if not overlay:
+                log("  ⚠ overlay 抽唔到任何覆蓋值（下面 base 為準）")
         else:
             log(f"  （冇 source_2 per-範疇檔 match scope={scope} company={company}）")
 
