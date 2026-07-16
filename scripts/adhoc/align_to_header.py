@@ -43,6 +43,7 @@ from openpyxl.styles import Alignment, Border, Side
 PASSWORD = "dicj_kpmg"
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
 HDR_SCAN = 12                       # 掃頭幾行揾子表頭行
+GATE_NOADJ = True                   # 冇調整嘅項目 → 建議調整欄留空（唔填 0）；--fill-zero-adj 關掉
 _THIN = Side(style="thin", color="BFBFBF")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _WRAP_TOP = Alignment(wrap_text=True, vertical="top", horizontal="left")
@@ -77,6 +78,7 @@ _RE_WHOLE_REPLY = re.compile(r".*整體的回覆$")
 
 def canon_sub(raw: str) -> str:
     k = nkey(raw)
+    k = re.sub(r"\([^()]*\)$", "", k)          # 去尾部括號註（「(萬澳門元)」「(如不一致…)」）
     if k in VARIANTS:
         return VARIANTS[k]
     if _RE_WHOLE_REPLY.match(_s(raw)):
@@ -218,6 +220,13 @@ class Project:
         self.seed: dict[str, object] = {}   # 潛在調整合計/調整後投資金額/跨司工作組確認投資金額
         self.seq: str = ""                  # 項目序號名稱（join key，如 "76-吸引外國客源…"）
 
+    def has_adj(self) -> bool:
+        """有冇實際調整：有非零列舉類型、或 潛在調整合計 非零。"""
+        if self.adj:
+            return True
+        n = num(self.seed.get(nkey("潛在調整合計")))
+        return n is not None and abs(n) > 1e-9
+
 
 def merged_val(ws, c: int, r0: int, r1: int):
     for r in range(r0, r1 + 1):
@@ -316,12 +325,20 @@ def resolve(rule, p: Project):
                 return v
         return None
     if kind == "enum":
+        if GATE_NOADJ and not p.has_adj():
+            return None
         return build_enum(p) or None
     if kind == "abs_total":
+        if GATE_NOADJ and not p.has_adj():
+            return None
         n = num(p.seed.get(nkey("潛在調整合計")))
         return abs(n) if n is not None else None
     if kind == "seed":
-        return p.seed.get(nkey(rule[1]))
+        key = nkey(rule[1])
+        if (GATE_NOADJ and not p.has_adj()
+                and key in (nkey("潛在調整合計"), nkey("調整後投資金額"))):
+            return None                      # 冇調整 → 建議調整/建議調整後金額 留空（唔填 0）
+        return p.seed.get(key)
     return None
 
 
@@ -606,8 +623,12 @@ def main():
     ap.add_argument("--all", action="store_true", help="批 source_1 全部檔")
     ap.add_argument("--preview", action="store_true", help="只吐抽取+映射文字，唔寫 xlsx")
     ap.add_argument("--with-overlay", action="store_true", help="套 source_2 per-範疇覆蓋")
+    ap.add_argument("--fill-zero-adj", action="store_true",
+                    help="冇調整都照抄 0（預設留空）")
     ap.add_argument("--out", default="_aligned", help="輸出子資料夾（root 底下）")
     a = ap.parse_args()
+    global GATE_NOADJ
+    GATE_NOADJ = not a.fill_zero_adj
     root = Path(a.root)
     out_dir = root / a.out
     lines = []
