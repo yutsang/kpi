@@ -85,11 +85,27 @@ def main() -> None:
     ap.add_argument("--root", default="ad-hoc/workspace")
     ap.add_argument("--files", nargs="*", default=None, help="相對 root 嘅檔（預設 4 個代表）")
     ap.add_argument("--hdr-rows", type=int, default=8, help="當頭幾行係表頭區")
-    ap.add_argument("--data-rows", type=int, default=1, help="順手 dump 幾行 data 做例")
+    ap.add_argument("--data-rows", type=int, default=3, help="順手 dump 幾行 data 做例")
     ap.add_argument("--all-sheets", action="store_true", help="每個 sheet 都 dump（預設只第一個）")
+    ap.add_argument("--pair", nargs=2, metavar=("範疇", "公司"),
+                    help="自動揾 source_1/source_2 內檔名含呢兩個關鍵字嘅檔一齊 dump（睇 join key）")
     a = ap.parse_args()
     root = Path(a.root)
-    files = a.files or DEFAULT_FILES
+    files = list(a.files) if a.files else list(DEFAULT_FILES)
+    if a.pair:
+        kw_scope, kw_company = a.pair
+        for src in ("source_1", "source_2"):
+            base = root / src
+            if not base.exists():
+                continue
+            for p in sorted(base.rglob("*")):
+                if p.is_dir() or p.name.startswith("~$"):
+                    continue
+                if p.suffix.lower() not in (".xlsx", ".xlsm", ".xls"):
+                    continue
+                relstr = p.relative_to(root).as_posix()
+                if kw_scope in relstr and kw_company in relstr:
+                    files.append(p.relative_to(root).as_posix())
     lines: list[str] = []
 
     def out(s=""):
