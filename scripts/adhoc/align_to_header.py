@@ -126,13 +126,12 @@ def nkey(x) -> str:
 
 # 子表頭同義變體（source 名 → 表頭 canonical 名 nkey）
 VARIANTS = {
-    # 各司局專名「XX整體的回覆」+「跨司工作組整體的回覆」→ 表頭「跨司工作組的回覆」
-    nkey("跨司工作組整體的回覆"): nkey("跨司工作組的回覆"),
-    nkey("博監局整體的回覆"): nkey("跨司工作組的回覆"),
-    nkey("整體的回覆"): nkey("跨司工作組的回覆"),
     nkey("畢馬威的分析"): nkey("KPMG分析"),   # 只喺第一/二輪組；潛在調整組另有規則
 }
-_RE_WHOLE_REPLY = re.compile(r".*整體的回覆$")
+# 任何司局專名「XX的回覆／XX整體的回覆」（跨司工作組/博監局/經濟局/社文司/…）→ 表頭「跨司工作組的回覆」
+_RE_REPLY = re.compile(r".+的回覆$")
+# 「KPMG希望進一步向XX瞭解的事項」（XX = 跨司工作組/博監局/…，各範疇專名）→ 表頭「…向跨司工作組瞭解的事項」
+_RE_ASK = re.compile(r"^KPMG希望進一步向.+瞭解的事項$")
 
 
 def canon_sub(raw: str) -> str:
@@ -140,8 +139,10 @@ def canon_sub(raw: str) -> str:
     k = re.sub(r"\([^()]*\)$", "", k)          # 去尾部括號註（「(萬澳門元)」「(如不一致…)」）
     if k in VARIANTS:
         return VARIANTS[k]
-    if _RE_WHOLE_REPLY.match(_s(raw)):
+    if _RE_REPLY.match(k):                      # 收晒各司局專名「…的回覆」
         return nkey("跨司工作組的回覆")
+    if _RE_ASK.match(k):                        # 收晒「KPMG希望進一步向{司局}瞭解的事項」
+        return nkey("KPMG希望進一步向跨司工作組瞭解的事項")
     return k
 
 
