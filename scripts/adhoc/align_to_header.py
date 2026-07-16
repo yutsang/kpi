@@ -44,6 +44,7 @@ PASSWORD = "dicj_kpmg"
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
 HDR_SCAN = 12                       # 掃頭幾行揾子表頭行
 GATE_NOADJ = True                   # 冇調整嘅項目 → 建議調整欄留空（唔填 0）；--fill-zero-adj 關掉
+ENCRYPT_OUT = True                  # 輸出用 dicj_kpmg 重新加密（保留 source 密碼）；--no-encrypt 關掉
 _THIN = Side(style="thin", color="BFBFBF")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _WRAP_TOP = Alignment(wrap_text=True, vertical="top", horizontal="left")
@@ -63,6 +64,48 @@ def _apply_style(cell, sty: dict) -> None:
     cell.alignment = sty["alignment"]
     cell.number_format = sty["nf"]
     cell.protection = sty["protection"]
+
+
+def _apply_text_style(dst, src_cell) -> None:
+    """跟 source 嘅文字外觀（字體/顏色/底色/數字格式）；框由我哋統一格線負責、
+    對齊保留 wrap+top 但借 source 嘅水平對齊。"""
+    dst.font = copy(src_cell.font)
+    dst.fill = copy(src_cell.fill)
+    dst.number_format = src_cell.number_format
+    a = src_cell.alignment
+    dst.alignment = Alignment(wrap_text=True, vertical="top",
+                              horizontal=(a.horizontal if a and a.horizontal else "left"))
+
+
+def base_grid(cell, data_style: dict) -> None:
+    """每個 data cell 打底：template data style + 完整四邊框 + wrap-top。"""
+    _apply_style(cell, data_style)
+    cell.border = _BORDER
+    cell.alignment = _WRAP_TOP
+
+
+def copy_full_cell(dst, src_cell) -> None:
+    """值 + 全 style 照抄（跨 workbook 安全：抄 style 物件唔抄 index）。"""
+    if src_cell.value is not None:
+        dst.value = src_cell.value
+    _apply_style(dst, _grab_style(src_cell))
+
+
+def encrypt_file(plain: Path, enc: Path, log) -> bool:
+    """用 dicj_kpmg 重新加密（保留 source 密碼保護）。msoffcrypto-tool CLI -e。"""
+    import subprocess
+    import sys
+    base = [str(plain), str(enc), "-e", "-p", PASSWORD]
+    for cmd in ([sys.executable, "-m", "msoffcrypto"] + base,
+                ["msoffcrypto-tool"] + base):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True)
+        except FileNotFoundError:
+            continue
+        if r.returncode == 0 and enc.exists() and enc.stat().st_size > 0:
+            return True
+    log("  ⚠ 加密失敗（msoffcrypto-tool -e 唔 work）→ 輸出未加密；喺 Windows： pip install -U msoffcrypto-tool")
+    return False
 
 
 # ── 正規化 ────────────────────────────────────────────────────────────────
@@ -306,7 +349,7 @@ def extract(ws, log) -> tuple[list[Project], int, int, dict[int, str], int]:
     gm = group_map(ws, grow, maxcol)
     anchor = find_anchor_col(ws, subrow, maxcol)
     if anchor is None:
-        return [], subrow, 0, gm, maxcol
+        return [], subrow, 0, gm, maxcol, {}, maxrow
     # 每欄嘅 (group, sub)
     col_gs: dict[int, tuple] = {}
     for c in range(1, maxcol + 1):
@@ -355,7 +398,7 @@ def extract(ws, log) -> tuple[list[Project], int, int, dict[int, str], int]:
         log(f"      項目({len(projs)}): {[p.seq for p in projs]}")
         if orphan:
             log(f"      ⚠ anchor 有合併起點但唔喺任何標籤項目內: rows {orphan} → 核實係咪漏咗真項目")
-    return projs, subrow, anchor, gm, maxcol
+    return projs, subrow, anchor, gm, maxcol, col_gs, maxrow
 
 
 def _is_adj_type(grp: str, sub: str, raw: str) -> bool:
@@ -472,9 +515,32 @@ class Template:
         return rules
 
 
-# ── 寫一個對齊 sheet ───────────────────────────────────────────────────────
-def write_sheet(ws_out, tpl: Template, projs: list[Project], src_left_anchor: int, log):
-    # header 區
+# ── source 欄 → 目標欄 對位圖 ───────────────────────────────────────────────
+def build_col_plan(tpl: Template, src_anchor: int, src_col_gs: dict, src_maxcol: int) -> dict:
+    """目標欄 c → ('src', 源欄) 直抄(值+style) / ('derive', rule) 計算欄。
+    左半：以 anchor 為尾右對齊 offset；右半：按 rule 嘅 (分組,子表頭) 揾源欄。"""
+    plan: dict[int, tuple] = {}
+    for c in range(1, tpl.anchor or 1):                 # 左半 offset 對位
+        sc = src_anchor - (tpl.anchor - c)
+        plan[c] = ("src", sc) if sc >= 1 else ("blank",)
+    for c in range(tpl.anchor or 1, tpl.maxcol + 1):    # 右半 by name
+        rule = tpl.rules[c]
+        if rule[0] in ("copy", "copy_any"):
+            want_sub = canon_sub(rule[1] if rule[0] == "copy_any" else rule[2])
+            want_grp = None if rule[0] == "copy_any" else rule[1]
+            sc = next((scol for scol, (g, s) in src_col_gs.items()
+                       if s == want_sub and (want_grp is None or _grp_match(g, want_grp))), None)
+            plan[c] = ("src", sc) if sc else ("derive", rule)
+        else:
+            plan[c] = ("derive", rule)
+    return plan
+
+
+# ── 寫一個對齊 sheet（照 source 行序、跟 source 文字 style、column 對位）──────
+def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
+                src_anchor: int, src_subrow: int, src_col_gs: dict,
+                src_maxcol: int, src_maxrow: int, log):
+    # 1) header 區（用 template 34 欄標準表頭 + 佢自己嘅 style）
     for (r, c), (v, sty) in tpl.hdr_cells.items():
         cell = ws_out.cell(r, c, v)
         _apply_style(cell, sty)
@@ -484,50 +550,83 @@ def write_sheet(ws_out, tpl: Template, projs: list[Project], src_left_anchor: in
     for m in tpl.hdr_merges:
         ws_out.merge_cells(m)
 
-    tgt_left = [c for c in range(1, (tpl.anchor or 1))]     # 表頭左半欄
-    first = tpl.subrow + 1
-    # 第一 pass：全部 data cell（連空格）上 style + 全框 border，再寫值。
-    # merge 留到最後做 —— 咁合併區每格都已有框，四邊先齊。
-    row = first
-    for p in projs:
-        span = p.r1 - p.r0 + 1
-        for rr in range(row, row + span):
-            for c in range(1, tpl.maxcol + 1):
-                cell = ws_out.cell(rr, c)
-                _apply_style(cell, tpl.data_style)
-                cell.alignment = _WRAP_TOP
-                cell.border = _BORDER
-        # 左半：右對齊 positional 照抄（逐行變，唔 merge）
-        for i in range(span):
-            src_row = p.left[i] if i < len(p.left) else []
-            n = min(len(tgt_left), len(src_row))
-            for k in range(1, n + 1):
-                v = src_row[-k]
-                if v is not None:
-                    ws_out.cell(row + i, tgt_left[-k]).value = v
-        # 右半：每欄取值（source_2 覆蓋優先），只寫 anchor 行、span 內合併
-        for c in range(tpl.anchor or 1, tpl.maxcol + 1):
-            ws_out.cell(row, c).value = cell_value(tpl, c, p)
-        row += span
-    # 第二 pass：右半 span 內合併（全部 cell 已有框 → 合併區四邊齊）
-    row = first
-    for p in projs:
-        span = p.r1 - p.r0 + 1
+    plan = build_col_plan(tpl, src_anchor, src_col_gs, src_maxcol)
+    inv = {sc: c for c, k in plan.items() if k[0] == "src" for sc in (k[1],)}  # 源欄→目標欄
+    proj_by_start = {p.r0: p for p in projs}
+    src_data0 = src_subrow + 1
+    out_row = tpl.subrow + 1
+    src_row = src_data0
+    right = list(range(tpl.anchor or 1, tpl.maxcol + 1))
+    proj_spans_out: list[tuple[int, int, int]] = []      # (out_row, span, src_r0)
+    passthru: list[tuple[int, int]] = []                 # (out_row, src_row) 非項目行
+
+    while src_row <= src_maxrow:
+        p = proj_by_start.get(src_row)
+        if p is not None:
+            span = p.r1 - p.r0 + 1
+            for rr in range(out_row, out_row + span):    # 打底格線
+                for c in range(1, tpl.maxcol + 1):
+                    base_grid(ws_out.cell(rr, c), tpl.data_style)
+            # 左半：逐行直抄（值 + source 文字 style）
+            for i in range(span):
+                for c in range(1, tpl.anchor or 1):
+                    k = plan[c]
+                    if k[0] == "src":
+                        s = ws_src.cell(p.r0 + i, k[1])
+                        if s.value is not None:
+                            ws_out.cell(out_row + i, c).value = s.value
+                        _apply_text_style(ws_out.cell(out_row + i, c), s)
+            # 右半：anchor 行寫值（source_2 覆蓋優先）+ 跟源欄文字 style
+            for c in right:
+                cell = ws_out.cell(out_row, c)
+                cell.value = cell_value(tpl, c, p)
+                k = plan[c]
+                _grp, sub = tpl.col_gs[c]
+                overridden = sub in p.override and _s(p.override[sub]) != ""
+                if k[0] == "src" and not overridden:
+                    _apply_text_style(cell, ws_src.cell(p.r0, k[1]))
+            proj_spans_out.append((out_row, span, p.r0))
+            out_row += span
+            src_row = p.r1 + 1
+        else:
+            if not _row_blank(ws_src, src_row, src_maxcol):   # 非項目行 → 原樣帶過
+                for c in range(1, tpl.maxcol + 1):
+                    base_grid(ws_out.cell(out_row, c), tpl.data_style)
+                for sc in range(1, src_maxcol + 1):
+                    tc = inv.get(sc)
+                    if tc:
+                        s = ws_src.cell(src_row, sc)
+                        if s.value is not None:
+                            ws_out.cell(out_row, tc).value = s.value
+                        _apply_text_style(ws_out.cell(out_row, tc), s)
+                passthru.append((out_row, src_row))
+                out_row += 1
+            src_row += 1
+
+    # 2) merges：右半項目 span 內合併（全部 cell 已有框 → 四邊齊）
+    for orow, span, _r0 in proj_spans_out:
         if span > 1:
-            for c in range(tpl.anchor or 1, tpl.maxcol + 1):
-                ws_out.merge_cells(start_row=row, end_row=row + span - 1,
+            for c in right:
+                ws_out.merge_cells(start_row=orow, end_row=orow + span - 1,
                                    start_column=c, end_column=c)
-        row += span
-    return row
+    # 非項目行嘅橫向合併（小標題橫跨幾欄）→ 重映射後保留
+    src_hmerge = [(m.min_row, m.min_col, m.max_col) for m in ws_src.merged_cells.ranges
+                  if m.min_row == m.max_row and m.max_col > m.min_col]
+    row_of = {sr: orow for orow, sr in passthru}
+    for sr, c0, c1 in src_hmerge:
+        if sr in row_of:
+            t0, t1 = inv.get(c0), inv.get(c1)
+            if t0 and t1 and t1 > t0:
+                ws_out.merge_cells(start_row=row_of[sr], end_row=row_of[sr],
+                                   start_column=min(t0, t1), end_column=max(t0, t1))
+    return out_row
 
 
 def light_copy_sheet(ws_out, ws_src):
-    """附件/非標準 sheet → 原樣 best-effort 複製（值+合併+欄寬）。"""
+    """附件/非標準 sheet → 原樣 best-effort 複製（值 + 全 style + 合併 + 欄寬 + 行高）。"""
     for r in range(1, (ws_src.max_row or 0) + 1):
         for c in range(1, (ws_src.max_column or 0) + 1):
-            v = ws_src.cell(r, c).value
-            if v is not None:
-                ws_out.cell(r, c, v)
+            copy_full_cell(ws_out.cell(r, c), ws_src.cell(r, c))
     for m in ws_src.merged_cells.ranges:
         ws_out.merge_cells(str(m))
     for c in range(1, (ws_src.max_column or 0) + 1):
@@ -535,6 +634,9 @@ def light_copy_sheet(ws_out, ws_src):
         w = ws_src.column_dimensions[L].width
         if w:
             ws_out.column_dimensions[L].width = w
+    for r, dim in ws_src.row_dimensions.items():
+        if dim.height is not None:
+            ws_out.row_dimensions[r].height = dim.height
 
 
 # ── source_2 overlay ──────────────────────────────────────────────────────
@@ -563,8 +665,8 @@ def build_overlay(path: Path, log) -> dict[str, dict]:
     log(f"      overlay 檔 sheets: {wb.sheetnames}")
     for sn in wb.sheetnames:
         ws = wb[sn]
-        projs, subrow, anchor, gm, maxcol = extract(ws, log)
-        if anchor is None or not projs:
+        projs, subrow, anchor, gm, maxcol, col_gs, maxrow = extract(ws, log)
+        if not anchor or not projs:
             log(f"      overlay sheet {sn!r}: anchor={anchor} 項目={len(projs)} → 跳過")
             continue
         found = 0
@@ -677,8 +779,8 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
             if not preview:
                 light_copy_sheet(out_wb.create_sheet(sn), ws)
             continue
-        projs, subrow, anchor, gm, maxcol = extract(ws, log)
-        if anchor is None or not projs:
+        projs, subrow, anchor, gm, maxcol, col_gs, maxrow = extract(ws, log)
+        if not anchor or not projs:
             log(f"  ── sheet {sn!r}：揾唔到「是否該司局範疇」anchor 或冇項目 → 原樣照抄")
             if not preview:
                 light_copy_sheet(out_wb.create_sheet(sn), ws)
@@ -688,7 +790,8 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
         if preview:
             preview_sheet(sn, projs, tpl, log)
         else:
-            write_sheet(out_wb.create_sheet(sn[:31]), tpl, projs, anchor, log)
+            write_sheet(out_wb.create_sheet(sn[:31]), tpl, ws, projs,
+                        anchor, subrow, col_gs, maxcol, maxrow, log)
     wb.close()
     if preview:
         return
@@ -696,8 +799,18 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if len(out_wb.sheetnames) == 0:
         out_wb.create_sheet("空")
-    out_wb.save(out_path)
-    log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}")
+    if ENCRYPT_OUT:                              # 保留 source 密碼保護
+        tmp = out_path.with_suffix(".plain.xlsx")
+        out_wb.save(tmp)
+        if encrypt_file(tmp, out_path, log):
+            tmp.unlink(missing_ok=True)
+            log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}（已加密 dicj_kpmg）")
+        else:
+            shutil.move(str(tmp), str(out_path))
+            log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}（未加密）")
+    else:
+        out_wb.save(out_path)
+        log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}")
 
 
 def copy_asis(root: Path, rel: str, out_dir: Path, log):
@@ -726,10 +839,13 @@ def main():
     ap.add_argument("--with-overlay", action="store_true", help="套 source_2 per-範疇覆蓋")
     ap.add_argument("--fill-zero-adj", action="store_true",
                     help="冇調整都照抄 0（預設留空）")
+    ap.add_argument("--no-encrypt", action="store_true",
+                    help="輸出唔加密（預設用 dicj_kpmg 重新加密）")
     ap.add_argument("--out", default="_aligned", help="輸出子資料夾（root 底下）")
     a = ap.parse_args()
-    global GATE_NOADJ
+    global GATE_NOADJ, ENCRYPT_OUT
     GATE_NOADJ = not a.fill_zero_adj
+    ENCRYPT_OUT = not a.no_encrypt
     root = Path(a.root)
     out_dir = root / a.out
     lines = []
