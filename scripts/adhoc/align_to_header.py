@@ -485,27 +485,36 @@ def write_sheet(ws_out, tpl: Template, projs: list[Project], src_left_anchor: in
         ws_out.merge_cells(m)
 
     tgt_left = [c for c in range(1, (tpl.anchor or 1))]     # 表頭左半欄
-    row = tpl.subrow + 1
+    first = tpl.subrow + 1
+    # 第一 pass：全部 data cell（連空格）上 style + 全框 border，再寫值。
+    # merge 留到最後做 —— 咁合併區每格都已有框，四邊先齊。
+    row = first
     for p in projs:
         span = p.r1 - p.r0 + 1
-        # 左半：右對齊 positional（兩邊都以 anchor 前一欄為尾）
+        for rr in range(row, row + span):
+            for c in range(1, tpl.maxcol + 1):
+                cell = ws_out.cell(rr, c)
+                _apply_style(cell, tpl.data_style)
+                cell.alignment = _WRAP_TOP
+                cell.border = _BORDER
+        # 左半：右對齊 positional 照抄（逐行變，唔 merge）
         for i in range(span):
             src_row = p.left[i] if i < len(p.left) else []
             n = min(len(tgt_left), len(src_row))
             for k in range(1, n + 1):
                 v = src_row[-k]
                 if v is not None:
-                    cell = ws_out.cell(row + i, tgt_left[-k], v)
-                    _apply_style(cell, tpl.data_style)
-                    cell.alignment = _WRAP_TOP
-        # 右半：每欄取值（source_2 覆蓋優先）、span 內合併
+                    ws_out.cell(row + i, tgt_left[-k]).value = v
+        # 右半：每欄取值（source_2 覆蓋優先），只寫 anchor 行、span 內合併
         for c in range(tpl.anchor or 1, tpl.maxcol + 1):
-            val = cell_value(tpl, c, p)
-            cell = ws_out.cell(row, c, val)
-            _apply_style(cell, tpl.data_style)
-            cell.alignment = _WRAP_TOP
-            cell.border = _BORDER
-            if span > 1:
+            ws_out.cell(row, c).value = cell_value(tpl, c, p)
+        row += span
+    # 第二 pass：右半 span 內合併（全部 cell 已有框 → 合併區四邊齊）
+    row = first
+    for p in projs:
+        span = p.r1 - p.r0 + 1
+        if span > 1:
+            for c in range(tpl.anchor or 1, tpl.maxcol + 1):
                 ws_out.merge_cells(start_row=row, end_row=row + span - 1,
                                    start_column=c, end_column=c)
         row += span
