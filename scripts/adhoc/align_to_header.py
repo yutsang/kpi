@@ -332,6 +332,13 @@ def extract(ws, log) -> tuple[list[Project], int, int, dict[int, str], int]:
                 if val is not None:
                     p.by_gs[(grp, sub)] = val
         projs.append(p)
+    if label_col:
+        label_starts = {s for s, _ in spans}
+        orphan = [a0 for (a0, a1) in am if a0 not in label_starts
+                  and not any(s <= a0 <= e for (s, e) in spans)]
+        log(f"      項目({len(projs)}): {[p.seq for p in projs]}")
+        if orphan:
+            log(f"      ⚠ anchor 有合併起點但唔喺任何標籤項目內: rows {orphan} → 核實係咪漏咗真項目")
     return projs, subrow, anchor, gm, maxcol
 
 
