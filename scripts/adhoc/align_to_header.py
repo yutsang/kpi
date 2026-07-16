@@ -876,8 +876,10 @@ def _quiet(*_a, **_k):
 def audit(root: Path, tpl: Template, log):
     files = list(iter_source1(root))
     fA, fB, fC, fE, fAtt, ok = [], [], [], [], [], []
+    tpl_left = [tpl.col_gs[c][1] for c in range(1, tpl.anchor or 1)]
     log(f"# AUDIT（read-only，唔寫檔）：source_1 共 {len(files)} 檔  "
-        f"／ template 左半 {(tpl.anchor or 1) - 1} 欄、anchor {get_column_letter(tpl.anchor) if tpl.anchor else '?'}\n")
+        f"／ template 左半 {(tpl.anchor or 1) - 1} 欄、anchor {get_column_letter(tpl.anchor) if tpl.anchor else '?'}")
+    log(f"# template 左半名（右對齊基準，尾欄=貼 anchor 前）: {tpl_left}\n")
     for rel in files:
         if any(pp.lower() == "ss" for pp in Path(rel).parts):
             log(f"▸ {rel}   [ss/ → 照抄，跳過分析]")
@@ -920,6 +922,11 @@ def audit(root: Path, tpl: Template, log):
             status = "  ".join(flags) if flags else "✓ 全對齊"
             log(f"    · {sn!r}  anchor={get_column_letter(anchor)}  左半{leftn}欄(offset{offset:+d})  "
                 f"項目{len(projs)}  調整類型欄{adjn}  →  {status}")
+            if leftn != tleft:                        # E：印左半名，眼睇右對齊落邊
+                src_left = [col_gs[c][1] for c in range(1, anchor)]
+                log(f"        左半名(source): {src_left}")
+                log(f"        右對齊落 template 欄 {get_column_letter(offset + 1)}..{get_column_letter(tpl.anchor - 1)}"
+                    f"（template 頭 {offset} 欄留空）")
             for sc, g, s in unm:
                 log(f"        ⚠ 漏: 欄{get_column_letter(sc)} ({g} | {s})")
             if not flags:
