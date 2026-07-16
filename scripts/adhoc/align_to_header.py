@@ -295,8 +295,10 @@ def extract(ws, log) -> tuple[list[Project], int, int, dict[int, str], int]:
 
 
 def _is_adj_type(grp: str, sub: str, raw: str) -> bool:
-    """潛在調整組內、唔係 非類型欄 → 當調整類型。靠分組名含『潛在調整』。"""
-    if "潛在調整" not in grp and "投資金額的潛在調整" not in grp:
+    """只認「投資金額的潛在調整事項及調整後金額」拆解組嘅調整類型欄。
+    要排除「與承批公司溝通潛在調整事項…」溝通組（組名一樣含『潛在調整』，
+    但佢啲欄係文字工作流，唔係金額拆解）。"""
+    if "潛在調整" not in grp or "溝通" in grp:
         return False
     return sub not in ADJ_NON_TYPE
 
@@ -495,7 +497,14 @@ def build_overlay(path: Path, log) -> dict[str, dict]:
             continue
         found = 0
         for p in projs:
-            d = {s: v for (g, s), v in p.by_gs.items() if s in OVERLAY_SUBS and _s(v) != ""}
+            d = {}
+            for (g, s), v in p.by_gs.items():
+                if s not in OVERLAY_SUBS or _s(v) == "":
+                    continue
+                # 該關注事項涉及調整金額：source_2 呢格若係文字列舉，唔好蓋我哋算好嘅數字
+                if s == nkey("該關注事項涉及調整金額") and num(v) is None:
+                    continue
+                d[s] = v
             if d:
                 out[_seqkey(p.seq)] = d
                 found += 1
@@ -538,7 +547,11 @@ def preview_sheet(sn, projs, tpl: Template, log):
             g, s = tpl.col_gs[c]
             if s in {nkey("調整原因"), nkey("該關注事項涉及調整金額"), nkey("建議調整金額"),
                      nkey("建議調整後金額"), nkey("建議接納之調整後金額"),
-                     nkey("需溝通關注事項"), nkey("是否需進一步與跨司工作組溝通")}:
+                     nkey("需溝通關注事項"), nkey("是否需進一步與跨司工作組溝通"),
+                     nkey("畢馬威關注事項"), nkey("承批公司的反饋意見"),
+                     nkey("跨司工作組主責部門針對該關注事項已給的反饋意見"),
+                     nkey("KPMG需與跨司工作組進一步確認的問題"),
+                     nkey("跨司工作組最新反饋意見")}:
                 v = cell_value(tpl, c, p)
                 if _s(v):
                     tag = " [source_2]" if s in p.override and _s(p.override[s]) != "" else ""
