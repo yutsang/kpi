@@ -536,6 +536,28 @@ def build_col_plan(tpl: Template, src_anchor: int, src_col_gs: dict, src_maxcol:
     return plan
 
 
+def warn_unmapped_source(tpl: Template, src_anchor: int, src_col_gs: dict, log) -> int:
+    """source 右半欄若冇對應目標 rule、又唔係 seed／調整類型 → data 會靜靜哋唔帶過。
+    示警俾人知邊個範疇有獨有欄名要補 mapping（風險 B）。回未對應欄數。"""
+    referenced = []
+    for c in range(tpl.anchor or 1, tpl.maxcol + 1):
+        rule = tpl.rules[c]
+        if rule[0] == "copy_any":
+            referenced.append((None, canon_sub(rule[1])))
+        elif rule[0] == "copy":
+            referenced.append((rule[1], canon_sub(rule[2])))
+    n = 0
+    for sc, (g, s) in sorted(src_col_gs.items()):
+        if sc < src_anchor or not s:
+            continue
+        if s in ADJ_NON_TYPE or _is_adj_type(g, s, s):
+            continue                               # seed / 調整類型（會入列舉）
+        if not any((rg is None or _grp_match(g, rg)) and s == rs for rg, rs in referenced):
+            log(f"      ⚠ source 欄 {get_column_letter(sc)} ({g}|{s}) 冇對應目標 → data 唔會帶過")
+            n += 1
+    return n
+
+
 # ── 寫一個對齊 sheet（照 source 行序、跟 source 文字 style、column 對位）──────
 def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 src_anchor: int, src_subrow: int, src_col_gs: dict,
@@ -785,6 +807,7 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
             if not preview:
                 light_copy_sheet(out_wb.create_sheet(sn), ws)
             continue
+        warn_unmapped_source(tpl, anchor, col_gs, log)      # 風險 B：漏欄示警
         if overlay:
             apply_overlay(projs, overlay, tpl, log)
         if preview:
