@@ -210,7 +210,7 @@ def find_anchor_col(ws, subrow: int, maxcol: int) -> int | None:
 
 # ── 抽取一個 sheet 嘅項目 ─────────────────────────────────────────────────
 class Project:
-    __slots__ = ("r0", "r1", "left", "by_gs", "adj", "seed", "seq")
+    __slots__ = ("r0", "r1", "left", "by_gs", "adj", "seed", "seq", "override")
 
     def __init__(self, r0, r1):
         self.r0, self.r1 = r0, r1
@@ -219,6 +219,7 @@ class Project:
         self.adj: list[tuple[str, float]] = []  # [(類型顯示名, 金額), ...] 非零
         self.seed: dict[str, object] = {}   # 潛在調整合計/調整後投資金額/跨司工作組確認投資金額
         self.seq: str = ""                  # 項目序號名稱（join key，如 "76-吸引外國客源…"）
+        self.override: dict[str, object] = {}  # source_2 覆蓋：canon_sub -> value（為準，蓋過計算值）
 
     def has_adj(self) -> bool:
         """有冇實際調整：有非零列舉類型、或 潛在調整合計 非零。"""
@@ -308,6 +309,14 @@ def build_enum(p: Project) -> str:
 
 
 # ── 解析目標欄值 ──────────────────────────────────────────────────────────
+def cell_value(tpl, c: int, p: Project):
+    """一個表頭右半欄嘅最終值：source_2 覆蓋為準，否則按 rule 計算。"""
+    _grp, sub = tpl.col_gs[c]
+    if sub in p.override and _s(p.override[sub]) != "":
+        return p.override[sub]
+    return resolve(tpl.rules[c], p)
+
+
 def resolve(rule, p: Project):
     kind = rule[0]
     if kind == "blank":
@@ -422,9 +431,9 @@ def write_sheet(ws_out, tpl: Template, projs: list[Project], src_left_anchor: in
                     cell = ws_out.cell(row + i, tgt_left[-k], v)
                     cell._style = copy(tpl.data_style)
                     cell.alignment = _WRAP_TOP
-        # 右半：每欄 resolve 一個值、span 內合併
+        # 右半：每欄取值（source_2 覆蓋優先）、span 內合併
         for c in range(tpl.anchor or 1, tpl.maxcol + 1):
-            val = resolve(tpl.rules[c], p)
+            val = cell_value(tpl, c, p)
             cell = ws_out.cell(row, c, val)
             cell._style = copy(tpl.data_style)
             cell.alignment = _WRAP_TOP
@@ -500,13 +509,8 @@ def apply_overlay(projs, overlay: dict, tpl: Template, log):
         if not d:
             continue
         hits += 1
-        # 直接塞入 by_gs：resolve copy 會攞到；abs_total 用 seed 唔受影響
         for s, v in d.items():
-            # 揾返表頭該 sub 屬邊組，塞 (grp,sub)
-            for c, (g2, s2) in tpl.col_gs.items():
-                if s2 == s:
-                    p.by_gs[(g2, s2)] = v
-                    break
+            p.override[s] = v               # 為準，寫入時蓋過計算值
     log(f"      overlay 命中 {hits}/{len(projs)} 個項目")
 
 
@@ -525,11 +529,13 @@ def preview_sheet(sn, projs, tpl: Template, log):
         for c in range(tpl.anchor or 1, tpl.maxcol + 1):
             g, s = tpl.col_gs[c]
             if s in {nkey("調整原因"), nkey("該關注事項涉及調整金額"), nkey("建議調整金額"),
-                     nkey("建議調整後金額"), nkey("建議接納之調整後金額")}:
-                v = resolve(tpl.rules[c], p)
+                     nkey("建議調整後金額"), nkey("建議接納之調整後金額"),
+                     nkey("需溝通關注事項"), nkey("是否需進一步與跨司工作組溝通")}:
+                v = cell_value(tpl, c, p)
                 if _s(v):
+                    tag = " [source_2]" if s in p.override and _s(p.override[s]) != "" else ""
                     disp = _s(v).replace("\n", " ⏎ ")
-                    log(f"       → 表頭[{get_column_letter(c)} {s}] = {disp[:120]}")
+                    log(f"       → 表頭[{get_column_letter(c)} {s}]{tag} = {disp[:120]}")
     if len(projs) > 6:
         log(f"    …（另 {len(projs)-6} 個項目略）")
 
