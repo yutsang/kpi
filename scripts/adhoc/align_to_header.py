@@ -253,6 +253,36 @@ def project_spans(ws, anchor: int, data0: int, maxrow: int) -> list[tuple[int, i
     return sorted(spans)
 
 
+_RE_ITEM_LABEL = "投資項目序號及名稱"
+
+
+def find_label_col(ws, subrow: int, anchor: int, maxrow: int) -> int | None:
+    """揾「投資項目序號及名稱：」標籤欄（左半、每個項目首行都有）。"""
+    for r in range(subrow + 1, min(subrow + 80, maxrow) + 1):
+        for c in range(1, max(anchor, 2)):
+            if nkey(ws.cell(r, c).value).startswith(_RE_ITEM_LABEL):
+                return c
+    return None
+
+
+def _row_blank(ws, r: int, maxcol: int) -> bool:
+    return all(_s(ws.cell(r, c).value) == "" for c in range(1, maxcol + 1))
+
+
+def spans_by_label(ws, label_col: int, data0: int, maxrow: int, maxcol: int) -> list[tuple[int, int]]:
+    """項目邊界 = 標籤行；一個項目由佢標籤行去到下個標籤行前一行（尾部空行剪走）。
+    唔靠 anchor 合併高度，故唔會漏『佔多過合併高度』嘅項目明細行。"""
+    starts = [r for r in range(data0, maxrow + 1)
+              if nkey(ws.cell(r, label_col).value).startswith(_RE_ITEM_LABEL)]
+    spans = []
+    for i, s in enumerate(starts):
+        e = starts[i + 1] - 1 if i + 1 < len(starts) else maxrow
+        while e > s and _row_blank(ws, e, maxcol):
+            e -= 1
+        spans.append((s, e))
+    return spans
+
+
 def extract(ws, log) -> tuple[list[Project], int, int, dict[int, str], int]:
     maxrow, maxcol = ws.max_row or 0, ws.max_column or 0
     subrow = detect_sub_row(ws, maxrow, maxcol)
@@ -268,7 +298,18 @@ def extract(ws, log) -> tuple[list[Project], int, int, dict[int, str], int]:
     left_cols = [c for c in range(1, anchor)]         # 左半 = anchor 之前
     right_cols = [c for c in range(anchor, maxcol + 1)]
     data0 = subrow + 1
-    spans = project_spans(ws, anchor, data0, maxrow)
+    label_col = find_label_col(ws, subrow, anchor, maxrow)
+    if label_col:
+        spans = spans_by_label(ws, label_col, data0, maxrow, maxcol)
+        am = project_spans(ws, anchor, data0, maxrow)
+        taller = sum(1 for (s, e) in spans
+                     for (a0, a1) in am if a0 == s and (e - s) > (a1 - a0))
+        if taller:
+            log(f"      （項目分段用標籤行：{len(spans)} 個；其中 {taller} 個高過 anchor 合併，"
+                f"已收回被合併切走嘅明細行）")
+    else:
+        spans = project_spans(ws, anchor, data0, maxrow)
+        log("      （揾唔到「投資項目序號及名稱」標籤欄 → 退回用 anchor 合併分段）")
     projs: list[Project] = []
     for r0, r1 in spans:
         p = Project(r0, r1)
