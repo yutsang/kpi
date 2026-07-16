@@ -49,6 +49,22 @@ _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _WRAP_TOP = Alignment(wrap_text=True, vertical="top", horizontal="left")
 
 
+def _grab_style(cell) -> dict:
+    """抄實際 style 物件（唔抄 _style index）—— 跨 workbook 先唔會 index 越界。"""
+    return {"font": copy(cell.font), "fill": copy(cell.fill), "border": copy(cell.border),
+            "alignment": copy(cell.alignment), "nf": cell.number_format,
+            "protection": copy(cell.protection)}
+
+
+def _apply_style(cell, sty: dict) -> None:
+    cell.font = sty["font"]
+    cell.fill = sty["fill"]
+    cell.border = sty["border"]
+    cell.alignment = sty["alignment"]
+    cell.number_format = sty["nf"]
+    cell.protection = sty["protection"]
+
+
 # ── 正規化 ────────────────────────────────────────────────────────────────
 _PUNC = str.maketrans({
     "（": "(", "）": ")", "：": ":", "，": ",", "、": ",", "／": "/",
@@ -426,11 +442,11 @@ class Template:
         for r in range(1, self.subrow + 1):
             for c in range(1, self.maxcol + 1):
                 cell = ws.cell(r, c)
-                self.hdr_cells[(r, c)] = (cell.value, copy(cell._style), cell.number_format)
+                self.hdr_cells[(r, c)] = (cell.value, _grab_style(cell))
         self.widths = {get_column_letter(c): (ws.column_dimensions[get_column_letter(c)].width)
                        for c in range(1, self.maxcol + 1)}
         self.hdr_merges = [str(m) for m in ws.merged_cells.ranges if m.max_row <= self.subrow]
-        self.data_style = copy(ws.cell(self.subrow, self.maxcol)._style)
+        self.data_style = _grab_style(ws.cell(self.subrow, self.maxcol))
         wb.close()
 
     def _attach_rules(self, ws, log):
@@ -459,10 +475,9 @@ class Template:
 # ── 寫一個對齊 sheet ───────────────────────────────────────────────────────
 def write_sheet(ws_out, tpl: Template, projs: list[Project], src_left_anchor: int, log):
     # header 區
-    for (r, c), (v, st, nf) in tpl.hdr_cells.items():
+    for (r, c), (v, sty) in tpl.hdr_cells.items():
         cell = ws_out.cell(r, c, v)
-        cell._style = copy(st)
-        cell.number_format = nf
+        _apply_style(cell, sty)
     for col, w in tpl.widths.items():
         if w:
             ws_out.column_dimensions[col].width = w
@@ -481,13 +496,13 @@ def write_sheet(ws_out, tpl: Template, projs: list[Project], src_left_anchor: in
                 v = src_row[-k]
                 if v is not None:
                     cell = ws_out.cell(row + i, tgt_left[-k], v)
-                    cell._style = copy(tpl.data_style)
+                    _apply_style(cell, tpl.data_style)
                     cell.alignment = _WRAP_TOP
         # 右半：每欄取值（source_2 覆蓋優先）、span 內合併
         for c in range(tpl.anchor or 1, tpl.maxcol + 1):
             val = cell_value(tpl, c, p)
             cell = ws_out.cell(row, c, val)
-            cell._style = copy(tpl.data_style)
+            _apply_style(cell, tpl.data_style)
             cell.alignment = _WRAP_TOP
             cell.border = _BORDER
             if span > 1:
