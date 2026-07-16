@@ -536,9 +536,9 @@ def build_col_plan(tpl: Template, src_anchor: int, src_col_gs: dict, src_maxcol:
     return plan
 
 
-def warn_unmapped_source(tpl: Template, src_anchor: int, src_col_gs: dict, log) -> int:
-    """source 右半欄若冇對應目標 rule、又唔係 seed／調整類型 → data 會靜靜哋唔帶過。
-    示警俾人知邊個範疇有獨有欄名要補 mapping（風險 B）。回未對應欄數。"""
+def unmapped_source_cols(tpl: Template, src_anchor: int, src_col_gs: dict) -> list:
+    """回 [(源欄, 分組, 子標題)]：source 右半欄冇對應目標 rule、又唔係 seed／調整類型
+    → data 會靜靜哋唔帶過（風險 B）。"""
     referenced = []
     for c in range(tpl.anchor or 1, tpl.maxcol + 1):
         rule = tpl.rules[c]
@@ -546,16 +546,22 @@ def warn_unmapped_source(tpl: Template, src_anchor: int, src_col_gs: dict, log) 
             referenced.append((None, canon_sub(rule[1])))
         elif rule[0] == "copy":
             referenced.append((rule[1], canon_sub(rule[2])))
-    n = 0
+    out = []
     for sc, (g, s) in sorted(src_col_gs.items()):
         if sc < src_anchor or not s:
             continue
         if s in ADJ_NON_TYPE or _is_adj_type(g, s, s):
             continue                               # seed / 調整類型（會入列舉）
         if not any((rg is None or _grp_match(g, rg)) and s == rs for rg, rs in referenced):
-            log(f"      ⚠ source 欄 {get_column_letter(sc)} ({g}|{s}) 冇對應目標 → data 唔會帶過")
-            n += 1
-    return n
+            out.append((sc, g, s))
+    return out
+
+
+def warn_unmapped_source(tpl: Template, src_anchor: int, src_col_gs: dict, log) -> int:
+    cols = unmapped_source_cols(tpl, src_anchor, src_col_gs)
+    for sc, g, s in cols:
+        log(f"      ⚠ source 欄 {get_column_letter(sc)} ({g}|{s}) 冇對應目標 → data 唔會帶過")
+    return len(cols)
 
 
 # ── 寫一個對齊 sheet（照 source 行序、跟 source 文字 style、column 對位）──────
@@ -852,12 +858,100 @@ def iter_source1(root: Path):
             yield p.relative_to(root).as_posix()
 
 
+def _is_encrypted(path: Path) -> bool:
+    """加密 OOXML 係 OLE/CFB 容器（magic D0CF11E0）。"""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"\xd0\xcf\x11\xe0"
+    except Exception:
+        return False
+
+
+def _quiet(*_a, **_k):
+    pass
+
+
+# ── read-only 巡查全部 source_1：逐檔逐 sheet 報 A–F 狀態（唔寫檔）─────────────
+def audit(root: Path, tpl: Template, log):
+    files = list(iter_source1(root))
+    fA, fB, fC, fE, fAtt, ok = [], [], [], [], [], []
+    log(f"# AUDIT（read-only，唔寫檔）：source_1 共 {len(files)} 檔  "
+        f"／ template 左半 {(tpl.anchor or 1) - 1} 欄、anchor {get_column_letter(tpl.anchor) if tpl.anchor else '?'}\n")
+    for rel in files:
+        if any(pp.lower() == "ss" for pp in Path(rel).parts):
+            log(f"▸ {rel}   [ss/ → 照抄，跳過分析]")
+            continue
+        src = root / rel
+        enc = "加密" if _is_encrypted(src) else "無密碼"
+        try:
+            wb = load_wb(src)
+        except Exception as e:
+            log(f"▸ {rel}   ✗ 開唔到: {type(e).__name__}: {e}")
+            fA.append(f"{rel} (開唔到)")
+            continue
+        log(f"▸ {rel}   [{enc}]  sheets={wb.sheetnames}")
+        scope, company = infer_scope_company(rel)
+        for sn in wb.sheetnames:
+            ws = wb[sn]
+            if is_attachment_sheet(sn):
+                log(f"    · {sn!r}  附件 → best-effort 照抄")
+                fAtt.append(f"{rel}::{sn}")
+                continue
+            projs, subrow, anchor, gm, maxcol, col_gs, maxrow = extract(ws, _quiet)
+            older = any(y in sn for y in ("2024", "2023", "2022"))
+            if not anchor or not projs:
+                log(f"    · {sn!r}  ✗ 冇 anchor／冇項目 → 對齊唔到,只會照抄"
+                    f"{'（舊年份）' if older else ''}")
+                fA.append(f"{rel}::{sn}")
+                continue
+            leftn = anchor - 1
+            tleft = (tpl.anchor or 1) - 1
+            offset = (tpl.anchor or 1) - anchor
+            unm = unmapped_source_cols(tpl, anchor, col_gs)
+            adjn = sum(1 for _sc, (g, s) in col_gs.items() if _is_adj_type(g, s, s))
+            flags = []
+            if leftn != tleft:
+                flags.append(f"左半{leftn}欄≠template{tleft}(E)"); fE.append(f"{rel}::{sn}")
+            if unm:
+                flags.append(f"漏欄{len(unm)}(B)"); fB.append(f"{rel}::{sn}")
+            if older:
+                flags.append("舊年份會被夾成34欄(C)"); fC.append(f"{rel}::{sn}")
+            status = "  ".join(flags) if flags else "✓ 全對齊"
+            log(f"    · {sn!r}  anchor={get_column_letter(anchor)}  左半{leftn}欄(offset{offset:+d})  "
+                f"項目{len(projs)}  調整類型欄{adjn}  →  {status}")
+            for sc, g, s in unm:
+                log(f"        ⚠ 漏: 欄{get_column_letter(sc)} ({g} | {s})")
+            if not flags:
+                ok.append(f"{rel}::{sn}")
+        of = find_overlay_file(root, scope, company)
+        log(f"    overlay(source_2): {('✓ ' + of.relative_to(root).as_posix()) if of else '✗ 冇對應檔（該檔無覆蓋）'}")
+        wb.close()
+    log("\n" + "=" * 64 + "\n# A–F 風險匯總")
+    log(f"A 對齊唔到(冇anchor/項目)，只會照抄 : {len(fA)}")
+    for x in fA:
+        log(f"    - {x}")
+    log(f"B 有漏欄(會靜靜哋掉數)              : {len(fB)}")
+    for x in fB:
+        log(f"    - {x}")
+    log(f"C 含舊年份 sheet(會一齊夾34欄)      : {len(fC)}")
+    for x in fC:
+        log(f"    - {x}")
+    log(f"E 左半欄數 ≠ template(識別欄會右移) : {len(fE)}")
+    for x in fE:
+        log(f"    - {x}")
+    log(f"F 附件(best-effort 照抄)           : {len(fAtt)}")
+    log(f"✓ 全對齊冇 flag 嘅 sheet           : {len(ok)}")
+    log("D 加密：audit 唔加密；實跑每檔會用 dicj_kpmg 重加密，只有 log 出「⚠ 加密失敗」先算 fail")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="ad-hoc/workspace")
     ap.add_argument("--header-file", default="表頭.xlsx")
     ap.add_argument("--only", help="淨處理呢一個相對 root 嘅檔（驗證用）")
     ap.add_argument("--all", action="store_true", help="批 source_1 全部檔")
+    ap.add_argument("--audit", action="store_true",
+                    help="read-only 巡查全部 source_1，逐檔逐 sheet 報 A–F 風險（唔寫檔）")
     ap.add_argument("--preview", action="store_true", help="只吐抽取+映射文字，唔寫 xlsx")
     ap.add_argument("--with-overlay", action="store_true", help="套 source_2 per-範疇覆蓋")
     ap.add_argument("--fill-zero-adj", action="store_true",
@@ -882,6 +976,13 @@ def main():
     tpl = Template(hf, log)
     log(f"# 表頭 template：{tpl.maxcol} 欄, 子表頭 row{tpl.subrow}, anchor 欄 "
         f"{get_column_letter(tpl.anchor) if tpl.anchor else '?'}")
+
+    if a.audit:
+        audit(root, tpl, log)
+        rp = root / "_align_audit.txt"
+        rp.write_text("\n".join(lines), encoding="utf-8")
+        print(f"\n✓ audit 寫入 {rp.resolve()}（貼返嚟俾我）")
+        return
 
     if a.only:
         targets = [a.only]
