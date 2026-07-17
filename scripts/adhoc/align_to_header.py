@@ -314,6 +314,26 @@ def project_spans(ws, anchor: int, data0: int, maxrow: int) -> list[tuple[int, i
 
 
 _RE_ITEM_LABEL = "投資項目序號及名稱"
+_RE_ITEM_LABEL_NK = nkey(_RE_ITEM_LABEL)
+# 項目碼：76- / CE001- / OPCE006- / 項目3-（英文碼 0-5 字母 + 數字，或「項目N」）
+_RE_SEQ_CODE = re.compile(r"^(?:[A-Za-z]{0,5}\d+|項目\d+)\s*[-–]")
+
+
+def _derive_seq(first: list[str]) -> str:
+    """項目 join key 名：優先攞「投資項目序號及名稱：」label 後面嗰格（VML/Wynn 名喺隔籬格），
+    否則攞似項目碼（76-/CE001-/項目3-）嘅格，最後退回次欄。"""
+    for i, x in enumerate(first):
+        if nkey(x).startswith(_RE_ITEM_LABEL_NK):
+            tail = re.sub(r"^.*?投資項目序號及名稱[:：]?\s*", "", x).strip()   # 同格已附名（SJM）
+            if tail:
+                return tail
+            for y in first[i + 1:]:                                          # 名喺 label 右邊格
+                if _s(y):
+                    return _s(y)
+    for x in first:                                                          # 直接似項目碼嘅格
+        if _RE_SEQ_CODE.match(x):
+            return x
+    return first[1] if len(first) > 1 else (first[0] if first else "")
 
 
 def find_label_col(ws, subrow: int, anchor: int, maxrow: int) -> int | None:
@@ -377,7 +397,7 @@ def extract(ws, log) -> tuple[list[Project], int, int, dict[int, str], int]:
             p.left.append([ws.cell(r, c).value for c in left_cols])
         # 序號名稱 join key = 左半第一行第一個似 "數字-名" 或次欄
         first = [ _s(x) for x in (p.left[0] if p.left else []) ]
-        p.seq = next((x for x in first if re.match(r"^\d+\s*[-–]", x)), (first[1] if len(first) > 1 else (first[0] if first else "")))
+        p.seq = _derive_seq(first)
         for c in right_cols:
             grp, sub = col_gs[c]
             val = merged_val(ws, c, r0, r1)
@@ -718,8 +738,14 @@ def build_overlay(path: Path, log) -> dict[str, dict]:
 
 
 def _seqkey(seq: str) -> str:
-    m = re.match(r"^\s*(\d+)", _s(seq))
-    return m.group(1) if m else nkey(seq)
+    """join key：去 label 前綴後，攞項目碼（76/CE001/項目3）做鍵；否則純數字或全名 fallback。
+    source_1／source_2 兩邊都行同一 _derive_seq→_seqkey，同一項目 → 同一鍵，先對得返。"""
+    s = re.sub(r"^.*?投資項目序號及名稱[:：]?\s*", "", _s(seq)).strip()
+    m = re.match(r"^([A-Za-z]{0,5}\d+|項目\d+)\s*[-–]", s)
+    if m:
+        return nkey(m.group(1))
+    m2 = re.match(r"^\s*(\d+)", s)
+    return m2.group(1) if m2 else nkey(s)
 
 
 def apply_overlay(projs, overlay: dict, tpl: Template, log):
