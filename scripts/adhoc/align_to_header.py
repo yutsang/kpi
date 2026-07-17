@@ -780,6 +780,17 @@ def is_attachment_sheet(name: str) -> bool:
     return any(k in name for k in ("附件", "承批公司附件", "attach", "Attach"))
 
 
+def is_junk_sheet(name: str) -> bool:
+    """UpSlide 外掛留低嘅垃圾 sheet（UPSLIDE_Undo 等）→ 唔抄。"""
+    return name.strip().upper().startswith("UPSLIDE")
+
+
+def is_dup_file(rel: str) -> bool:
+    """使用者為咗開嚟 check 而整嘅同名副本（… - Copy / 副本 / 複本）→ 批次跳過。"""
+    stem = Path(rel).stem
+    return any(k in stem for k in (" - Copy", "-Copy", "- Copy", "副本", "複本"))
+
+
 def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
                  preview: bool, with_overlay: bool, log):
     src = root / rel
@@ -803,6 +814,9 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
     out_wb.remove(out_wb.active)
     for sn in wb.sheetnames:
         ws = wb[sn]
+        if is_junk_sheet(sn):
+            log(f"  ── sheet {sn!r}：外掛垃圾 sheet → 唔抄（跳過）")
+            continue
         if is_attachment_sheet(sn):
             log(f"  ── sheet {sn!r}：附件 → 原樣照抄（best-effort）")
             if not preview:
@@ -884,6 +898,9 @@ def audit(root: Path, tpl: Template, log):
         if any(pp.lower() == "ss" for pp in Path(rel).parts):
             log(f"▸ {rel}   [ss/ → 照抄，跳過分析]")
             continue
+        if is_dup_file(rel):
+            log(f"▸ {rel}   [重複檔（使用者 check 用）→ 批次跳過]")
+            continue
         src = root / rel
         enc = "加密" if _is_encrypted(src) else "無密碼"
         try:
@@ -896,6 +913,9 @@ def audit(root: Path, tpl: Template, log):
         scope, company = infer_scope_company(rel)
         for sn in wb.sheetnames:
             ws = wb[sn]
+            if is_junk_sheet(sn):
+                log(f"    · {sn!r}  外掛垃圾 → 唔抄（跳過）")
+                continue
             if is_attachment_sheet(sn):
                 log(f"    · {sn!r}  附件 → best-effort 照抄")
                 fAtt.append(f"{rel}::{sn}")
@@ -1004,6 +1024,9 @@ def main():
         if any(pp.lower() == "ss" for pp in parts):
             if not a.preview:
                 copy_asis(root, rel, out_dir, log)
+            continue
+        if a.all and is_dup_file(rel):
+            log(f"  ⏭ 跳過重複檔（使用者 check 用）: {rel}")
             continue
         try:
             process_file(root, rel, tpl, out_dir, a.preview, a.with_overlay, log)
