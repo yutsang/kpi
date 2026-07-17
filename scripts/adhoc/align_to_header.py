@@ -200,6 +200,9 @@ OVERLAY_SUBS = [nkey(x) for x in
                  "KPMG需與跨司工作組進一步確認的問題", "跨司工作組最新反饋意見",
                  "畢馬威關注事項", "承批公司的反饋意見"]]
 
+# 項目組個邊唔按項目合併呢啲欄（右半仍逐項目寫值，但唔 merge 落 span）——#4/#5
+NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通")}   # #5 AA 欄待 dump 確認後加入
+
 
 # ── I/O ──────────────────────────────────────────────────────────────────
 def load_wb(path: Path):
@@ -538,6 +541,7 @@ class Template:
                 self.hdr_cells[(r, c)] = (cell.value, _grab_style(cell))
         self.widths = {get_column_letter(c): (ws.column_dimensions[get_column_letter(c)].width)
                        for c in range(1, self.maxcol + 1)}
+        self.row_heights = {r: ws.row_dimensions[r].height for r in range(1, self.subrow + 1)}
         self.hdr_merges = [str(m) for m in ws.merged_cells.ranges if m.max_row <= self.subrow]
         self.data_style = _grab_style(ws.cell(self.subrow, self.maxcol))
         wb.close()
@@ -625,6 +629,9 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
     for col, w in tpl.widths.items():
         if w:
             ws_out.column_dimensions[col].width = w
+    for r, h in tpl.row_heights.items():                 # #6 表頭行高跟 表頭.xlsx
+        if h is not None:
+            ws_out.row_dimensions[r].height = h
     for m in tpl.hdr_merges:
         ws_out.merge_cells(m)
 
@@ -716,9 +723,12 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
             src_row += 1
 
     # 2) merges：右半項目 span 內合併（全部 cell 已有框 → 四邊齊）
+    #    #4/#5：NO_MERGE_SUBS 個啲欄項目組唔合併 → 跳過（值仍寫喺 anchor 行）
     for orow, span, _r0 in proj_spans_out:
         if span > 1:
             for c in right:
+                if tpl.col_gs[c][1] in NO_MERGE_SUBS:
+                    continue
                 ws_out.merge_cells(start_row=orow, end_row=orow + span - 1,
                                    start_column=c, end_column=c)
     # 非項目行嘅橫向合併（小標題橫跨幾欄）→ 重映射後保留
@@ -731,6 +741,16 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
             if t0 and t1 and t1 > t0:
                 ws_out.merge_cells(start_row=row_of[sr], end_row=row_of[sr],
                                    start_column=min(t0, t1), end_column=max(t0, t1))
+    # #6 資料行高：跟返 source 原檔（項目 span 逐行對 + 非項目行對）
+    src_to_out = {}
+    for orow, span, r0 in proj_spans_out:
+        for i in range(span):
+            src_to_out[r0 + i] = orow + i
+    src_to_out.update(row_of)
+    for sr, orow in src_to_out.items():
+        h = ws_src.row_dimensions[sr].height
+        if h is not None:
+            ws_out.row_dimensions[orow].height = h
     return out_row
 
 
