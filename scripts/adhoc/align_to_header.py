@@ -473,11 +473,10 @@ def resolve(rule, p: Project):
         n = num(p.seed.get(nkey("潛在調整合計")))
         return abs(n) if n is not None else None
     if kind == "seed":
-        key = nkey(rule[1])
-        if (GATE_NOADJ and not p.has_adj()
-                and key in (nkey("潛在調整合計"), nkey("調整後投資金額"))):
-            return None                      # 冇調整 → 建議調整/建議調整後金額 留空（唔填 0）
-        return p.seed.get(key)
+        # 建議調整金額(←潛在調整合計) / 建議調整後金額(←調整後投資金額) / 建議接納之調整後金額
+        # 一律跟 source_1（default source_1；冇調整都照顯示 source_1 數，唔 blank、唔填 0 覆蓋）。
+        # source_2 覆蓋唔掂呢幾欄（唔喺 OVERLAY_SUBS）→ 一定係 source_1 為底。
+        return p.seed.get(nkey(rule[1]))
     return None
 
 
