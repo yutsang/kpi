@@ -282,11 +282,13 @@ class Project:
         self.override: dict[str, object] = {}  # source_2 覆蓋：canon_sub -> value（為準，蓋過計算值）
 
     def has_adj(self) -> bool:
-        """有冇實際調整：有非零列舉類型、或 潛在調整合計 非零。"""
+        """有冇實際調整：有非零列舉類型、或可推得非零調整總額。
+        期後頁常見冇逐項拆解、亦冇填『潛在調整合計』，只填 調整後投資金額＋申報投資金額
+        → 要用 _adj_total（同 build_enum 一致）先開得閘，否則 enum 永遠被 gate 走（dead code）。"""
         if self.adj:
             return True
-        n = num(self.seed.get(nkey("潛在調整合計")))
-        return n is not None and abs(n) > 1e-9
+        t = _adj_total(self)
+        return t is not None and abs(t) > 1e-9
 
 
 def merged_val(ws, c: int, r0: int, r1: int):
@@ -498,8 +500,8 @@ def resolve(rule, p: Project):
     if kind == "abs_total":
         if GATE_NOADJ and not p.has_adj():
             return None
-        n = num(p.seed.get(nkey("潛在調整合計")))
-        return abs(n) if n is not None else None
+        t = _adj_total(p)                       # 同 enum 一致：合計 → 否則 調整後−申報
+        return abs(t) if t is not None else None
     if kind == "seed":
         # 建議調整金額(←潛在調整合計) / 建議調整後金額(←調整後投資金額) / 建議接納之調整後金額
         # 一律跟 source_1（default source_1；冇調整都照顯示 source_1 數，唔 blank、唔填 0 覆蓋）。
