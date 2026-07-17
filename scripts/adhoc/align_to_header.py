@@ -349,15 +349,27 @@ def _row_blank(ws, r: int, maxcol: int) -> bool:
     return all(_s(ws.cell(r, c).value) == "" for c in range(1, maxcol + 1))
 
 
+def _is_band_row(ws, r: int, maxcol: int) -> bool:
+    """中間重複表頭帶：一個新『非博彩投資項目性質範疇』開始時，會重覆一條
+    「非博彩投資項目性質 / 金額」+「資料要求」表頭帶（B:C 合併）。呢啲行係範疇分隔，
+    唔屬任何項目 → 唔可以併入上一個項目 span、要獨立過帶。"""
+    for c in range(1, min(maxcol, 6) + 1):
+        k = nkey(ws.cell(r, c).value)
+        if k.startswith("非博彩投資項目性質") or k == "資料要求":
+            return True
+    return False
+
+
 def spans_by_label(ws, label_col: int, data0: int, maxrow: int, maxcol: int) -> list[tuple[int, int]]:
-    """項目邊界 = 標籤行；一個項目由佢標籤行去到下個標籤行前一行（尾部空行剪走）。
-    唔靠 anchor 合併高度，故唔會漏『佔多過合併高度』嘅項目明細行。"""
+    """項目邊界 = 標籤行；一個項目由佢標籤行去到下個標籤行前一行（尾部空行 / 範疇表頭帶剪走）。
+    唔靠 anchor 合併高度，故唔會漏『佔多過合併高度』嘅項目明細行；但下一個範疇嘅重覆表頭帶
+    （非博彩投資項目性質 / 資料要求）唔可以被吞入上一個項目 → 由尾剪走、獨立過帶。"""
     starts = [r for r in range(data0, maxrow + 1)
               if nkey(ws.cell(r, label_col).value).startswith(_RE_ITEM_LABEL)]
     spans = []
     for i, s in enumerate(starts):
         e = starts[i + 1] - 1 if i + 1 < len(starts) else maxrow
-        while e > s and _row_blank(ws, e, maxcol):
+        while e > s and (_row_blank(ws, e, maxcol) or _is_band_row(ws, e, maxcol)):
             e -= 1
         spans.append((s, e))
     return spans
@@ -431,10 +443,26 @@ def _is_adj_type(grp: str, sub: str, raw: str) -> bool:
     return sub not in ADJ_NON_TYPE
 
 
+def _adj_total(p: Project):
+    """項目調整總額：優先『潛在調整合計』；否則『調整後投資金額 − 申報投資金額』。"""
+    n = num(p.seed.get(nkey("潛在調整合計")))
+    if n is not None:
+        return n
+    after = num(p.seed.get(nkey("調整後投資金額")))
+    before = num(p.seed.get(nkey("申報投資金額")))
+    if after is not None and before is not None:
+        return after - before
+    return None
+
+
 def build_enum(p: Project) -> str:
     lines = []
     for i, (typ, amt) in enumerate(p.adj, 1):
         lines.append(f"{i}、{typ}：{fmt_amt(abs(amt))}萬澳門元")
+    if not lines:                       # 只有調整總數、冇逐項拆解（期後常見）→ 用總額補一條
+        t = _adj_total(p)
+        if t is not None and abs(t) > 1e-9:
+            lines.append(f"1、投資金額調整：{fmt_amt(abs(t))}萬澳門元")
     return "\n".join(lines)
 
 
@@ -608,6 +636,36 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
     proj_spans_out: list[tuple[int, int, int]] = []      # (out_row, span, src_r0)
     passthru: list[tuple[int, int]] = []                 # (out_row, src_row) 非項目行
 
+    # ── ② 範疇 roll-up：範疇表頭帶「是否需進一步與跨司工作組溝通」= 是（該範疇任一項目要 source_2 跟進）──
+    col_comm = next((c for c in right
+                     if tpl.col_gs[c][1] == nkey("是否需進一步與跨司工作組溝通")), None)
+    band_key_of: dict[int, int] = {}          # band 行 → 佢所屬範疇 key（連續 band 行嘅首行）
+    group_starts: list[int] = []
+    _prev = None
+    for r in range(src_data0, src_maxrow + 1):
+        if not _is_band_row(ws_src, r, src_maxcol):
+            continue
+        if _prev is not None and r == _prev + 1:
+            band_key_of[r] = group_starts[-1]
+        else:
+            group_starts.append(r); band_key_of[r] = r
+        _prev = r
+
+    def _scope_key(r0: int):
+        cand = [g for g in group_starts if g <= r0]
+        return cand[-1] if cand else None
+
+    def _needs_followup(p: Project) -> bool:
+        if col_comm is not None and _s(cell_value(tpl, col_comm, p)).startswith("是"):
+            return True
+        return any(_s(v) != "" for v in p.override.values())     # 有任何 source_2 覆蓋值 = 有跟進
+
+    roll: dict[int, bool] = {}
+    for p in projs:
+        k = _scope_key(p.r0)
+        if k is not None:
+            roll[k] = roll.get(k, False) or _needs_followup(p)
+
     while src_row <= src_maxrow:
         p = proj_by_start.get(src_row)
         if p is not None:
@@ -647,6 +705,10 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                         if s.value is not None:
                             ws_out.cell(out_row, tc).value = s.value
                         _apply_text_style(ws_out.cell(out_row, tc), s)
+                # 範疇表頭帶 → 填「是否需進一步與跨司工作組溝通」roll-up（方便按範疇 filter）
+                if col_comm is not None and src_row in band_key_of:
+                    ws_out.cell(out_row, col_comm).value = \
+                        "是" if roll.get(band_key_of[src_row], False) else "否"
                 passthru.append((out_row, src_row))
                 out_row += 1
             src_row += 1
