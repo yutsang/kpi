@@ -1157,6 +1157,119 @@ def audit(root: Path, tpl: Template, log):
     log("D 加密：audit 唔加密；實跑每檔會用 dicj_kpmg 重加密，只有 log 出「⚠ 加密失敗」先算 fail")
 
 
+# ── read-only 數字對數（reconciliation）：唔寫檔，查每個項目金額拼唔拼得返 ──────
+TOL_ADJ = 0.5           # 對數容差（萬澳門元）；細過呢個當「拍得住」（避開 rounding）
+
+
+def _project_number_checks(p: Project, tol: float) -> tuple[list[str], list[str]]:
+    """回 (識別_issues, 映射_issues)。
+    識別 = source 本身／我哋抽取有冇拼錯（#3『調整金額弄亂』會喺呢度爆）：
+        · 潛在調整合計 ?= Σ(逐項調整類型)
+        · 調整後投資金額 ?= 申報投資金額 + 調整
+    映射 = 我哋寫落表頭尾段嗰幾個數 ?= source seed（seed／enum／abs_total 邏輯啱唔啱）。"""
+    idi, mpi = [], []
+    total = num(p.seed.get(nkey("潛在調整合計")))
+    before = num(p.seed.get(nkey("申報投資金額")))
+    after = num(p.seed.get(nkey("調整後投資金額")))
+    sigma = sum(a for _t, a in p.adj) if p.adj else None
+    # 識別①：合計 = Σ逐項調整類型
+    if total is not None and sigma is not None and abs(total - sigma) > tol:
+        idi.append(f"潛在調整合計={fmt_amt(total)} ≠ Σ逐項調整={fmt_amt(sigma)}"
+                   f"（差{fmt_amt(total - sigma)}）")
+    # 識別②：調整後 = 申報 + 調整
+    adj_id = total if total is not None else sigma
+    if after is not None and before is not None and adj_id is not None:
+        exp = before + adj_id
+        if abs(after - exp) > tol:
+            idi.append(f"調整後={fmt_amt(after)} ≠ 申報{fmt_amt(before)}+調整{fmt_amt(adj_id)}"
+                       f"={fmt_amt(exp)}（差{fmt_amt(after - exp)}）")
+    # 映射①：建議調整金額 ← 潛在調整合計
+    g_adj = num(resolve(("seed", "潛在調整合計"), p))
+    if g_adj is not None and total is not None and abs(g_adj - total) > tol:
+        mpi.append(f"建議調整金額 寫={fmt_amt(g_adj)} ≠ 潛在調整合計={fmt_amt(total)}")
+    # 映射②：建議調整後金額 ← 調整後投資金額
+    g_after = num(resolve(("seed", "調整後投資金額"), p))
+    if g_after is not None and after is not None and abs(g_after - after) > tol:
+        mpi.append(f"建議調整後金額 寫={fmt_amt(g_after)} ≠ 調整後投資金額={fmt_amt(after)}")
+    # 映射③：該關注事項涉及調整金額 ← |調整總額|
+    g_abs = resolve(("abs_total",), p)
+    tot_abs = _adj_total(p)
+    if g_abs is not None and tot_abs is not None and abs(g_abs - abs(tot_abs)) > tol:
+        mpi.append(f"該關注事項涉及調整金額 寫={fmt_amt(g_abs)} ≠ |調整總額|={fmt_amt(abs(tot_abs))}")
+    # 映射④：調整原因 列舉金額加總（逐項→Σ|類型|；只有總數→|總額|）
+    enum = build_enum(p)
+    if enum:
+        esum = sum(float(x) for x in re.findall(r"[:：]\s*(-?\d+(?:\.\d+)?)\s*萬", enum))
+        exp_e = (sum(abs(a) for _t, a in p.adj) if p.adj
+                 else (abs(tot_abs) if tot_abs is not None else None))
+        if exp_e is not None and abs(esum - exp_e) > tol:
+            mpi.append(f"調整原因 列舉加總={fmt_amt(esum)} ≠ 應有={fmt_amt(exp_e)}")
+    return idi, mpi
+
+
+def verify(root: Path, tpl: Template, tol: float, log):
+    """逐個 source_1 sheet 逐項目對數：識別算式（#3 會爆）＋我哋映射寫嘅數；
+    另出每 sheet／全域 Σ申報／Σ調整後／Σ合計 頂線，俾你同自己 total 拍。唔寫 xlsx。"""
+    files = list(iter_source1(root))
+    n_proj = n_idfail = n_mpfail = 0
+    G_before = G_after = G_total = 0.0
+    log(f"# VERIFY 數字對數（read-only，唔寫檔）：source_1 共 {len(files)} 檔  容差 {fmt_amt(tol)} 萬\n")
+    for rel in files:
+        if any(pp.lower() == "ss" for pp in Path(rel).parts) or is_dup_file(rel):
+            continue
+        try:
+            wb = load_wb(root / rel)
+        except Exception as e:
+            log(f"▸ {rel}   ✗ 開唔到: {type(e).__name__}: {e}")
+            continue
+        printed = False
+        for sn in wb.sheetnames:
+            ws = wb[sn]
+            if is_junk_sheet(sn) or is_attachment_sheet(sn):
+                continue
+            projs, subrow, anchor, gm, maxcol, col_gs, maxrow = extract(ws, _quiet)
+            if not anchor or not projs:
+                continue
+            s_before = s_after = s_total = 0.0
+            fails = []
+            for p in projs:
+                n_proj += 1
+                idi, mpi = _project_number_checks(p, tol)
+                if idi:
+                    n_idfail += 1
+                if mpi:
+                    n_mpfail += 1
+                if idi or mpi:
+                    fails.append((p, idi, mpi))
+                s_before += num(p.seed.get(nkey("申報投資金額"))) or 0
+                s_after += num(p.seed.get(nkey("調整後投資金額"))) or 0
+                s_total += num(p.seed.get(nkey("潛在調整合計"))) or 0
+            G_before += s_before
+            G_after += s_after
+            G_total += s_total
+            if not printed:
+                log(f"▸ {rel}")
+                printed = True
+            log(f"    · {sn!r}  項目{len(projs)}  Σ申報={fmt_amt(s_before)} "
+                f"Σ調整後={fmt_amt(s_after)} Σ合計={fmt_amt(s_total)}"
+                + (f"  ⚠ 對唔到 {len(fails)} 個項目" if fails else "  ✓ 全對得返"))
+            for p, idi, mpi in fails[:25]:
+                for msg in idi:
+                    log(f"        ✗[識別] 「{p.seq}」 rows {p.r0}-{p.r1}: {msg}")
+                for msg in mpi:
+                    log(f"        ✗[映射] 「{p.seq}」 rows {p.r0}-{p.r1}: {msg}")
+        wb.close()
+    log("\n" + "=" * 64 + "\n# 對數匯總")
+    log(f"項目總數                    : {n_proj}")
+    log(f"識別/抽取算式對唔返(調整)   : {n_idfail}   ← #3『調整金額弄亂』會喺呢度爆")
+    log(f"我哋映射寫錯數              : {n_mpfail}   ← 應為 0（seed/enum/abs_total 邏輯）")
+    log(f"Σ申報投資金額              : {fmt_amt(G_before)} 萬")
+    log(f"Σ調整後投資金額            : {fmt_amt(G_after)} 萬")
+    log(f"Σ潛在調整合計              : {fmt_amt(G_total)} 萬")
+    log(f"頂線對數 Σ調整後-Σ申報      : {fmt_amt(G_after - G_before)} 萬  "
+        f"(應 ≈ Σ合計 {fmt_amt(G_total)}，差 {fmt_amt(G_after - G_before - G_total)})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="ad-hoc/workspace")
@@ -1165,6 +1278,10 @@ def main():
     ap.add_argument("--all", action="store_true", help="批 source_1 全部檔")
     ap.add_argument("--audit", action="store_true",
                     help="read-only 巡查全部 source_1，逐檔逐 sheet 報 A–F 風險（唔寫檔）")
+    ap.add_argument("--verify", action="store_true",
+                    help="read-only 對數：逐項目查調整算式＋映射寫嘅數，出 Σ 頂線（唔寫檔）")
+    ap.add_argument("--tol", type=float, default=TOL_ADJ,
+                    help="對數容差（萬澳門元，預設 0.5）")
     ap.add_argument("--preview", action="store_true", help="只吐抽取+映射文字，唔寫 xlsx")
     ap.add_argument("--with-overlay", action="store_true", help="套 source_2 per-範疇覆蓋")
     ap.add_argument("--fill-zero-adj", action="store_true",
@@ -1197,6 +1314,13 @@ def main():
         rp = root / "_align_audit.txt"
         rp.write_text("\n".join(lines), encoding="utf-8")
         print(f"\n✓ audit 寫入 {rp.resolve()}（貼返嚟俾我）")
+        return
+
+    if a.verify:
+        verify(root, tpl, a.tol, log)
+        rp = root / "_align_verify.txt"
+        rp.write_text("\n".join(lines), encoding="utf-8")
+        print(f"\n✓ verify 寫入 {rp.resolve()}（貼返嚟俾我）")
         return
 
     if INSERT_XSGZ_FB_COL and not a.no_extra_col:      # #1 output-only 空白欄
