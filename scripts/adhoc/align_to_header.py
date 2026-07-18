@@ -892,6 +892,30 @@ def find_overlay_file(root: Path, scope: str, company: str) -> Path | None:
     return sorted(cands, key=lambda x: len(x.as_posix()))[0] if cands else None
 
 
+def _concern_enum(ws, p, col_gs) -> str:
+    """#3 source_2：一個項目拆成多個『關注事項』，每個 concern 子區塊喺 該關注事項涉及調整金額／
+    需溝通關注事項 兩欄 per-concern 合併（淨 merge 起點行有值）。逐行掃『該關注事項涉及調整金額』
+    非空數字 → 配同行『需溝通關注事項』做標籤，串成一格列舉（同 調整原因 一致格式）。"""
+    col_amt = next((c for c, (g, s) in col_gs.items()
+                    if s == nkey("該關注事項涉及調整金額")), None)
+    col_txt = next((c for c, (g, s) in col_gs.items()
+                    if s == nkey("需溝通關注事項")), None)
+    if col_amt is None:
+        return ""
+    lines, prev = [], None
+    for r in range(p.r0, p.r1 + 1):
+        a = num(ws.cell(r, col_amt).value)
+        if a is None:
+            continue
+        txt = _s(ws.cell(r, col_txt).value) if col_txt else ""
+        head = re.split(r"[:：]", txt, 1)[0].strip() or "投資金額調整"
+        if (head, a) == prev:            # 該欄若冇 merge、逐行重覆 → 去重
+            continue
+        prev = (head, a)
+        lines.append(f"{len(lines)+1}、{head}：{fmt_amt(abs(a))}萬澳門元")
+    return "\n".join(lines)
+
+
 def build_overlay(path: Path, log) -> dict[str, dict]:
     """source_2 per-範疇檔 → {項目序號: {sub_canon: value}}（掃全部 sheet，只攞 OVERLAY_SUBS）。"""
     try:
@@ -913,10 +937,14 @@ def build_overlay(path: Path, log) -> dict[str, dict]:
             for (g, s), v in p.by_gs.items():
                 if s not in OVERLAY_SUBS or _s(v) == "":
                     continue
-                # 該關注事項涉及調整金額：source_2 呢格若係文字列舉，唔好蓋我哋算好嘅數字
-                if s == nkey("該關注事項涉及調整金額") and num(v) is None:
+                # 該關注事項涉及調整金額：由下面 _concern_enum 統一砌（多關注事項串一格），呢度跳過
+                if s == nkey("該關注事項涉及調整金額"):
                     continue
                 d[s] = v
+            # #3：多關注事項 → 逐條列舉入『該關注事項涉及調整金額』（冇就留返 |合計| fallback）
+            enum2 = _concern_enum(ws, p, col_gs)
+            if enum2:
+                d[nkey("該關注事項涉及調整金額")] = enum2
             if d:
                 out[_seqkey(p.seq)] = d
                 found += 1
