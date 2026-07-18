@@ -42,8 +42,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment, Border, Font, Side
 try:
     from openpyxl.cell.rich_text import CellRichText as _CellRichText, TextBlock as _TextBlock
+    from openpyxl.cell.text import InlineFont as _InlineFont
 except ImportError:
-    _CellRichText = _TextBlock = None  # openpyxl < 3.1 冇 CellRichText
+    _CellRichText = _TextBlock = _InlineFont = None  # openpyxl < 3.1 冇 CellRichText
 
 PASSWORD = "dicj_kpmg"
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
@@ -92,7 +93,7 @@ def _make_rich_lookup(src) -> "dict[str, object]":
     src = Path（直接開 zip）或 io.BytesIO（解密後的 buffer）。
     用文字 key 而唔用 shared-string index——因為 openpyxl 讀入後已把 index 換成 plain string，
     所以 cell.value 對應嘅 key 就係 CellRichText 各 run.text 的串接。"""
-    if _CellRichText is None or _TextBlock is None:
+    if _CellRichText is None or _TextBlock is None or _InlineFont is None:
         return {}
     import zipfile as _zf, xml.etree.ElementTree as _ET
     NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
@@ -133,7 +134,7 @@ def _make_rich_lookup(src) -> "dict[str, object]":
                 if fn is not None:
                     kw['name'] = fn.get('val', 'Calibri')
             if kw:
-                parts.append(_TextBlock(font=Font(**kw), text=txt))
+                parts.append(_TextBlock(font=_InlineFont(**kw), text=txt))
                 any_font = True
             else:
                 parts.append(txt)
