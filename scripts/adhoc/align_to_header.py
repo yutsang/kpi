@@ -11,7 +11,8 @@ align_to_header.py — 對齊 source_1 全部檔到 表頭.xlsx 標準格式（3
 映射（group-aware，因第一輪/第二輪子表頭重複，用 (分組,子表頭) 複合鍵）：見 TARGET_SCHEMA。
   尾段：調整原因 = 各非零調整類型「一格列舉」`1、{類型}：{|金額|}萬澳門元`＼n；
         建議調整金額←潛在調整合計(連正負)、建議調整後金額←調整後投資金額、
-        建議接納之調整後金額←跨司工作組確認投資金額；該關注事項涉及調整金額←|潛在調整合計|。
+        建議接納之調整後金額←跨司工作組確認投資金額；
+        該關注事項涉及調整金額←source_2 多 concern 加總（numeric）or |潛在調整合計|（fallback）。
   source_2 per-範疇檔按 承批公司+範疇+項目序號 覆蓋審查欄（--with-overlay，source_2 為準）。
 
 輸出：<root>\\_aligned\\ 鏡像 source_1 樹（**永不寫入 source 樹**）。ss/ 同 附件 = 原檔照抄/best-effort。
@@ -201,10 +202,9 @@ OVERLAY_SUBS = [nkey(x) for x in
                  "KPMG需與跨司工作組進一步確認的問題", "跨司工作組最新反饋意見",
                  "畢馬威關注事項", "承批公司的反饋意見"]]
 
-# 項目組個邊唔按項目合併呢啲欄（右半唔 merge 落 span，改逐行填同一個值）——#4/#5
-# dump 確認：表頭 W(23)=是否需進一步與跨司工作組溝通、AA(27)=KPMG需與跨司工作組進一步確認的問題
-NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通"),
-                 nkey("KPMG需與跨司工作組進一步確認的問題")}
+# 唔按項目合併嘅欄（右半唔 merge 落 span，改逐行填同一個值）
+# 只剩 W(23)=是否需進一步與跨司工作組溝通；AA(KPMG需與跨司)已改回按項目合併
+NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通")}
 
 
 # ── I/O ──────────────────────────────────────────────────────────────────
@@ -715,6 +715,35 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
     for m in tpl.hdr_merges:
         ws_out.merge_cells(m)
 
+    # #1 前置行（rows 1 → src_subrow-2）：公司名/日期/標題等 source 專有內容
+    # 覆蓋 template 同位置（template 呢幾行係通用格式，source 有公司名）
+    if src_subrow > 2:
+        for sr in range(1, src_subrow - 1):
+            for sc in range(1, src_maxcol + 1):
+                s_cell = ws_src.cell(sr, sc)
+                if s_cell.value is not None:
+                    t_cell = ws_out.cell(sr, sc)
+                    t_cell.value = s_cell.value
+                    _apply_text_style(t_cell, s_cell)
+        # 前置行橫向合併（唔衝突就照抄，衝突就跳過）
+        for mg in ws_src.merged_cells.ranges:
+            if 1 <= mg.min_row <= mg.max_row <= src_subrow - 2:
+                try:
+                    ws_out.merge_cells(
+                        start_row=mg.min_row, end_row=mg.max_row,
+                        start_column=mg.min_col, end_column=mg.max_col)
+                except Exception:
+                    pass
+
+    # #2 形狀/文字框：私密Confidencial 印章等（best-effort deepcopy drawing XML）
+    try:
+        from copy import deepcopy as _dc
+        drw = getattr(ws_src, "_drawing", None)
+        if drw is not None:
+            ws_out._drawing = _dc(drw)
+    except Exception:
+        pass
+
     plan = build_col_plan(tpl, src_anchor, src_col_gs, src_maxcol)
     inv = {sc: c for c, k in plan.items() if k[0] == "src" for sc in (k[1],)}  # 源欄→目標欄
     proj_by_start = {p.r0: p for p in projs}
@@ -781,8 +810,8 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 overridden = sub in p.override and _s(p.override[sub]) != ""
                 if k[0] == "src" and not overridden:
                     _apply_text_style(cell, ws_src.cell(p.r0, k[1]))
-                # #5：唔合併嘅欄（W 是否需進一步 / AA KPMG需與跨司）逐行填同一個值，
-                #     否則 unmerge 之後其餘行會留白 →「有些是否冇填」。
+                # W(是否需進一步與跨司工作組溝通)：唔合併 → 逐行填同一值，
+                #   否則 unmerge 後其餘行留白。AA(KPMG需與跨司)已改回按項目合併。
                 if sub in NO_MERGE_SUBS and span > 1 and _s(v) != "":
                     for i in range(1, span):
                         rep = ws_out.cell(out_row + i, c)
@@ -812,7 +841,7 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
             src_row += 1
 
     # 2) merges：右半項目 span 內合併（全部 cell 已有框 → 四邊齊）
-    #    #4/#5：NO_MERGE_SUBS 個啲欄項目組唔合併 → 跳過（值仍寫喺 anchor 行）
+    #    NO_MERGE_SUBS 欄（W 是否需進一步）唔合併 → 跳過（逐行已填值）
     for orow, span, _r0 in proj_spans_out:
         if span > 1:
             for c in right:
@@ -875,6 +904,14 @@ def light_copy_sheet(ws_out, ws_src):
                 pass
     except Exception:
         pass
+    # #2 形狀/文字框 drawing（私密Confidencial 等 TextBox）
+    try:
+        from copy import deepcopy as _dc
+        drw = getattr(ws_src, "_drawing", None)
+        if drw is not None:
+            ws_out._drawing = _dc(drw)
+    except Exception:
+        pass
 
 
 # ── source_2 overlay ──────────────────────────────────────────────────────
@@ -892,28 +929,22 @@ def find_overlay_file(root: Path, scope: str, company: str) -> Path | None:
     return sorted(cands, key=lambda x: len(x.as_posix()))[0] if cands else None
 
 
-def _concern_enum(ws, p, col_gs) -> str:
-    """#3 source_2：一個項目拆成多個『關注事項』，每個 concern 子區塊喺 該關注事項涉及調整金額／
-    需溝通關注事項 兩欄 per-concern 合併（淨 merge 起點行有值）。逐行掃『該關注事項涉及調整金額』
-    非空數字 → 配同行『需溝通關注事項』做標籤，串成一格列舉（同 調整原因 一致格式）。"""
+def _concern_sum(ws, p, col_gs) -> float | None:
+    """source_2 多個關注事項嘅調整金額加總（numeric，方便 Excel 加總）。
+    逐行掃『該關注事項涉及調整金額』非空數字，去重後加 |abs|，返回總和；冇 → None。"""
     col_amt = next((c for c, (g, s) in col_gs.items()
                     if s == nkey("該關注事項涉及調整金額")), None)
-    col_txt = next((c for c, (g, s) in col_gs.items()
-                    if s == nkey("需溝通關注事項")), None)
     if col_amt is None:
-        return ""
-    lines, prev = [], None
+        return None
+    total, prev, found = 0.0, None, False
     for r in range(p.r0, p.r1 + 1):
         a = num(ws.cell(r, col_amt).value)
-        if a is None:
+        if a is None or a == prev:       # 逐行重複（冇 merge）→ 去重
             continue
-        txt = _s(ws.cell(r, col_txt).value) if col_txt else ""
-        head = re.split(r"[:：]", txt, maxsplit=1)[0].strip() or "投資金額調整"
-        if (head, a) == prev:            # 該欄若冇 merge、逐行重覆 → 去重
-            continue
-        prev = (head, a)
-        lines.append(f"{len(lines)+1}、{head}：{fmt_amt(abs(a))}萬澳門元")
-    return "\n".join(lines)
+        prev = a
+        total += abs(a)
+        found = True
+    return total if found else None
 
 
 def build_overlay(path: Path, log) -> dict[str, dict]:
@@ -941,10 +972,10 @@ def build_overlay(path: Path, log) -> dict[str, dict]:
                 if s == nkey("該關注事項涉及調整金額"):
                     continue
                 d[s] = v
-            # #3：多關注事項 → 逐條列舉入『該關注事項涉及調整金額』（冇就留返 |合計| fallback）
-            enum2 = _concern_enum(ws, p, col_gs)
-            if enum2:
-                d[nkey("該關注事項涉及調整金額")] = enum2
+            # source_2 多關注事項 → 各 concern 金額加總（numeric）填入該欄（方便加總）
+            cs = _concern_sum(ws, p, col_gs)
+            if cs is not None:
+                d[nkey("該關注事項涉及調整金額")] = cs
             if d:
                 out[_seqkey(p.seq)] = d
                 found += 1
