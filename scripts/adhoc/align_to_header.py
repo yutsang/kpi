@@ -87,73 +87,70 @@ def _apply_text_style(dst, src_cell) -> None:
                               horizontal=(a.horizontal if a and a.horizontal else "left"))
 
 
-def _make_rich_string_table(wb) -> list:
-    """直接 parse xl/sharedStrings.xml ZIP XML，建 list[str | CellRichText]。
-    openpyxl 對 shared-string rich text 讀入唔穩定；繞過用 ElementTree 最可靠。
-    結果 cache 喺 wb._kpi_rich_table（同一 workbook 只 parse 一次）。"""
+def _make_rich_lookup(src) -> "dict[str, object]":
+    """Parse xl/sharedStrings.xml，返 {plain_text: CellRichText}（只含有 rich text 的 entries）。
+    src = Path（直接開 zip）或 io.BytesIO（解密後的 buffer）。
+    用文字 key 而唔用 shared-string index——因為 openpyxl 讀入後已把 index 換成 plain string，
+    所以 cell.value 對應嘅 key 就係 CellRichText 各 run.text 的串接。"""
     if _CellRichText is None or _TextBlock is None:
-        return []
-    import xml.etree.ElementTree as _ET
+        return {}
+    import zipfile as _zf, xml.etree.ElementTree as _ET
     NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
-    arc = getattr(wb, '_archive', None)
-    if arc is None:
-        return []
     try:
-        with arc.open('xl/sharedStrings.xml') as fh:
-            root = _ET.parse(fh).getroot()
+        if isinstance(src, io.BytesIO):
+            src.seek(0)
+        with _zf.ZipFile(src, 'r') as zf:
+            if 'xl/sharedStrings.xml' not in zf.namelist():
+                return {}
+            with zf.open('xl/sharedStrings.xml') as fh:
+                root = _ET.parse(fh).getroot()
     except Exception:
-        return []
-    table = []
+        return {}
+    lookup: dict = {}
     for si in root.findall(f'{{{NS}}}si'):
-        runs = si.findall(f'{{{NS}}}r')
-        if not runs:                        # 純文字
-            t = si.find(f'{{{NS}}}t')
-            table.append((t.text or '') if t is not None else '')
-            continue
+        rs = si.findall(f'{{{NS}}}r')
+        if not rs:
+            continue        # 純文字，唔需要 rich text 處理
         parts, any_font = [], False
-        for r in runs:
+        for r in rs:
             t_el = r.find(f'{{{NS}}}t')
             txt = (t_el.text or '') if t_el is not None else ''
             if not txt:
                 continue
             rpr = r.find(f'{{{NS}}}rPr')
-            if rpr is None:
-                parts.append(txt)
-                continue
-            def _flag(tag, _rpr=rpr):       # closure 綁定每個 run 的 rpr
-                el = _rpr.find(f'{{{NS}}}{tag}')
-                return el is not None and el.get('val', '1') != '0'
-            kw = {}
-            if _flag('b'):  kw['bold']   = True
-            if _flag('i'):  kw['italic'] = True
-            sz = rpr.find(f'{{{NS}}}sz')
-            fn = rpr.find(f'{{{NS}}}rFont')
-            if sz is not None:
-                try: kw['size'] = float(sz.get('val', 11))
-                except Exception: pass
-            if fn is not None:
-                kw['name'] = fn.get('val', 'Calibri')
+            kw: dict = {}
+            if rpr is not None:
+                def _flag(tag, _p=rpr):
+                    el = _p.find(f'{{{NS}}}{tag}')
+                    return el is not None and el.get('val', '1') != '0'
+                if _flag('b'):  kw['bold']   = True
+                if _flag('i'):  kw['italic'] = True
+                sz = rpr.find(f'{{{NS}}}sz')
+                fn = rpr.find(f'{{{NS}}}rFont')
+                if sz is not None:
+                    try: kw['size'] = float(sz.get('val', 11))
+                    except Exception: pass
+                if fn is not None:
+                    kw['name'] = fn.get('val', 'Calibri')
             if kw:
                 parts.append(_TextBlock(font=Font(**kw), text=txt))
                 any_font = True
             else:
                 parts.append(txt)
-        if any_font:
-            table.append(_CellRichText(*parts))
-        else:
-            table.append(''.join(x if isinstance(x, str) else x.text for x in parts))
-    return table
+        if any_font and parts:
+            crt = _CellRichText(*parts)
+            lookup[str(crt)] = crt   # str(CellRichText) = 各 run text 串接 = cell.value
+    return lookup
 
 
-def _rich_val(cell, rich_table: list):
-    """攞 cell 值；若係 shared string 且 rich_table 有 CellRichText → 返 CellRichText。"""
-    if (rich_table
-            and cell.data_type == 's'
-            and isinstance(getattr(cell, '_value', None), int)):
-        idx = cell._value
-        if 0 <= idx < len(rich_table):
-            return rich_table[idx]
-    return cell.value
+def _rich_val(cell, rich_lookup: dict):
+    """若 cell.value 是 str 且 rich_lookup 有對應 CellRichText → 返 CellRichText，保留 bold。"""
+    if not rich_lookup:
+        return cell.value
+    v = cell.value
+    if isinstance(v, str):
+        return rich_lookup.get(v, v)
+    return v
 
 
 def base_grid(cell, data_style: dict) -> None:
@@ -286,9 +283,12 @@ NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通")}
 
 # ── I/O ──────────────────────────────────────────────────────────────────
 def load_wb(path: Path):
-    """非 read-only（要 merged_cells）；加密就 dicj_kpmg 解。"""
+    """非 read-only（要 merged_cells）；加密就 dicj_kpmg 解。
+    load 後立即 build rich-text lookup（zip 仍開，archive 未關），cache 到 wb._kpi_rich_table。"""
     try:
-        return openpyxl.load_workbook(path, data_only=True)
+        wb = openpyxl.load_workbook(path, data_only=True)
+        wb._kpi_rich_table = _make_rich_lookup(path)
+        return wb
     except Exception:
         import msoffcrypto
         buf = io.BytesIO()
@@ -297,7 +297,9 @@ def load_wb(path: Path):
             off.load_key(password=PASSWORD)
             off.decrypt(buf)
         buf.seek(0)
-        return openpyxl.load_workbook(buf, data_only=True)
+        wb = openpyxl.load_workbook(buf, data_only=True)
+        wb._kpi_rich_table = _make_rich_lookup(buf)
+        return wb
 
 
 def num(v):
@@ -779,12 +781,8 @@ def warn_unmapped_source(tpl: Template, src_anchor: int, src_col_gs: dict, log) 
 def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 src_anchor: int, src_subrow: int, src_col_gs: dict,
                 src_maxcol: int, src_maxrow: int, log):
-    # 建 rich-text 查找表（parse sharedStrings.xml ZIP XML，保留 run-level bold）
-    # 同一 workbook 只 parse 一次（cache 喺 wb._kpi_rich_table）
-    _src_wb = ws_src.parent
-    if not hasattr(_src_wb, '_kpi_rich_table'):
-        _src_wb._kpi_rich_table = _make_rich_string_table(_src_wb)
-    _rt = _src_wb._kpi_rich_table      # list[str | CellRichText]
+    # rich-text lookup dict（load_wb 已 build + cache；dict lookup by plain-text key）
+    _rt = getattr(ws_src.parent, '_kpi_rich_table', {})
 
     # 1) header 區（用 template 34 欄標準表頭 + 佢自己嘅 style）
     for (r, c), (v, sty) in tpl.hdr_cells.items():
