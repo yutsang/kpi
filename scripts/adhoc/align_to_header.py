@@ -985,9 +985,12 @@ def preview_sheet(sn, projs, tpl: Template, log):
         log(f"       左半首行: {[_s(x) for x in (p.left[0] if p.left else [])][:6]}")
         if p.adj:
             log(f"       調整類型(非零): " + "; ".join(f"{t}={fmt_amt(a)}" for t, a in p.adj))
-        log(f"       seed: 潛在調整合計={_s(p.seed.get(nkey('潛在調整合計')))} "
+        t = _adj_total(p)
+        log(f"       seed: 申報={_s(p.seed.get(nkey('申報投資金額')))} "
+            f"潛在調整合計={_s(p.seed.get(nkey('潛在調整合計')))} "
             f"調整後={_s(p.seed.get(nkey('調整後投資金額')))} "
-            f"跨司確認={_s(p.seed.get(nkey('跨司工作組確認投資金額')))}")
+            f"跨司確認={_s(p.seed.get(nkey('跨司工作組確認投資金額')))} "
+            f"→_adj_total={fmt_amt(t) if t is not None else 'None'} has_adj={p.has_adj()}")
         # 表頭尾段會寫乜
         for c in range(tpl.anchor or 1, tpl.maxcol + 1):
             g, s = tpl.col_gs[c]
