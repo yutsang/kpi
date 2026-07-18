@@ -40,6 +40,10 @@ from pathlib import Path
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment, Border, Side
+try:
+    from openpyxl.cell.rich_text import CellRichText as _CellRichText
+except ImportError:
+    _CellRichText = None  # openpyxl < 3.1 冇 CellRichText
 
 PASSWORD = "dicj_kpmg"
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
@@ -70,8 +74,12 @@ def _apply_style(cell, sty: dict) -> None:
 
 def _apply_text_style(dst, src_cell) -> None:
     """跟 source 嘅文字外觀（字體/顏色/底色/數字格式）；框由我哋統一格線負責、
-    對齊保留 wrap+top 但借 source 嘅水平對齊。"""
-    dst.font = copy(src_cell.font)
+    對齊保留 wrap+top 但借 source 嘅水平對齊。
+    Rich text（CellRichText）唔覆蓋 cell-level font，保留 run-level bold。"""
+    # CellRichText 的 run 有自己 font（含 bold），設 cell-level font 會干擾 → 跳過
+    is_rich = _CellRichText is not None and isinstance(dst.value, _CellRichText)
+    if not is_rich:
+        dst.font = copy(src_cell.font)
     dst.fill = copy(src_cell.fill)
     dst.number_format = src_cell.number_format
     a = src_cell.alignment
@@ -809,7 +817,11 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 _grp, sub = tpl.col_gs[c]
                 overridden = sub in p.override and _s(p.override[sub]) != ""
                 if k[0] == "src" and not overridden:
-                    _apply_text_style(cell, ws_src.cell(p.r0, k[1]))
+                    src_cell = ws_src.cell(p.r0, k[1])
+                    # 直接從 source 抄 value（保留 CellRichText rich text / run-level bold）
+                    if src_cell.value is not None:
+                        cell.value = src_cell.value
+                    _apply_text_style(cell, src_cell)
                 # W(是否需進一步與跨司工作組溝通)：唔合併 → 逐行填同一值，
                 #   否則 unmerge 後其餘行留白。AA(KPMG需與跨司)已改回按項目合併。
                 if sub in NO_MERGE_SUBS and span > 1 and _s(v) != "":
