@@ -908,7 +908,7 @@ def _concern_enum(ws, p, col_gs) -> str:
         if a is None:
             continue
         txt = _s(ws.cell(r, col_txt).value) if col_txt else ""
-        head = re.split(r"[:：]", txt, 1)[0].strip() or "投資金額調整"
+        head = re.split(r"[:：]", txt, maxsplit=1)[0].strip() or "投資金額調整"
         if (head, a) == prev:            # 該欄若冇 merge、逐行重覆 → 去重
             continue
         prev = (head, a)
