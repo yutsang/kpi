@@ -45,6 +45,7 @@ EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
 HDR_SCAN = 12                       # 掃頭幾行揾子表頭行
 GATE_NOADJ = True                   # 冇調整嘅項目 → 建議調整欄留空（唔填 0）；--fill-zero-adj 關掉
 ENCRYPT_OUT = True                  # 輸出用 dicj_kpmg 重新加密（保留 source 密碼）；--no-encrypt 關掉
+INSERT_XSGZ_FB_COL = True           # #1：輸出喺『承批公司的反饋意見』後插空白『跨司工作組的反饋意見』欄；--no-extra-col 關掉
 _THIN = Side(style="thin", color="BFBFBF")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _WRAP_TOP = Alignment(wrap_text=True, vertical="top", horizontal="left")
@@ -586,6 +587,63 @@ class Template:
             rules[c] = match
         return rules
 
+    def insert_blank_col(self, after_sub: str, grp: str, sub: str, log=None) -> None:
+        """#1：喺 `after_sub` 嗰欄之後插一條 **output-only** 空白欄（留白、之後按項目合併）。
+        表頭.xlsx 冇呢欄 → 純粹喺 template 資料結構加一欄，令輸出多一欄；由項目名驅動（唔靠欄位）。
+        右半欄（唔喺 NO_MERGE_SUBS）會照常按項目 span 合併；rule=blank → 值永遠空。"""
+        from openpyxl.utils import range_boundaries
+        tgt = canon_sub(after_sub)
+        P = None
+        for c in range(self.anchor or 1, self.maxcol + 1):
+            if self.col_gs[c][1] == tgt:
+                P = c + 1
+                break
+        if P is None:
+            if log:
+                log(f"      ⚠ 插欄揾唔到『{after_sub}』→ 唔插新欄")
+            return
+        old_max = self.maxcol
+        # col_gs / rules / gm 位移（由大到細，避免覆蓋）
+        for c in range(old_max, P - 1, -1):
+            self.col_gs[c + 1] = self.col_gs.pop(c)
+            self.rules[c + 1] = self.rules.pop(c)
+            if c in self.gm:
+                self.gm[c + 1] = self.gm.pop(c)
+        self.col_gs[P] = (nkey(grp), canon_sub(sub))
+        self.rules[P] = ("blank",)
+        self.gm[P] = nkey(grp)
+        # hdr_cells 位移 + 新欄抄左鄰(P-1)風格；row6 填新子表頭，其餘留空（row5 靠延伸合併蓋住）
+        for r in range(1, self.subrow + 1):
+            for c in range(old_max, P - 1, -1):
+                if (r, c) in self.hdr_cells:
+                    self.hdr_cells[(r, c + 1)] = self.hdr_cells.pop((r, c))
+            nb = self.hdr_cells.get((r, P - 1))
+            style = nb[1] if nb else self.data_style
+            self.hdr_cells[(r, P)] = (sub if r == self.subrow else None, style)
+        self.maxcol = old_max + 1
+        # widths 位移（新欄借左鄰闊度）
+        old_w = dict(self.widths)
+        self.widths = {}
+        for c in range(1, self.maxcol + 1):
+            src = c if c < P else (P - 1 if c == P else c - 1)
+            w = old_w.get(get_column_letter(src))
+            if w is not None:
+                self.widths[get_column_letter(c)] = w
+        # hdr_merges 位移 / 延伸（新欄若喺某組內 → 該組合併延長 1 欄）
+        new_merges = []
+        for mrg in self.hdr_merges:
+            mn_c, mn_r, mx_c, mx_r = range_boundaries(mrg)
+            if mx_c < P:
+                a, b = mn_c, mx_c
+            elif mn_c >= P:
+                a, b = mn_c + 1, mx_c + 1
+            else:
+                a, b = mn_c, mx_c + 1
+            new_merges.append(f"{get_column_letter(a)}{mn_r}:{get_column_letter(b)}{mx_r}")
+        self.hdr_merges = new_merges
+        if log:
+            log(f"      ＋插 output-only 空白欄『{sub}』喺第 {P} 欄（{get_column_letter(P)}）")
+
 
 # ── source 欄 → 目標欄 對位圖 ───────────────────────────────────────────────
 def build_col_plan(tpl: Template, src_anchor: int, src_col_gs: dict, src_maxcol: int) -> dict:
@@ -1113,6 +1171,8 @@ def main():
                     help="冇調整都照抄 0（預設留空）")
     ap.add_argument("--no-encrypt", action="store_true",
                     help="輸出唔加密（預設用 dicj_kpmg 重新加密）")
+    ap.add_argument("--no-extra-col", action="store_true",
+                    help="唔插『跨司工作組的反饋意見』output-only 空白欄（#1）")
     ap.add_argument("--out", default="_aligned", help="輸出子資料夾（root 底下）")
     a = ap.parse_args()
     global GATE_NOADJ, ENCRYPT_OUT
@@ -1138,6 +1198,9 @@ def main():
         rp.write_text("\n".join(lines), encoding="utf-8")
         print(f"\n✓ audit 寫入 {rp.resolve()}（貼返嚟俾我）")
         return
+
+    if INSERT_XSGZ_FB_COL and not a.no_extra_col:      # #1 output-only 空白欄
+        tpl.insert_blank_col("承批公司的反饋意見", GT, "跨司工作組的反饋意見", log)
 
     if a.only:
         targets = [a.only]
