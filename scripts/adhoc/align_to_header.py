@@ -39,11 +39,11 @@ from pathlib import Path
 
 import openpyxl
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment, Border, Side
+from openpyxl.styles import Alignment, Border, Font, Side
 try:
-    from openpyxl.cell.rich_text import CellRichText as _CellRichText
+    from openpyxl.cell.rich_text import CellRichText as _CellRichText, TextBlock as _TextBlock
 except ImportError:
-    _CellRichText = None  # openpyxl < 3.1 冇 CellRichText
+    _CellRichText = _TextBlock = None  # openpyxl < 3.1 冇 CellRichText
 
 PASSWORD = "dicj_kpmg"
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
@@ -85,6 +85,75 @@ def _apply_text_style(dst, src_cell) -> None:
     a = src_cell.alignment
     dst.alignment = Alignment(wrap_text=True, vertical="top",
                               horizontal=(a.horizontal if a and a.horizontal else "left"))
+
+
+def _make_rich_string_table(wb) -> list:
+    """直接 parse xl/sharedStrings.xml ZIP XML，建 list[str | CellRichText]。
+    openpyxl 對 shared-string rich text 讀入唔穩定；繞過用 ElementTree 最可靠。
+    結果 cache 喺 wb._kpi_rich_table（同一 workbook 只 parse 一次）。"""
+    if _CellRichText is None or _TextBlock is None:
+        return []
+    import xml.etree.ElementTree as _ET
+    NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    arc = getattr(wb, '_archive', None)
+    if arc is None:
+        return []
+    try:
+        with arc.open('xl/sharedStrings.xml') as fh:
+            root = _ET.parse(fh).getroot()
+    except Exception:
+        return []
+    table = []
+    for si in root.findall(f'{{{NS}}}si'):
+        runs = si.findall(f'{{{NS}}}r')
+        if not runs:                        # 純文字
+            t = si.find(f'{{{NS}}}t')
+            table.append((t.text or '') if t is not None else '')
+            continue
+        parts, any_font = [], False
+        for r in runs:
+            t_el = r.find(f'{{{NS}}}t')
+            txt = (t_el.text or '') if t_el is not None else ''
+            if not txt:
+                continue
+            rpr = r.find(f'{{{NS}}}rPr')
+            if rpr is None:
+                parts.append(txt)
+                continue
+            def _flag(tag, _rpr=rpr):       # closure 綁定每個 run 的 rpr
+                el = _rpr.find(f'{{{NS}}}{tag}')
+                return el is not None and el.get('val', '1') != '0'
+            kw = {}
+            if _flag('b'):  kw['bold']   = True
+            if _flag('i'):  kw['italic'] = True
+            sz = rpr.find(f'{{{NS}}}sz')
+            fn = rpr.find(f'{{{NS}}}rFont')
+            if sz is not None:
+                try: kw['size'] = float(sz.get('val', 11))
+                except Exception: pass
+            if fn is not None:
+                kw['name'] = fn.get('val', 'Calibri')
+            if kw:
+                parts.append(_TextBlock(font=Font(**kw), text=txt))
+                any_font = True
+            else:
+                parts.append(txt)
+        if any_font:
+            table.append(_CellRichText(*parts))
+        else:
+            table.append(''.join(x if isinstance(x, str) else x.text for x in parts))
+    return table
+
+
+def _rich_val(cell, rich_table: list):
+    """攞 cell 值；若係 shared string 且 rich_table 有 CellRichText → 返 CellRichText。"""
+    if (rich_table
+            and cell.data_type == 's'
+            and isinstance(getattr(cell, '_value', None), int)):
+        idx = cell._value
+        if 0 <= idx < len(rich_table):
+            return rich_table[idx]
+    return cell.value
 
 
 def base_grid(cell, data_style: dict) -> None:
@@ -710,6 +779,13 @@ def warn_unmapped_source(tpl: Template, src_anchor: int, src_col_gs: dict, log) 
 def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 src_anchor: int, src_subrow: int, src_col_gs: dict,
                 src_maxcol: int, src_maxrow: int, log):
+    # 建 rich-text 查找表（parse sharedStrings.xml ZIP XML，保留 run-level bold）
+    # 同一 workbook 只 parse 一次（cache 喺 wb._kpi_rich_table）
+    _src_wb = ws_src.parent
+    if not hasattr(_src_wb, '_kpi_rich_table'):
+        _src_wb._kpi_rich_table = _make_rich_string_table(_src_wb)
+    _rt = _src_wb._kpi_rich_table      # list[str | CellRichText]
+
     # 1) header 區（用 template 34 欄標準表頭 + 佢自己嘅 style）
     for (r, c), (v, sty) in tpl.hdr_cells.items():
         cell = ws_out.cell(r, c, v)
@@ -731,7 +807,7 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 s_cell = ws_src.cell(sr, sc)
                 if s_cell.value is not None:
                     t_cell = ws_out.cell(sr, sc)
-                    t_cell.value = s_cell.value
+                    t_cell.value = _rich_val(s_cell, _rt)
                     _apply_text_style(t_cell, s_cell)
         # 前置行橫向合併（唔衝突就照抄，衝突就跳過）
         for mg in ws_src.merged_cells.ranges:
@@ -806,7 +882,7 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                     if k[0] == "src":
                         s = ws_src.cell(p.r0 + i, k[1])
                         if s.value is not None:
-                            ws_out.cell(out_row + i, c).value = s.value
+                            ws_out.cell(out_row + i, c).value = _rich_val(s, _rt)
                         _apply_text_style(ws_out.cell(out_row + i, c), s)
             # 右半：anchor 行寫值（source_2 覆蓋優先）+ 跟源欄文字 style
             for c in right:
@@ -818,9 +894,9 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 overridden = sub in p.override and _s(p.override[sub]) != ""
                 if k[0] == "src" and not overridden:
                     src_cell = ws_src.cell(p.r0, k[1])
-                    # 直接從 source 抄 value（保留 CellRichText rich text / run-level bold）
+                    # 直接從 source 抄 value（_rich_val 保留 run-level bold via ZIP XML）
                     if src_cell.value is not None:
-                        cell.value = src_cell.value
+                        cell.value = _rich_val(src_cell, _rt)
                     _apply_text_style(cell, src_cell)
                 # W(是否需進一步與跨司工作組溝通)：唔合併 → 逐行填同一值，
                 #   否則 unmerge 後其餘行留白。AA(KPMG需與跨司)已改回按項目合併。
@@ -842,7 +918,7 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                     if tc:
                         s = ws_src.cell(src_row, sc)
                         if s.value is not None:
-                            ws_out.cell(out_row, tc).value = s.value
+                            ws_out.cell(out_row, tc).value = _rich_val(s, _rt)
                         _apply_text_style(ws_out.cell(out_row, tc), s)
                 # 範疇表頭帶 → 填「是否需進一步與跨司工作組溝通」roll-up（方便按範疇 filter）
                 if col_comm is not None and src_row in band_key_of:
