@@ -175,7 +175,7 @@ TARGET_SCHEMA = [
     # 與承批公司溝通潛在調整事項（source_1 只有前 2 條 + 跨司反饋/畢馬威分析）
     {"grp": GT, "sub": "畢馬威關注事項", "rule": ("copy", GT, "畢馬威關注事項")},
     {"grp": GT, "sub": "承批公司的反饋意見", "rule": ("copy", GT, "承批公司的反饋意見")},
-    {"grp": GT, "sub": "是否需進一步與跨司工作組溝通", "rule": ("blank",)},               # source_2
+    {"grp": GT, "sub": "是否需進一步與跨司工作組溝通", "rule": ("yn_followup",)},          # 預設否；source_2=是
     {"grp": GT, "sub": "需溝通關注事項", "rule": ("blank",)},                             # source_2
     {"grp": GT, "sub": "該關注事項涉及調整金額", "rule": ("abs_total",)},                  # |潛在調整合計|
     {"grp": GT, "sub": "跨司工作組主責部門針對該關注事項已給的反饋意見", "rule": ("copy", GT, "跨司工作組的反饋意見")},
@@ -201,8 +201,10 @@ OVERLAY_SUBS = [nkey(x) for x in
                  "KPMG需與跨司工作組進一步確認的問題", "跨司工作組最新反饋意見",
                  "畢馬威關注事項", "承批公司的反饋意見"]]
 
-# 項目組個邊唔按項目合併呢啲欄（右半仍逐項目寫值，但唔 merge 落 span）——#4/#5
-NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通")}   # #5 AA 欄待 dump 確認後加入
+# 項目組個邊唔按項目合併呢啲欄（右半唔 merge 落 span，改逐行填同一個值）——#4/#5
+# dump 確認：表頭 W(23)=是否需進一步與跨司工作組溝通、AA(27)=KPMG需與跨司工作組進一步確認的問題
+NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通"),
+                 nkey("KPMG需與跨司工作組進一步確認的問題")}
 
 
 # ── I/O ──────────────────────────────────────────────────────────────────
@@ -485,6 +487,8 @@ def resolve(rule, p: Project):
     kind = rule[0]
     if kind == "blank":
         return None
+    if kind == "yn_followup":
+        return "否"          # #5 預設「否」；source_2 有覆蓋（喺 cell_value 前置）先變「是」
     if kind == "copy_any":
         sub = canon_sub(rule[1])
         for (g, s), v in p.by_gs.items():
@@ -770,12 +774,21 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
             # 右半：anchor 行寫值（source_2 覆蓋優先）+ 跟源欄文字 style
             for c in right:
                 cell = ws_out.cell(out_row, c)
-                cell.value = cell_value(tpl, c, p)
+                v = cell_value(tpl, c, p)
+                cell.value = v
                 k = plan[c]
                 _grp, sub = tpl.col_gs[c]
                 overridden = sub in p.override and _s(p.override[sub]) != ""
                 if k[0] == "src" and not overridden:
                     _apply_text_style(cell, ws_src.cell(p.r0, k[1]))
+                # #5：唔合併嘅欄（W 是否需進一步 / AA KPMG需與跨司）逐行填同一個值，
+                #     否則 unmerge 之後其餘行會留白 →「有些是否冇填」。
+                if sub in NO_MERGE_SUBS and span > 1 and _s(v) != "":
+                    for i in range(1, span):
+                        rep = ws_out.cell(out_row + i, c)
+                        rep.value = v
+                        if k[0] == "src" and not overridden:
+                            _apply_text_style(rep, ws_src.cell(p.r0, k[1]))
             proj_spans_out.append((out_row, span, p.r0))
             out_row += span
             src_row = p.r1 + 1
@@ -845,6 +858,23 @@ def light_copy_sheet(ws_out, ws_src):
     for r, dim in ws_src.row_dimensions.items():
         if dim.height is not None:
             ws_out.row_dimensions[r].height = dim.height
+    # #8 附件內嵌圖片 best-effort 過帶（WMF 已喺 openpyxl load 時 drop、救唔返）
+    try:
+        from openpyxl.drawing.image import Image as _XLImage
+        for im in getattr(ws_src, "_images", []) or []:
+            try:
+                ref = getattr(im, "ref", None)
+                if ref is None:
+                    continue
+                ni = _XLImage(ref)
+                anc = getattr(im, "anchor", None)
+                if anc is not None:
+                    ni.anchor = anc
+                ws_out.add_image(ni)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 # ── source_2 overlay ──────────────────────────────────────────────────────
