@@ -124,15 +124,15 @@ def _make_rich_lookup(src) -> "dict[str, object]":
                 def _flag(tag, _p=rpr):
                     el = _p.find(f'{{{NS}}}{tag}')
                     return el is not None and el.get('val', '1') != '0'
-                if _flag('b'):  kw['bold']   = True
-                if _flag('i'):  kw['italic'] = True
+                if _flag('b'):  kw['b'] = True
+                if _flag('i'):  kw['i'] = True
                 sz = rpr.find(f'{{{NS}}}sz')
                 fn = rpr.find(f'{{{NS}}}rFont')
                 if sz is not None:
-                    try: kw['size'] = float(sz.get('val', 11))
+                    try: kw['sz'] = float(sz.get('val', 11))
                     except Exception: pass
                 if fn is not None:
-                    kw['name'] = fn.get('val', 'Calibri')
+                    kw['rFont'] = fn.get('val', 'Calibri')
             if kw:
                 parts.append(_TextBlock(font=_InlineFont(**kw), text=txt))
                 any_font = True
