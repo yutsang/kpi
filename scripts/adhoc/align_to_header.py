@@ -513,10 +513,28 @@ def resolve(rule, p: Project):
     return None
 
 
+_RE_ROUND1 = re.compile(r"(第一|首|1)輪")
+_RE_ROUND2 = re.compile(r"(第二|2)輪")
+
+
+def _round_of(s: str) -> str:
+    """分組名裡面嘅諮詢輪次：第二輪→'2'、第一輪/首輪→'1'、冇→''。用嚟分開兩輪唔好撈亂。"""
+    if _RE_ROUND2.search(s):
+        return "2"
+    if _RE_ROUND1.search(s):
+        return "1"
+    return ""
+
+
 def _grp_match(got: str, want: str) -> bool:
-    """分組名寬鬆 match：want 係短前綴（如 GT），got 係檔內全名 nkey。"""
-    w = nkey(want)
-    return w in got or got in w or got.startswith(w[:6])
+    """分組名寬鬆 match：want 係短前綴（如 GT），got 係檔內全名 nkey。
+    但『第一輪/第二輪問題諮詢』共用前綴『與跨司工作組』→ 舊 w[:6] 前綴兩輪都會中（#2 撈亂
+    第一/第二輪 columns）；故先比輪次：兩邊都有輪次而唔同 → 一定唔 match。"""
+    g, w = nkey(got), nkey(want)
+    rg, rw = _round_of(g), _round_of(w)
+    if rg and rw and rg != rw:
+        return False
+    return w in g or g in w or g.startswith(w[:6])
 
 
 # ── 表頭 template（header rows 1..subrow）───────────────────────────────────
