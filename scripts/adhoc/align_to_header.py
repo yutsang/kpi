@@ -1402,12 +1402,19 @@ def preview_sheet(sn, projs, tpl: Template, log):
 
 
 # ── 每檔處理 ───────────────────────────────────────────────────────────────
+# 保留作參考／audit 用；scope 偵測已改用資料夾名，唔再靠呢張清單
 SCOPE_HINTS = ["旅遊局", "博監局", "經濟局", "文化局", "體育局", "郵電局", "其他範疇", "治安警"]
 
 
 def infer_scope_company(rel: str) -> tuple[str, str]:
+    # scope = source_1 下面第一層資料夾（範疇名）——最穩陣，唔會漏範疇。
+    # 例如 source_1/會議展覽範疇/Galaxy-…xlsx → scope=會議展覽範疇。
     parts = Path(rel).parts
-    scope = next((s for s in SCOPE_HINTS if any(s in pp for pp in parts)), "")
+    scope = ""
+    if len(parts) >= 2 and parts[0].lower() == "source_1":
+        scope = parts[1]
+    elif len(parts) >= 2:
+        scope = parts[-2]
     m = re.search(r"([A-Za-z]{2,})[-\-]", Path(rel).name)
     company = m.group(1) if m else ""
     return scope, company
