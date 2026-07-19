@@ -1080,6 +1080,17 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
 
     plan = build_col_plan(tpl, src_anchor, src_col_gs, src_maxcol)
     inv = {sc: c for c, k in plan.items() if k[0] == "src" for sc in (k[1],)}  # 源欄→目標欄
+
+    # #2 欄寬跟原來：source 欄 → 目標欄，抄返 source 嘅 column width。
+    # derive/插入欄（冇 source 對應）保留上面 template 嘅寬度。
+    from openpyxl.utils import get_column_letter as _gcl
+    for c in range(1, tpl.maxcol + 1):
+        k = plan.get(c)
+        if k and k[0] == "src":
+            sdim = ws_src.column_dimensions.get(_gcl(k[1]))
+            if sdim is not None and sdim.width:
+                ws_out.column_dimensions[_gcl(c)].width = sdim.width
+
     proj_by_start = {p.r0: p for p in projs}
     src_data0 = src_subrow + 1
     out_row = tpl.subrow + 1
@@ -1125,6 +1136,10 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
             for rr in range(out_row, out_row + span):    # 打底格線
                 for c in range(1, tpl.maxcol + 1):
                     base_grid(ws_out.cell(rr, c), tpl.data_style)
+            for i in range(span):                        # #2 行高跟原來
+                sh = ws_src.row_dimensions[p.r0 + i].height
+                if sh is not None:
+                    ws_out.row_dimensions[out_row + i].height = sh
             # 左半：逐行直抄（值 + source 文字 style）
             for i in range(span):
                 for c in range(1, tpl.anchor or 1):
@@ -1163,6 +1178,9 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
             if not _row_blank(ws_src, src_row, src_maxcol):   # 非項目行 → 原樣帶過
                 for c in range(1, tpl.maxcol + 1):
                     base_grid(ws_out.cell(out_row, c), tpl.data_style)
+                sh = ws_src.row_dimensions[src_row].height     # #2 行高跟原來
+                if sh is not None:
+                    ws_out.row_dimensions[out_row].height = sh
                 for sc in range(1, src_maxcol + 1):
                     tc = inv.get(sc)
                     if tc:
@@ -1650,6 +1668,8 @@ def verify(root: Path, tpl: Template, tol: float, log):
     files = list(iter_source1(root))
     n_proj = n_idfail = n_mpfail = 0
     G_before = G_after = G_total = 0.0
+    G_s2_amt = 0.0            # Σ source_2 該關注事項涉及調整金額
+    G_s2_hit = G_s2_miss = 0  # source_2 命中/未命中 項目數
     log(f"# VERIFY 數字對數（read-only，唔寫檔）：source_1 共 {len(files)} 檔  容差 {fmt_amt(tol)} 萬\n")
     for rel in files:
         if any(pp.lower() == "ss" for pp in Path(rel).parts) or is_dup_file(rel):
@@ -1660,6 +1680,7 @@ def verify(root: Path, tpl: Template, tol: float, log):
             log(f"▸ {rel}   ✗ 開唔到: {type(e).__name__}: {e}")
             continue
         printed = False
+        file_projs: list = []          # 全檔項目（供 source_2 對數）
         for sn in wb.sheetnames:
             ws = wb[sn]
             if is_junk_sheet(sn) or is_attachment_sheet(sn):
@@ -1667,6 +1688,7 @@ def verify(root: Path, tpl: Template, tol: float, log):
             projs, subrow, anchor, gm, maxcol, col_gs, maxrow = extract(ws, _quiet)
             if not anchor or not projs:
                 continue
+            file_projs.extend(projs)
             s_before = s_after = s_total = 0.0
             fails = []
             for p in projs:
@@ -1695,6 +1717,40 @@ def verify(root: Path, tpl: Template, tol: float, log):
                     log(f"        ✗[識別] 「{p.seq}」 rows {p.r0}-{p.r1}: {msg}")
                 for msg in mpi:
                     log(f"        ✗[映射] 「{p.seq}」 rows {p.r0}-{p.r1}: {msg}")
+
+        # ── #3 source_2 對數：套返 per-範疇 overlay，對「該關注事項涉及調整金額」──
+        scope, company = infer_scope_company(rel)
+        ofile = find_overlay_file(root, scope, company)
+        if ofile and file_projs:
+            overlay = build_overlay(ofile, _quiet)
+            f_amt = 0.0
+            f_hit = f_miss = 0
+            miss_seqs = []
+            for p in file_projs:
+                d = overlay.get(_seqkey(p.seq))
+                if d:
+                    f_hit += 1
+                    a = num(d.get(nkey("該關注事項涉及調整金額")))
+                    if a:
+                        f_amt += abs(a)
+                else:
+                    # 有潛在調整但 source_2 揾唔到跟進 → 值得核
+                    t = _adj_total(p)
+                    if t is not None and abs(t) > tol:
+                        f_miss += 1
+                        if len(miss_seqs) < 6:
+                            miss_seqs.append(p.seq)
+            G_s2_amt += f_amt
+            G_s2_hit += f_hit
+            G_s2_miss += f_miss
+            if not printed:
+                log(f"▸ {rel}")
+                printed = True
+            log(f"    ⟐ source_2 {ofile.name}: 命中 {f_hit} 項目  "
+                f"Σ涉及調整金額={fmt_amt(f_amt)}"
+                + (f"  ⚠ {f_miss} 個有調整但 source_2 冇跟進" if f_miss else ""))
+            for sq in miss_seqs:
+                log(f"        ⚠[source_2缺] 「{sq}」有潛在調整但 source_2 揾唔到")
         wb.close()
     log("\n" + "=" * 64 + "\n# 對數匯總")
     log(f"項目總數                    : {n_proj}")
@@ -1705,6 +1761,11 @@ def verify(root: Path, tpl: Template, tol: float, log):
     log(f"Σ潛在調整合計              : {fmt_amt(G_total)} 萬")
     log(f"頂線對數 Σ調整後-Σ申報      : {fmt_amt(G_after - G_before)} 萬  "
         f"(應 ≈ Σ合計 {fmt_amt(G_total)}，差 {fmt_amt(G_after - G_before - G_total)})")
+    log("\n# source_2（跨司工作組跟進）對數")
+    log(f"source_2 命中項目            : {G_s2_hit}")
+    log(f"有調整但 source_2 冇跟進     : {G_s2_miss}   ← 值得逐個核")
+    log(f"Σ source_2 涉及調整金額     : {fmt_amt(G_s2_amt)} 萬  "
+        f"(對 |Σ潛在調整合計|={fmt_amt(abs(G_total))}，差 {fmt_amt(G_s2_amt - abs(G_total))})")
 
 
 def main():
