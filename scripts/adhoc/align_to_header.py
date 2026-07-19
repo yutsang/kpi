@@ -1785,7 +1785,10 @@ def main():
     ap.add_argument("--tol", type=float, default=TOL_ADJ,
                     help="對數容差（萬澳門元，預設 0.5）")
     ap.add_argument("--preview", action="store_true", help="只吐抽取+映射文字，唔寫 xlsx")
-    ap.add_argument("--with-overlay", action="store_true", help="套 source_2 per-範疇覆蓋")
+    ap.add_argument("--with-overlay", action="store_true",
+                    help="（已預設開，保留兼容）套 source_2 per-範疇覆蓋")
+    ap.add_argument("--no-overlay", action="store_true",
+                    help="關閉 source_2 覆蓋（預設會套 source_2；呢個先會唔套）")
     ap.add_argument("--fill-zero-adj", action="store_true",
                     help="冇調整都照抄 0（預設留空）")
     ap.add_argument("--no-encrypt", action="store_true",
@@ -1797,6 +1800,8 @@ def main():
     global GATE_NOADJ, ENCRYPT_OUT
     GATE_NOADJ = not a.fill_zero_adj
     ENCRYPT_OUT = not a.no_encrypt
+    # source_2 覆蓋預設開；--no-overlay 先關（--with-overlay 保留但已係預設）
+    use_overlay = not a.no_overlay
     root = Path(a.root)
     out_dir = root / a.out
     lines = []
@@ -1845,7 +1850,7 @@ def main():
             log(f"  ⏭ 跳過重複檔（使用者 check 用）: {rel}")
             continue
         try:
-            process_file(root, rel, tpl, out_dir, a.preview, a.with_overlay, log)
+            process_file(root, rel, tpl, out_dir, a.preview, use_overlay, log)
         except Exception as e:
             import traceback
             log(f"  ✗ 出錯: {type(e).__name__}: {e}")
