@@ -107,6 +107,12 @@ def _row_of_ref(ref: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def _col_of_cell(cell_b: bytes) -> int:
+    """Parse the actual column index from a <c r="AB5" ...> byte chunk."""
+    m = re.search(rb'\br="([A-Z]+)\d+"', cell_b)
+    return _cidx(m.group(1).decode('ascii')) if m else 0
+
+
 def _cref(col: int, row: int) -> str:
     return _cletter(col) + str(row)
 
@@ -165,10 +171,15 @@ def _b_row(rn: int, row_el, cells: list) -> bytes:
     attrs = (' ' + ' '.join(parts)) if parts else ''
     return (f'<row r="{rn}"{attrs}>').encode('utf-8') + b''.join(cells) + b'</row>'
 
+# Self-closing form MUST come first so `<c .../>` isn't swallowed into the next
+# `<c ...>...</c>`. Using `[^>]*?` (non-greedy) so `/>` binds to THIS tag.
+_RE_ROW_CHUNK  = re.compile(rb'<row\b[^>]*?/>|<row\b[^>]*?>.*?</row>', re.DOTALL)
+_RE_CELL_CHUNK = re.compile(rb'<c\b[^>]*?/>|<c\b[^>]*?>.*?</c>', re.DOTALL)
+
 def _b_extract_rows(sd_bytes: bytes) -> 'dict[int, bytes]':
     """Extract {row_num: raw_bytes} from raw sheetData bytes."""
     result: dict = {}
-    for m in re.finditer(rb'<row\b[^>]*>.*?</row>', sd_bytes, re.DOTALL):
+    for m in _RE_ROW_CHUNK.finditer(sd_bytes):
         r_m = re.search(rb'\br="(\d+)"', m.group())
         if r_m:
             result[int(r_m.group(1))] = m.group()
@@ -177,8 +188,7 @@ def _b_extract_rows(sd_bytes: bytes) -> 'dict[int, bytes]':
 def _b_extract_cells(row_b: bytes) -> 'dict[int, bytes]':
     """Extract {col_idx: raw_bytes} from raw row bytes."""
     result: dict = {}
-    # Match self-closing <c .../> or <c ...>...</c> (no nested <c>)
-    for m in re.finditer(rb'<c\b[^>]*(?:/>|>.*?</c>)', row_b, re.DOTALL):
+    for m in _RE_CELL_CHUNK.finditer(row_b):
         r_m = re.search(rb'\br="([A-Z]+)\d+"', m.group())
         if r_m:
             result[_cidx(r_m.group(1).decode('ascii'))] = m.group()
@@ -941,29 +951,39 @@ def transform_sheet_xml(
             continue
 
         src_cells = _b_extract_cells(raw_row)
-        out_cells: dict = {}    # tgt_col → bytes
+        # Key by the cell's ACTUAL column parsed from bytes (not the intended
+        # tgt_c), so that even if a reref anomaly leaves the original column,
+        # two cells never collide on the same column in the output. Also drops
+        # anything beyond the target schema width.
+        by_col: dict = {}    # actual_col(int) → bytes
 
         for src_c, cell_b in src_cells.items():
             tgt_c = col_map.get(src_c)
-            if tgt_c is None:
+            if tgt_c is None or tgt_c > tgt_total_cols:
                 continue
             cell_b = _b_strip_f(cell_b)
             cell_b = _b_reref(cell_b, tgt_c, rn)
-            out_cells[tgt_c] = cell_b
+            ac = _col_of_cell(cell_b)
+            if ac < 1 or ac > tgt_total_cols:
+                continue
+            by_col[ac] = cell_b
 
-        # Apply computed / override values
+        # Apply computed / override values — these WIN over any moved cell that
+        # landed on the same column (source may already contain derive columns).
         for tgt_c, value in computed_by_row.get(rn, {}).items():
+            if tgt_c < 1 or tgt_c > tgt_total_cols:
+                continue
             if isinstance(value, (int, float)):
-                out_cells[tgt_c] = _b_num_c(tgt_c, rn, float(value), def_s)
+                by_col[tgt_c] = _b_num_c(tgt_c, rn, float(value), def_s)
             elif value is not None:
-                out_cells[tgt_c] = _b_inline_c(tgt_c, rn, str(value), def_s)
+                by_col[tgt_c] = _b_inline_c(tgt_c, rn, str(value), def_s)
             else:
-                out_cells.pop(tgt_c, None)
+                by_col.pop(tgt_c, None)
 
-        if not out_cells:
+        if not by_col:
             continue
 
-        ordered = [out_cells[c] for c in sorted(out_cells)]
+        ordered = [by_col[c] for c in sorted(by_col)]
         new_rows.append(_b_row(rn, row_el, ordered))
 
     # ── Build new <sheetData> bytes ────────────────────────────────────────────
