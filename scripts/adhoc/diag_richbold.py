@@ -25,12 +25,18 @@ import align_to_header as A  # noqa: E402
 
 
 def _load(path: Path):
-    """returns (wb, rich_lookup)"""
+    """returns (wb, rich_lookup_text_view)。
+    _make_rich_lookup 而家回傳 (index_runs, si_cell_map)；呢度砌返一個
+    {plain_text: runs} view 俾下面顯示用（純顯示，撞唔撞 key 唔緊要）。"""
     import openpyxl
+
+    def _textview(rich):
+        ir = rich[0] if isinstance(rich, tuple) else (rich or {})
+        return {''.join(t for t, *_ in runs): runs for runs in ir.values()}
+
     try:
         wb = openpyxl.load_workbook(path, data_only=True)
-        rl = A._make_rich_lookup(path)
-        return wb, rl
+        return wb, _textview(A._make_rich_lookup(path))
     except Exception:
         import msoffcrypto
         buf = io.BytesIO()
@@ -41,8 +47,7 @@ def _load(path: Path):
         buf.seek(0)
         wb = openpyxl.load_workbook(buf, data_only=True)
         buf.seek(0)
-        rl = A._make_rich_lookup(buf)
-        return wb, rl
+        return wb, _textview(A._make_rich_lookup(buf))
 
 
 def _open_any(path: Path, rich=True):
