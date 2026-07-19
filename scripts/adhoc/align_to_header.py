@@ -110,39 +110,77 @@ def _cref(col: int, row: int) -> str:
     return _cletter(col) + str(row)
 
 
-# ── XML cell creation helpers ─────────────────────────────────────────────────
-def _make_inline_c(col: int, row: int, text: str, s: str = '0') -> ET.Element:
-    """Create <c t="inlineStr"> with plain text content."""
-    c = ET.Element(f'{{{_XNS}}}c')
-    c.set('r', _cref(col, row))
-    c.set('t', 'inlineStr')
-    c.set('s', s)
-    is_ = ET.SubElement(c, f'{{{_XNS}}}is')
-    ET.SubElement(is_, f'{{{_XNS}}}t').text = str(text) if text is not None else ''
-    return c
+# ── Byte-level XML primitives (no ET serialization → no namespace mangling) ───
 
+def _xml_esc(text: str) -> str:
+    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-def _make_num_c(col: int, row: int, v: float, s: str = '0') -> ET.Element:
-    """Create <c> with numeric value."""
-    c = ET.Element(f'{{{_XNS}}}c')
-    c.set('r', _cref(col, row))
-    c.set('s', s)
-    text = str(int(round(v))) if abs(v - round(v)) < 1e-9 else repr(v)
-    ET.SubElement(c, f'{{{_XNS}}}v').text = text
-    return c
+def _xml_esc_attr(val: str) -> str:
+    return val.replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
 
+def _b_inline_c(col: int, row: int, text: str, s: str = '0') -> bytes:
+    t = _xml_esc(str(text) if text is not None else '')
+    return f'<c r="{_cref(col,row)}" t="inlineStr" s="{s}"><is><t>{t}</t></is></c>'.encode('utf-8')
 
-def _clone_row(row_el: "ET.Element | None", rn: int) -> ET.Element:
-    """New <row r=rn> inheriting attributes from source (except r= and spans=).
-    spans= is stripped because column reorder invalidates it; Excel recalculates.
-    """
-    new_row = ET.Element(f'{{{_XNS}}}row')
-    new_row.set('r', str(rn))
+def _b_num_c(col: int, row: int, value: float, s: str = '0') -> bytes:
+    v = str(int(round(value))) if abs(value - round(value)) < 1e-9 else repr(value)
+    return f'<c r="{_cref(col,row)}" s="{s}"><v>{v}</v></c>'.encode('utf-8')
+
+def _b_reref(cell_b: bytes, col: int, row: int) -> bytes:
+    """Update r="OLD" → r="NEW" in raw cell bytes."""
+    return re.sub(rb'\br="[A-Z]+\d+"', ('r="' + _cref(col, row) + '"').encode(), cell_b, count=1)
+
+def _b_strip_f(cell_b: bytes) -> bytes:
+    """Remove <f .../> and <f ...>...</f> formula elements."""
+    cell_b = re.sub(rb'<f\b[^>]*/>', b'', cell_b)
+    return re.sub(rb'<f\b[^>]*>.*?</f>', b'', cell_b, flags=re.DOTALL)
+
+def _b_row(rn: int, row_el, cells: list) -> bytes:
+    """Build <row r="N" safe-attrs>cells</row>. Drops namespaced + spans attrs."""
+    parts = []
     if row_el is not None:
-        for attr, val in row_el.attrib.items():
-            if attr not in ('r', 'spans'):
-                new_row.set(attr, val)
-    return new_row
+        for k, v in row_el.attrib.items():
+            if k in ('r', 'spans') or k.startswith('{'):
+                continue
+            parts.append(f'{k}="{_xml_esc_attr(str(v))}"')
+    attrs = (' ' + ' '.join(parts)) if parts else ''
+    return (f'<row r="{rn}"{attrs}>').encode('utf-8') + b''.join(cells) + b'</row>'
+
+def _b_extract_rows(sd_bytes: bytes) -> 'dict[int, bytes]':
+    """Extract {row_num: raw_bytes} from raw sheetData bytes."""
+    result: dict = {}
+    for m in re.finditer(rb'<row\b[^>]*>.*?</row>', sd_bytes, re.DOTALL):
+        r_m = re.search(rb'\br="(\d+)"', m.group())
+        if r_m:
+            result[int(r_m.group(1))] = m.group()
+    return result
+
+def _b_extract_cells(row_b: bytes) -> 'dict[int, bytes]':
+    """Extract {col_idx: raw_bytes} from raw row bytes."""
+    result: dict = {}
+    # Match self-closing <c .../> or <c ...>...</c> (no nested <c>)
+    for m in re.finditer(rb'<c\b[^>]*(?:/>|>.*?</c>)', row_b, re.DOTALL):
+        r_m = re.search(rb'\br="([A-Z]+)\d+"', m.group())
+        if r_m:
+            result[_cidx(r_m.group(1).decode('ascii'))] = m.group()
+    return result
+
+def _b_section(xml_bytes: bytes, tag: bytes) -> 'tuple[int,int] | None':
+    """Return (start, end) offsets of <tag>...</tag> or <tag/> in xml_bytes."""
+    m = re.search(rb'<' + tag + rb'\b[^>]*>.*?</' + tag + rb'>', xml_bytes, re.DOTALL)
+    if m:
+        return m.start(), m.end()
+    m = re.search(rb'<' + tag + rb'\b[^>]*/>', xml_bytes)
+    return (m.start(), m.end()) if m else None
+
+def _b_replace(xml_bytes: bytes, tag: bytes, replacement: bytes) -> bytes:
+    span = _b_section(xml_bytes, tag)
+    if span:
+        return xml_bytes[:span[0]] + replacement + xml_bytes[span[1]:]
+    return xml_bytes
+
+def _b_remove(xml_bytes: bytes, tag: bytes) -> bytes:
+    return _b_replace(xml_bytes, tag, b'')
 
 
 def _remap_merge(ref: str, col_map: dict) -> "str | None":
@@ -803,184 +841,177 @@ def transform_sheet_xml(
     no_merge_tgt_cols: set,
 ) -> bytes:
     """
-    Reorder columns in the sheet XML, rebuild header rows, insert computed cells.
-    col_map:           {src_col: tgt_col}
-    computed:          {(row, tgt_col): value}   — cells to INSERT/OVERRIDE
-    proj_spans:        [(r0, r1)] sorted
-    no_merge_tgt_cols: set of tgt col indices skipping vertical merge
+    Reorder columns in the sheet XML.
+
+    KEY DESIGN: ET is used for parsing/reading ONLY. Output is produced by
+    patching the original raw bytes (replacing <sheetData>, <mergeCells>,
+    <dimension> sections with newly generated bytes). The root <worksheet>
+    element — including ALL namespace declarations — is kept verbatim from
+    the source, so no namespace prefix mangling can occur.
     """
     NS = _XNS
-    rev_map = {tgt: src for src, tgt in col_map.items()}
-    grow, subrow = tpl.grow, tpl.subrow
+    _register_all_ns(sheet_bytes)
+    root = ET.fromstring(sheet_bytes)          # read-only parse
 
-    # Group computed by row for O(1) lookup
+    sheet_data_el = root.find(f'{{{NS}}}sheetData')
+    if sheet_data_el is None:
+        return sheet_bytes                      # nothing to transform
+
+    grow, subrow = tpl.grow, tpl.subrow
+    rev_map = {tgt: src for src, tgt in col_map.items()}
+
+    # Computed values by row
     computed_by_row: dict = {}
     for (r, tgt_c), v in computed.items():
         computed_by_row.setdefault(r, {})[tgt_c] = v
 
-    # All project rows (for identifying data vs non-project passthru)
-    proj_rows: set = set()
-    for r0, r1 in proj_spans:
-        for r in range(r0, r1 + 1):
-            proj_rows.add(r)
+    # ET row index (for attribute access in header rebuilding)
+    et_rows: dict = {int(r.get('r', '0')): r
+                     for r in sheet_data_el.findall(f'{{{NS}}}row')}
 
-    _register_all_ns(sheet_bytes)
-    tree = ET.parse(io.BytesIO(sheet_bytes))
-    root = tree.getroot()
+    # Raw row bytes extracted from source sheetData
+    sd_span = _b_section(sheet_bytes, b'sheetData')
+    sd_raw  = sheet_bytes[sd_span[0]:sd_span[1]] if sd_span else b''
+    src_row_b = _b_extract_rows(sd_raw)
 
-    sheet_data = root.find(f'{{{NS}}}sheetData')
-    if sheet_data is None:
-        buf = io.BytesIO()
-        tree.write(buf, xml_declaration=True, encoding='UTF-8')
-        return buf.getvalue()
+    # Default style: first non-zero s= from any data row
+    def_s = '0'
+    for r_el in et_rows.values():
+        for c_el in r_el.findall(f'{{{NS}}}c'):
+            s = c_el.get('s')
+            if s and s != '0':
+                def_s = s
+                break
+        if def_s != '0':
+            break
 
-    # Index source rows by row number
-    src_rows: dict = {int(r.get('r', '0')): r
-                      for r in sheet_data.findall(f'{{{NS}}}row')}
-
-    # Ensure grow and subrow are processed even if not in source
-    all_rnums = sorted(set(src_rows.keys()) | {grow, subrow})
-    new_rows: list = []
+    all_rnums = sorted(set(et_rows.keys()) | {grow, subrow})
+    new_rows: list = []          # list[bytes]
 
     for rn in all_rnums:
-        row_el = src_rows.get(rn)
+        row_el  = et_rows.get(rn)
+        raw_row = src_row_b.get(rn, b'')
 
-        # Parse and clean source cells
-        old_cells: dict = {}
-        if row_el is not None:
-            for c_el in row_el.findall(f'{{{NS}}}c'):
-                ci = _col_of(c_el.get('r', ''))
-                if ci <= 0:
-                    continue
-                # Drop formula elements (refs invalid after column reorder)
-                for f_el in list(c_el.findall(f'{{{NS}}}f')):
-                    c_el.remove(f_el)
-                old_cells[ci] = c_el
-
-        def_s = next((c.get('s', '0') for c in old_cells.values() if c.get('s')), '0')
-
-        # ── Rows before grow: keep entirely as-is ──
+        # ── Pre-header rows: verbatim ──────────────────────────────────────
         if rn < grow:
-            if row_el is not None:
-                new_rows.append(row_el)
+            if raw_row:
+                new_rows.append(raw_row)
             continue
 
-        # ── Grow row + subrow: rebuild from target schema ──
+        # ── Header rows: rebuild from tpl.hdr_labels ──────────────────────
         if rn in (grow, subrow):
-            new_row = _clone_row(row_el, rn)
+            cells: list = []
             for tgt_c in range(1, tgt_total_cols + 1):
                 label = tpl.hdr_labels.get((rn, tgt_c))
                 if label is None:
                     continue
-                # Borrow style from the source cell that maps to this target col
-                src_c = rev_map.get(tgt_c)
-                s_attr = (old_cells[src_c].get('s', def_s)
-                          if src_c and src_c in old_cells else def_s)
-                new_row.append(_make_inline_c(tgt_c, rn, str(label), s_attr))
-            new_row[:] = sorted(new_row, key=lambda c: _col_of(c.get('r', 'A0')))
-            new_rows.append(new_row)
+                # Borrow style index from the matching source cell
+                s_attr = def_s
+                src_c  = rev_map.get(tgt_c)
+                if src_c and row_el is not None:
+                    for c_el in row_el.findall(f'{{{NS}}}c'):
+                        if _col_of(c_el.get('r', '')) == src_c:
+                            s_attr = c_el.get('s', def_s)
+                            break
+                cells.append(_b_inline_c(tgt_c, rn, str(label), s_attr))
+            new_rows.append(_b_row(rn, row_el, cells))
             continue
 
-        # ── Data rows ──
-        if row_el is None:
+        # ── Data rows ─────────────────────────────────────────────────────
+        if not raw_row and row_el is None:
             continue
 
-        new_row = _clone_row(row_el, rn)
+        src_cells = _b_extract_cells(raw_row)
+        out_cells: dict = {}    # tgt_col → bytes
 
-        # Step 1: move source cells to target column positions
-        out_cells: dict = {}
-        for src_c, c_el in old_cells.items():
+        for src_c, cell_b in src_cells.items():
             tgt_c = col_map.get(src_c)
             if tgt_c is None:
                 continue
-            c_el.set('r', _cref(tgt_c, rn))
-            out_cells[tgt_c] = c_el
+            cell_b = _b_strip_f(cell_b)
+            cell_b = _b_reref(cell_b, tgt_c, rn)
+            out_cells[tgt_c] = cell_b
 
-        # Step 2: apply computed/override values (may replace moved cells)
-        row_computed = computed_by_row.get(rn, {})
-        for tgt_c, value in row_computed.items():
+        # Apply computed / override values
+        for tgt_c, value in computed_by_row.get(rn, {}).items():
             if isinstance(value, (int, float)):
-                out_cells[tgt_c] = _make_num_c(tgt_c, rn, float(value), def_s)
+                out_cells[tgt_c] = _b_num_c(tgt_c, rn, float(value), def_s)
             elif value is not None:
-                out_cells[tgt_c] = _make_inline_c(tgt_c, rn, str(value), def_s)
+                out_cells[tgt_c] = _b_inline_c(tgt_c, rn, str(value), def_s)
             else:
                 out_cells.pop(tgt_c, None)
 
-        for c_el in sorted(out_cells.values(), key=lambda c: _col_of(c.get('r', 'A0'))):
-            new_row.append(c_el)
+        if not out_cells:
+            continue
 
-        if len(new_row) > 0 or row_el is not None:
-            new_rows.append(new_row)
+        ordered = [out_cells[c] for c in sorted(out_cells)]
+        new_rows.append(_b_row(rn, row_el, ordered))
 
-    sheet_data[:] = new_rows
+    # ── Build new <sheetData> bytes ────────────────────────────────────────────
+    new_sd = b'<sheetData>' + b''.join(new_rows) + b'</sheetData>'
 
-    # ── Update mergeCells ──────────────────────────────────────────────────────
+    # ── Build new <mergeCells> bytes ───────────────────────────────────────────
+    merges: list = []
     merges_el = root.find(f'{{{NS}}}mergeCells')
-    keep_merges: list = []
-
     if merges_el is not None:
         for mc in merges_el.findall(f'{{{NS}}}mergeCell'):
-            ref  = mc.get('ref', '')
+            ref   = mc.get('ref', '')
             parts = ref.split(':')
             if len(parts) != 2:
                 continue
             r1 = _row_of_ref(parts[0]); r2 = _row_of_ref(parts[1])
-            c1 = _col_of(parts[0]);     c2 = _col_of(parts[1])
-
             if r1 < grow and r2 < grow:
-                keep_merges.append(ref)            # pre-grow: keep as-is
+                merges.append(ref)                  # pre-grow: keep as-is
             elif r1 in (grow, subrow) or r2 in (grow, subrow):
-                pass                               # header row: rebuilt below
+                pass                                # header: rebuilt below
             else:
-                # Data rows: remap via col_map
                 new_ref = _remap_merge(ref, col_map)
                 if new_ref:
-                    keep_merges.append(new_ref)
+                    merges.append(new_ref)
 
-    # Header merges from target schema (grow/subrow rows)
+    # Header merges from template schema
     for (mr1, mc1, mr2, mc2) in tpl.hdr_merges:
         if mc2 > mc1 or mr2 > mr1:
-            keep_merges.append(f'{_cref(mc1, mr1)}:{_cref(mc2, mr2)}')
+            merges.append(f'{_cref(mc1, mr1)}:{_cref(mc2, mr2)}')
 
-    # Vertical merges for project spans (all right-half target cols)
+    # Vertical project-span merges for right-half columns
     for r0, r1 in proj_spans:
         if r1 <= r0:
             continue
         for tgt_c in range(tpl.anchor or 1, tgt_total_cols + 1):
             if tgt_c in no_merge_tgt_cols:
                 continue
-            keep_merges.append(f'{_cref(tgt_c, r0)}:{_cref(tgt_c, r1)}')
+            merges.append(f'{_cref(tgt_c, r0)}:{_cref(tgt_c, r1)}')
 
-    if merges_el is not None:
-        merges_el[:] = []
-        merges_el.set('count', str(len(keep_merges)))
-        for ref in keep_merges:
-            ET.SubElement(merges_el, f'{{{NS}}}mergeCell').set('ref', ref)
-    elif keep_merges:
-        # Create mergeCells element if it didn't exist
-        merges_el = ET.SubElement(root, f'{{{NS}}}mergeCells')
-        merges_el.set('count', str(len(keep_merges)))
-        for ref in keep_merges:
-            ET.SubElement(merges_el, f'{{{NS}}}mergeCell').set('ref', ref)
+    new_mc = b''
+    if merges:
+        mc_inner = ''.join(f'<mergeCell ref="{r}"/>' for r in merges)
+        new_mc = f'<mergeCells count="{len(merges)}">{mc_inner}</mergeCells>'.encode('utf-8')
 
-    # ── Update dimension ──────────────────────────────────────────────────────
-    dim_el = root.find(f'{{{NS}}}dimension')
-    if dim_el is not None:
-        rnums = [int(r.get('r', '1')) for r in sheet_data.findall(f'{{{NS}}}row')]
-        max_row = max(rnums) if rnums else 1
-        dim_el.set('ref', f'A1:{_cref(tgt_total_cols, max_row)}')
+    # ── Dimension ref ─────────────────────────────────────────────────────────
+    max_row_out = max(all_rnums) if all_rnums else 1
+    new_dim_ref = f'A1:{_cref(tgt_total_cols, max_row_out)}'.encode()
 
-    # ── Remove autoFilter (col refs invalid) ─────────────────────────────────
-    for af in list(root.findall(f'{{{NS}}}autoFilter')):
-        root.remove(af)
+    # ── Patch original bytes (root element stays verbatim) ────────────────────
+    out = sheet_bytes
+    # dimension (usually self-closing, before sheetData)
+    out = re.sub(rb'(<dimension\b[^>]+ref=")[^"]*(")', rb'\g<1>' + new_dim_ref + rb'\2', out)
+    # sheetData
+    out = _b_replace(out, b'sheetData', new_sd)
+    # mergeCells
+    if new_mc:
+        if _b_section(out, b'mergeCells'):
+            out = _b_replace(out, b'mergeCells', new_mc)
+        else:
+            out = out.replace(b'</sheetData>', b'</sheetData>' + new_mc, 1)
+    else:
+        out = _b_remove(out, b'mergeCells')
+    # autoFilter (col refs invalid after reorder)
+    out = _b_remove(out, b'autoFilter')
+    # sheetProtection (allow editing aligned output)
+    out = _b_remove(out, b'sheetProtection')
 
-    # ── Remove sheet protection (allow editing aligned output) ────────────────
-    for sp in list(root.findall(f'{{{NS}}}sheetProtection')):
-        root.remove(sp)
-
-    buf = io.BytesIO()
-    tree.write(buf, xml_declaration=True, encoding='UTF-8', short_empty_elements=True)
-    return buf.getvalue()
+    return out
 
 
 # ── ZIP-level transform ───────────────────────────────────────────────────────
