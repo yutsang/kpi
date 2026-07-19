@@ -45,6 +45,54 @@ def _load(path: Path):
         return wb, rl
 
 
+def _open_any(path: Path, rich=True):
+    import openpyxl
+    try:
+        return openpyxl.load_workbook(path, data_only=True, rich_text=rich)
+    except Exception:
+        import msoffcrypto
+        buf = io.BytesIO()
+        with open(path, "rb") as f:
+            off = msoffcrypto.OfficeFile(f)
+            off.load_key(password=A.PASSWORD)
+            off.decrypt(buf)
+        buf.seek(0)
+        return openpyxl.load_workbook(buf, data_only=True, rich_text=rich)
+
+
+def _dump_uv(path: Path, label: str, max_cells: int = 6):
+    """開檔（讀 rich text），dump U/V 欄 cell 嘅逐 run bold（睇實邊邊有冇 bold）。"""
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.utils import get_column_letter
+    wb = _open_any(path, rich=True)
+    print(f"  --- {label}: {path.name} ---")
+    shown = 0
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        for row in ws.iter_rows():
+            for c in row:
+                col = get_column_letter(c.column)
+                if col not in ("U", "V"):
+                    continue
+                v = c.value
+                if v is None or (isinstance(v, str) and not v.strip()):
+                    continue
+                cell_bold = bool(c.font and c.font.bold)
+                if isinstance(v, CellRichText):
+                    runs = [(p.text, getattr(p.font, 'b', None)) if isinstance(p, TextBlock)
+                            else (str(p), 'plain') for p in v]
+                    print(f"    {sn}!{col}{c.row}: RICH cell-bold={cell_bold}")
+                    for t, b in runs[:6]:
+                        print(f"        b={b}  {t[:45]!r}")
+                else:
+                    print(f"    {sn}!{col}{c.row}: plain cell-bold={cell_bold}  {str(v)[:45]!r}")
+                shown += 1
+                if shown >= max_cells:
+                    return
+    if shown == 0:
+        print("    （U/V 欄冇搵到有內容嘅 cell）")
+
+
 def _bold_count(path: Path):
     """開一個 xlsx（可能加密），數 cell-level bold + rich-run bold 幾多，抽樣。"""
     import openpyxl
@@ -92,7 +140,7 @@ def main():
         print("✗ 唔存在:", path)
         return
 
-    # 若有第二個參數 → 直接對比 source vs output 嘅 bold 數
+    # 若有第二個參數 → 直接對比 source vs output 嘅 bold 數 + U/V 逐 run
     if len(sys.argv) >= 3:
         out = Path(sys.argv[2])
         print("== BOLD 對比 source vs output ==")
@@ -102,8 +150,10 @@ def main():
                 continue
             cb, rb, sm = _bold_count(p)
             print(f"  {tag} {p.name}: cell-level-bold={cb}  rich-run-bold={rb}")
-            for sn, co, kind, t in sm[:6]:
-                print(f"      {sn}!{co} [{kind}] {t!r}")
+        print("\n== U/V 欄逐 run 對比（原來 vs 新出）==")
+        _dump_uv(path, "原來 SOURCE")
+        if out.exists():
+            _dump_uv(out, "新出 OUTPUT")
         print()
 
     wb, rl = _load(path)
