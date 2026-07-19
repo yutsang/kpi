@@ -110,14 +110,94 @@ def inspect(path: Path, label: str):
     print(f"\n  font.bold summary: {Counter(all_bold)}")
 
 
+def inspect_rich(src_path: Path, out_path: Path | None):
+    """專門睇 rich cells：source 嘅 rich lookup entries 對應哪些 cells，
+    佢哋嘅 src.font.bold 係幾多，output 對應 cells 嘅 font.bold 係幾多。"""
+    wb_s, src = load(src_path)
+    ws_s = wb_s.worksheets[0]
+    rich = build_rich_lookup(src)
+
+    # 讀 output
+    wb_o = None
+    ws_o = None
+    if out_path and out_path.exists():
+        import openpyxl
+        wb_o = openpyxl.load_workbook(out_path, data_only=True)
+        ws_o = wb_o.worksheets[0]
+
+    print(f"\n{'='*70}")
+    print(f"  RICH CELL DETAILS — SOURCE: {src_path.name}")
+    if ws_o:
+        print(f"  vs OUTPUT: {out_path.name}")
+    print(f"  Rich lookup has {len(rich)} entries")
+    print(f"{'='*70}")
+
+    # 先印 lookup entries 本身（頭 10 個）
+    print("\n  [A] First 10 sharedString entries with runs:")
+    print(f"  {'plain_text[:40]':44}  runs [(txt[:15], b_in_rpr)]")
+    for i, (k, v) in enumerate(list(rich.items())[:10]):
+        print(f"  {k[:44]!r:46}  {v}")
+
+    # 再印 source cells that are in rich lookup
+    print(f"\n  [B] Source cells in rich lookup  (src.font.bold | run b_vals | value[:35])")
+    print(f"  {'R':>4} {'C':>3}  {'src.bold':>9}  {'run b_vals':24}  value[:35]")
+    found = 0
+    for row in ws_s.iter_rows():
+        for cell in row:
+            if cell.value is None:
+                continue
+            v = str(cell.value)
+            if v not in rich:
+                continue
+            runs = rich[v]
+            run_b = str([b for _, b in runs])[:24]
+            sb = cell.font.bold if cell.font else '?'
+            # check output
+            ob = '—'
+            if ws_o:
+                try:
+                    oc = ws_o.cell(cell.row, cell.column)
+                    ob = oc.font.bold if oc.font else '?'
+                except Exception:
+                    ob = 'err'
+            print(f"  {cell.row:>4} {cell.column:>3}  {str(sb):>9}  {run_b:<24}  {v[:35]!r}  → out.bold={ob}")
+            found += 1
+            if found >= 30:
+                print("  ... truncated at 30 rich cells")
+                break
+        if found >= 30:
+            break
+
+    if found == 0:
+        print("  (no cells matched — cell.value might not match lookup keys)")
+        print("  Showing first 5 lookup keys vs first 5 cell values in row 9+:")
+        keys = list(rich.keys())[:5]
+        print("  LOOKUP KEYS:", [k[:30] for k in keys])
+        vals = []
+        for row in ws_s.iter_rows(min_row=9):
+            for cell in row:
+                if cell.value is not None:
+                    vals.append(str(cell.value)[:30])
+            if len(vals) >= 10:
+                break
+        print("  CELL VALUES (row 9+):", vals[:10])
+
+    # font.bold summary for source
+    all_bold = [c.font.bold for row in ws_s.iter_rows() for c in row
+                if c.value is not None and c.font]
+    from collections import Counter
+    print(f"\n  [C] SOURCE font.bold summary (non-empty cells): {Counter(all_bold)}")
+    if ws_o:
+        all_bold_o = [c.font.bold for row in ws_o.iter_rows() for c in row
+                      if c.value is not None and c.font]
+        print(f"  [C] OUTPUT font.bold summary (non-empty cells): {Counter(all_bold_o)}")
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python diag_bold.py <source.xlsx> [<aligned.xlsx>]")
         sys.exit(1)
 
     src_path = Path(sys.argv[1])
-    inspect(src_path, "SOURCE")
-
-    if len(sys.argv) >= 3:
-        out_path = Path(sys.argv[2])
-        inspect(out_path, "ALIGNED OUTPUT")
+    out_path = Path(sys.argv[2]) if len(sys.argv) >= 3 else None
+    inspect_rich(src_path, out_path)
