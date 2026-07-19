@@ -76,11 +76,10 @@ def _apply_style(cell, sty: dict) -> None:
 def _apply_text_style(dst, src_cell) -> None:
     """跟 source 嘅文字外觀（字體/顏色/底色/數字格式）；框由我哋統一格線負責、
     對齊保留 wrap+top 但借 source 嘅水平對齊。
-    Rich text（CellRichText）唔覆蓋 cell-level font，保留 run-level bold。"""
-    # CellRichText 的 run 有自己 font（含 bold），設 cell-level font 會干擾 → 跳過
-    is_rich = _CellRichText is not None and isinstance(dst.value, _CellRichText)
-    if not is_rich:
-        dst.font = copy(src_cell.font)
+    cell-level font 永遠 copy（rich text cell 亦然）：inline string runs 唔 inherit
+    cell-level 嘅 bold 除非 run rPr 唔寫 <b/>；設 cell-level bold 令呢類 run 正確繼承。
+    Run 裡有 InlineFont(b=True/False) 仍可 override cell-level bold。"""
+    dst.font = copy(src_cell.font)
     dst.fill = copy(src_cell.fill)
     dst.number_format = src_cell.number_format
     a = src_cell.alignment
@@ -121,11 +120,11 @@ def _make_rich_lookup(src) -> "dict[str, object]":
             rpr = r.find(f'{{{NS}}}rPr')
             kw: dict = {}
             if rpr is not None:
-                def _flag(tag, _p=rpr):
-                    el = _p.find(f'{{{NS}}}{tag}')
-                    return el is not None and el.get('val', '1') != '0'
-                if _flag('b'):  kw['b'] = True
-                if _flag('i'):  kw['i'] = True
+                # capture b/i 包括 val="0"（explicit not-bold）——唔寫就係繼承 cell-level
+                for _attr in ('b', 'i'):
+                    _el = rpr.find(f'{{{NS}}}{_attr}')
+                    if _el is not None:
+                        kw[_attr] = _el.get('val', '1') != '0'  # True=bold, False=explicit not-bold
                 sz = rpr.find(f'{{{NS}}}sz')
                 fn = rpr.find(f'{{{NS}}}rFont')
                 if sz is not None:
