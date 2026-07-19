@@ -45,14 +45,67 @@ def _load(path: Path):
         return wb, rl
 
 
+def _bold_count(path: Path):
+    """開一個 xlsx（可能加密），數 cell-level bold + rich-run bold 幾多，抽樣。"""
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, rich_text=True)
+    except Exception:
+        import msoffcrypto
+        buf = io.BytesIO()
+        with open(path, "rb") as f:
+            off = msoffcrypto.OfficeFile(f)
+            off.load_key(password=A.PASSWORD)
+            off.decrypt(buf)
+        buf.seek(0)
+        wb = openpyxl.load_workbook(buf, data_only=True, rich_text=True)
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    cell_bold = run_bold = 0
+    samples = []
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        for row in ws.iter_rows():
+            for c in row:
+                try:
+                    if c.font and c.font.bold:
+                        cell_bold += 1
+                        if len(samples) < 6:
+                            samples.append((sn, c.coordinate, 'cell', str(c.value)[:25]))
+                except Exception:
+                    pass
+                if isinstance(c.value, CellRichText):
+                    for p in c.value:
+                        if isinstance(p, TextBlock) and p.font is not None and getattr(p.font, 'b', None):
+                            run_bold += 1
+                            if len(samples) < 12:
+                                samples.append((sn, c.coordinate, 'run', p.text[:20]))
+                            break
+    return cell_bold, run_bold, samples
+
+
 def main():
     if len(sys.argv) < 2:
-        print("俾一個 source xlsx 路徑")
+        print("俾一個 source xlsx 路徑（第二個參數可俾 output xlsx 對比 bold）")
         return
     path = Path(sys.argv[1])
     if not path.exists():
         print("✗ 唔存在:", path)
         return
+
+    # 若有第二個參數 → 直接對比 source vs output 嘅 bold 數
+    if len(sys.argv) >= 3:
+        out = Path(sys.argv[2])
+        print("== BOLD 對比 source vs output ==")
+        for tag, p in [("SOURCE", path), ("OUTPUT", out)]:
+            if not p.exists():
+                print(f"  {tag}: ✗ 唔存在 {p}")
+                continue
+            cb, rb, sm = _bold_count(p)
+            print(f"  {tag} {p.name}: cell-level-bold={cb}  rich-run-bold={rb}")
+            for sn, co, kind, t in sm[:6]:
+                print(f"      {sn}!{co} [{kind}] {t!r}")
+        print()
+
     wb, rl = _load(path)
 
     print(f"# {path.name}")
