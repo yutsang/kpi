@@ -76,10 +76,11 @@ def _apply_style(cell, sty: dict) -> None:
 def _apply_text_style(dst, src_cell) -> None:
     """跟 source 嘅文字外觀（字體/顏色/底色/數字格式）；框由我哋統一格線負責、
     對齊保留 wrap+top 但借 source 嘅水平對齊。
-    cell-level font 永遠 copy（rich text cell 亦然）：inline string runs 唔 inherit
-    cell-level 嘅 bold 除非 run rPr 唔寫 <b/>；設 cell-level bold 令呢類 run 正確繼承。
-    Run 裡有 InlineFont(b=True/False) 仍可 override cell-level bold。"""
-    dst.font = copy(src_cell.font)
+    Rich text（CellRichText）唔 copy cell-level font：source template 嘅 default font
+    本身係 bold，copy 會令所有 rich cell 變全 bold。Run-level <b/> 係唯一可靠 bold 指標。"""
+    is_rich = _CellRichText is not None and isinstance(dst.value, _CellRichText)
+    if not is_rich:
+        dst.font = copy(src_cell.font)
     dst.fill = copy(src_cell.fill)
     dst.number_format = src_cell.number_format
     a = src_cell.alignment
