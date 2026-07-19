@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import re
 import shutil
 import zipfile
@@ -1099,6 +1100,11 @@ def transform_xlsx_zip(
             proj_spans=proj_spans,
             no_merge_tgt_cols=no_merge,
         )
+        if os.environ.get("KPI_DUMP_XML"):
+            safe = re.sub(r'[^\w]', '_', sn)
+            dbg = out_path.parent / f"_dbg_{out_path.stem}_{safe}.xml"
+            dbg.write_bytes(files[sheet_path])
+            log(f"     [KPI_DUMP_XML] 寫 {dbg.name}")
 
     # Remove calcChain.xml (formula refs invalid after column reorder).
     # Also remove its entries from [Content_Types].xml and workbook rels,
