@@ -82,10 +82,8 @@ def _apply_text_style(dst, src_cell) -> None:
     if not is_rich:
         dst.font = copy(src_cell.font)
     else:
-        # base_grid 先設咗 template data_style font（可能係 bold）。
-        # Rich cell（例如多個調整：金額行 bold、description 非 bold）嘅 bold 一定
-        # 要靠 run-level <b/> 逐段控制；cell-level bold 必須清零，否則無 <b/> 嘅 run
-        # 會繼承 cell-level bold → 全格 bold（唔啱）。
+        # _rich_val 已把每個 run 嘅 bold 明確化（含用 source bold 填「繼承」run），
+        # 所以 cell-level bold 清零即可——run-level 完全控制外觀。
         _f = copy(dst.font)
         _f.bold = False
         dst.font = _f
@@ -96,11 +94,12 @@ def _apply_text_style(dst, src_cell) -> None:
                               horizontal=(a.horizontal if a and a.horizontal else "left"))
 
 
-def _make_rich_lookup(src) -> "dict[str, object]":
-    """Parse xl/sharedStrings.xml，返 {plain_text: CellRichText}（只含有 rich text 的 entries）。
-    src = Path（直接開 zip）或 io.BytesIO（解密後的 buffer）。
-    用文字 key 而唔用 shared-string index——因為 openpyxl 讀入後已把 index 換成 plain string，
-    所以 cell.value 對應嘅 key 就係 CellRichText 各 run.text 的串接。"""
+def _make_rich_lookup(src) -> "dict[str, list]":
+    """Parse xl/sharedStrings.xml，返 {plain_text: [run_spec, ...]}（只含有多 run 的 entries）。
+    run_spec = (text, b, i, sz, rFont)，b/i ∈ {True, False, None}，None = run 冇明確 <b>/<i>，
+    即係「繼承 cell-level」——留返 _rich_val 用 source cell 自己嘅 bold 去填。
+    （唔可以喺呢度直接 build InlineFont，因為 InlineFont.b 預設 False，會冚死「繼承」狀態。）
+    用文字 key：openpyxl 讀入後已把 shared-string index 換成 plain string。"""
     if _CellRichText is None or _TextBlock is None or _InlineFont is None:
         return {}
     import zipfile as _zf, xml.etree.ElementTree as _ET
@@ -120,46 +119,59 @@ def _make_rich_lookup(src) -> "dict[str, object]":
         rs = si.findall(f'{{{NS}}}r')
         if not rs:
             continue        # 純文字，唔需要 rich text 處理
-        parts, any_font = [], False
+        runs, any_fmt = [], False
         for r in rs:
             t_el = r.find(f'{{{NS}}}t')
             txt = (t_el.text or '') if t_el is not None else ''
             if not txt:
                 continue
             rpr = r.find(f'{{{NS}}}rPr')
-            kw: dict = {}
+            b = i = None
+            sz = rFont = None
             if rpr is not None:
-                # capture b/i 包括 val="0"（explicit not-bold）——唔寫就係繼承 cell-level
-                for _attr in ('b', 'i'):
-                    _el = rpr.find(f'{{{NS}}}{_attr}')
-                    if _el is not None:
-                        kw[_attr] = _el.get('val', '1') != '0'  # True=bold, False=explicit not-bold
-                sz = rpr.find(f'{{{NS}}}sz')
-                fn = rpr.find(f'{{{NS}}}rFont')
-                if sz is not None:
-                    try: kw['sz'] = float(sz.get('val', 11))
+                be = rpr.find(f'{{{NS}}}b')
+                if be is not None:
+                    b = be.get('val', '1') != '0'; any_fmt = True
+                ie = rpr.find(f'{{{NS}}}i')
+                if ie is not None:
+                    i = ie.get('val', '1') != '0'; any_fmt = True
+                sze = rpr.find(f'{{{NS}}}sz')
+                if sze is not None:
+                    try: sz = float(sze.get('val', 11)); any_fmt = True
                     except Exception: pass
-                if fn is not None:
-                    kw['rFont'] = fn.get('val', 'Calibri')
-            if kw:
-                parts.append(_TextBlock(font=_InlineFont(**kw), text=txt))
-                any_font = True
-            else:
-                parts.append(txt)
-        if any_font and parts:
-            crt = _CellRichText(*parts)
-            lookup[str(crt)] = crt   # str(CellRichText) = 各 run text 串接 = cell.value
+                fne = rpr.find(f'{{{NS}}}rFont')
+                if fne is not None:
+                    rFont = fne.get('val', 'Calibri'); any_fmt = True
+            runs.append((txt, b, i, sz, rFont))
+        if any_fmt and runs:
+            lookup[''.join(t for t, *_ in runs)] = runs
     return lookup
 
 
 def _rich_val(cell, rich_lookup: dict):
-    """若 cell.value 是 str 且 rich_lookup 有對應 CellRichText → 返 CellRichText，保留 bold。"""
+    """若 cell.value 係 str 且 rich_lookup 有對應 runs → build CellRichText。
+    每個 run 嘅 bold 明確化：有 <b/> 用佢自己；冇 <b/>（含純文字段）→ 用 source
+    cell 自己嘅 bold（cell.font.bold）。咁「整格 bold」同「格內混合 bold」都跟返來源。"""
     if not rich_lookup:
         return cell.value
     v = cell.value
-    if isinstance(v, str):
-        return rich_lookup.get(v, v)
-    return v
+    if not isinstance(v, str):
+        return v
+    runs = rich_lookup.get(v)
+    if runs is None:
+        return v
+    src_bold = bool(cell.font and cell.font.bold)
+    parts = []
+    for txt, b, i, sz, rFont in runs:
+        kw = {"b": src_bold if b is None else b}
+        if i is not None:
+            kw["i"] = i
+        if sz is not None:
+            kw["sz"] = sz
+        if rFont is not None:
+            kw["rFont"] = rFont
+        parts.append(_TextBlock(font=_InlineFont(**kw), text=txt))
+    return _CellRichText(*parts)
 
 
 def _inject_sheet_drawings_raw(src_zip_src, src_sheet_name: str, out_path: Path) -> bool:
