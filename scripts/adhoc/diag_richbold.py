@@ -98,6 +98,38 @@ def _dump_uv(path: Path, label: str, max_cells: int = 6):
         print("    （U/V 欄冇搵到有內容嘅 cell）")
 
 
+def _find_uv(path: Path, substr: str, label: str):
+    """搵晒含 substr 嘅 U/V cell，印座標 + cell.font.bold + 每段 run 嘅明確 b。"""
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.utils import get_column_letter
+    wb = _open_any(path, rich=True)
+    print(f"  --- {label}: {path.name} ---")
+    n = 0
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        for row in ws.iter_rows():
+            for c in row:
+                if get_column_letter(c.column) not in ("U", "V"):
+                    continue
+                v = c.value
+                txt = (str(v) if not isinstance(v, CellRichText)
+                       else ''.join(p.text if isinstance(p, TextBlock) else str(p) for p in v))
+                if not txt or substr not in txt:
+                    continue
+                cb = bool(c.font and c.font.bold)
+                n += 1
+                print(f"    {sn}!{get_column_letter(c.column)}{c.row}  cell.font.bold={cb}  "
+                      f"type={'RICH' if isinstance(v, CellRichText) else 'plain'}")
+                if isinstance(v, CellRichText):
+                    for p in v:
+                        if isinstance(p, TextBlock):
+                            print(f"        run b={getattr(p.font,'b',None)!r}  {p.text[:40]!r}")
+                        else:
+                            print(f"        run (plain)  {str(p)[:40]!r}")
+    if n == 0:
+        print(f"    （冇 U/V cell 含 {substr!r}）")
+
+
 def _uv_patterns(path: Path):
     """{plain_text: Counter( bold_pattern )}，bold_pattern = 每個非空白 run 嘅
     effective bold 組成嘅 tuple。同一文字可以有多個 cell（多個 pattern）→ 用 Counter
@@ -216,6 +248,14 @@ def main():
         if out.exists():
             print()
             _uv_diff(path, out)      # 只報唔一致嘅格 —— 直接揪出錯判
+        # 第 3 個參數 = 搜尋字串：dump 兩邊含此字串嘅 U/V cell 全部原始細節
+        if len(sys.argv) >= 4:
+            sub = sys.argv[3]
+            print(f"\n== 定點搜尋 U/V cell 含 {sub!r} ==")
+            _find_uv(path, sub, "原來 SOURCE")
+            if out.exists():
+                _find_uv(out, sub, "新出 OUTPUT")
+            print()
         print("\n== U/V 欄逐 run 對比（原來 vs 新出）==")
         _dump_uv(path, "原來 SOURCE")
         if out.exists():
