@@ -93,6 +93,58 @@ def _dump_uv(path: Path, label: str, max_cells: int = 6):
         print("    （U/V 欄冇搵到有內容嘅 cell）")
 
 
+def _uv_runs_map(path: Path):
+    """{plain_text: [(run_text, bold_effective), ...]} for U/V rich cells.
+    bold_effective = run 明確 b，或 None 時用 cell-level bold（即 Excel 實際顯示）。"""
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.utils import get_column_letter
+    wb = _open_any(path, rich=True)
+    out = {}
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        for row in ws.iter_rows():
+            for c in row:
+                if get_column_letter(c.column) not in ("U", "V"):
+                    continue
+                v = c.value
+                if not isinstance(v, CellRichText):
+                    continue
+                cb = bool(c.font and c.font.bold)
+                runs = []
+                for p in v:
+                    if isinstance(p, TextBlock):
+                        b = getattr(p.font, 'b', None)
+                        runs.append((p.text, bool(b) if b is not None else cb))
+                    else:
+                        runs.append((str(p), cb))
+                out[str(v)] = runs
+    return out
+
+
+def _uv_diff(src_path: Path, out_path: Path):
+    """掃晒 U/V rich cell，只報 source 同 output 實際粗體唔一致嘅段。"""
+    print("== U/V bold 逐段對比：只列 source ≠ output ==")
+    sm = _uv_runs_map(src_path)
+    om = _uv_runs_map(out_path)
+    mism = 0
+    for text, s_runs in sm.items():
+        o_runs = om.get(text)
+        if o_runs is None:
+            print(f"  ⚠ output 揾唔到呢格（key mismatch）: {text[:40]!r}")
+            mism += 1
+            continue
+        # 逐段比 bold（用 effective bold；忽略純空白/換行段）
+        for (st, sb), (ot, ob) in zip(s_runs, o_runs):
+            if st.strip() and sb != ob:
+                print(f"  ✗ {text[:24]!r} …段 {st[:22]!r}: source粗={sb} → output粗={ob}")
+                mism += 1
+    if mism == 0:
+        print("  ✓ 所有 U/V rich cell 嘅粗體，source 同 output 完全一致（冇錯判）。")
+    else:
+        print(f"  共 {mism} 處唔一致。")
+    print()
+
+
 def _bold_count(path: Path):
     """開一個 xlsx（可能加密），數 cell-level bold + rich-run bold 幾多，抽樣。"""
     import openpyxl
@@ -150,6 +202,9 @@ def main():
                 continue
             cb, rb, sm = _bold_count(p)
             print(f"  {tag} {p.name}: cell-level-bold={cb}  rich-run-bold={rb}")
+        if out.exists():
+            print()
+            _uv_diff(path, out)      # 只報唔一致嘅格 —— 直接揪出錯判
         print("\n== U/V 欄逐 run 對比（原來 vs 新出）==")
         _dump_uv(path, "原來 SOURCE")
         if out.exists():
