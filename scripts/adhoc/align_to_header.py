@@ -133,12 +133,14 @@ def _make_num_c(col: int, row: int, v: float, s: str = '0') -> ET.Element:
 
 
 def _clone_row(row_el: "ET.Element | None", rn: int) -> ET.Element:
-    """New <row r=rn> inheriting attributes from source (except r=)."""
+    """New <row r=rn> inheriting attributes from source (except r= and spans=).
+    spans= is stripped because column reorder invalidates it; Excel recalculates.
+    """
     new_row = ET.Element(f'{{{_XNS}}}row')
     new_row.set('r', str(rn))
     if row_el is not None:
         for attr, val in row_el.attrib.items():
-            if attr != 'r':
+            if attr not in ('r', 'spans'):
                 new_row.set(attr, val)
     return new_row
 
@@ -1042,8 +1044,19 @@ def transform_xlsx_zip(
             no_merge_tgt_cols=no_merge,
         )
 
-    # Remove calcChain.xml (formula refs invalid after column reorder)
-    files.pop('xl/calcChain.xml', None)
+    # Remove calcChain.xml (formula refs invalid after column reorder).
+    # Also remove its entries from [Content_Types].xml and workbook rels,
+    # otherwise Excel reports "found a problem" because it expects the file.
+    if 'xl/calcChain.xml' in files:
+        files.pop('xl/calcChain.xml')
+        ct_key = '[Content_Types].xml'
+        if ct_key in files:
+            files[ct_key] = re.sub(
+                rb'<Override[^>]*calcChain[^>]*/>\s*', b'', files[ct_key])
+        rels_key = 'xl/_rels/workbook.xml.rels'
+        if rels_key in files:
+            files[rels_key] = re.sub(
+                rb'<Relationship[^>]*calcChain[^>]*/>\s*', b'', files[rels_key])
 
     # Write output
     out_path.parent.mkdir(parents=True, exist_ok=True)
