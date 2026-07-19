@@ -110,16 +110,46 @@ def main():
 
     print(f"# {path.name}")
     print(f"[A] rich lookup entries（multi-run/有格式嘅 shared string）: {len(rl)}")
-    shown = 0
-    for k, runs in rl.items():
-        print(f"    key={k[:50]!r}  runs=" +
-              "; ".join(f"[{t[:12]!r} b={b}]" for t, b, i, sz, fn in runs))
-        shown += 1
-        if shown >= 6:
-            break
+    with_bold = [(k, runs) for k, runs in rl.items()
+                 if any(b is True for _t, b, _i, _sz, _fn in runs)]
+    print(f"    當中有 run-level <b/>=True 嘅 entry: {len(with_bold)}")
+    for k, runs in with_bold[:6]:
+        print(f"    key={k[:40]!r}")
+        for t, b, i, sz, fn in runs[:8]:
+            print(f"        run b={b} i={i} sz={sz} font={fn}  {t[:40]!r}")
+    if not with_bold:
+        print("    ⚠ 冇任何 entry 有 run-level <b/>=True → U/V 嘅『粗體』唔係靠 <b/> run，"
+              "可能係 cell-level bold、或者用咗其他方式（要再睇 raw XML）。")
     if not rl:
         print("    ⚠⚠ lookup 係空！代表 sharedStrings.xml 冇 <r> run，或者讀唔到 →"
               " 所有 run-level bold 一定會冇。")
+
+    # [A2] 專睇 U/V 欄嘅 cell（畢馬威關注事項 / 承批公司的反饋意見）
+    print("\n[A2] U/V 欄 cell 逐 run 拆解（頭幾個有內容嘅）:")
+    from openpyxl.utils import get_column_letter
+    shown_uv = 0
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        for row in ws.iter_rows():
+            for c in row:
+                col = get_column_letter(c.column)
+                if col in ("U", "V") and isinstance(c.value, str) and c.value.strip():
+                    runs = rl.get(c.value)
+                    src_bold = bool(c.font and c.font.bold)
+                    if runs:
+                        print(f"    {sn}!{col}{c.row}: rich, cell-bold={src_bold}")
+                        for t, b, i, sz, fn in runs[:6]:
+                            print(f"        run b={b}  {t[:45]!r}")
+                    else:
+                        print(f"    {sn}!{col}{c.row}: NON-rich（唔喺lookup）, cell-bold={src_bold}"
+                              f"  {c.value[:45]!r}")
+                    shown_uv += 1
+                    if shown_uv >= 8:
+                        break
+            if shown_uv >= 8:
+                break
+        if shown_uv >= 8:
+            break
 
     print("\n[B] 逐 sheet 掃 cell（只計 value 係文字嘅）:")
     tot_hit = tot_miss = tot_cellbold = 0
