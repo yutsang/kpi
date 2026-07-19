@@ -155,22 +155,26 @@ def _make_rich_lookup(src) -> tuple:
             if not txt:
                 continue
             rpr = r.find(f'{{{NS}}}rPr')
-            b = i = None
-            sz = rFont = None
-            if rpr is not None:
+            if rpr is None:
+                # 純 run（完全冇 rPr）→ b/i = None = 繼承 cell-level font。
+                b = i = None
+                sz = rFont = None
+            else:
+                # 有 rPr → 係完整定義：冇 <b> 即係「明確非粗」(False)，唔會繼承
+                # cell-level bold。（呢個先係 Excel rich run 嘅真實行為；之前當
+                # None＝繼承令「有 rPr 冇 <b>」段錯誤變粗。）
+                any_fmt = True
                 be = rpr.find(f'{{{NS}}}b')
-                if be is not None:
-                    b = be.get('val', '1') != '0'; any_fmt = True
+                b = (be.get('val', '1') != '0') if be is not None else False
                 ie = rpr.find(f'{{{NS}}}i')
-                if ie is not None:
-                    i = ie.get('val', '1') != '0'; any_fmt = True
+                i = (ie.get('val', '1') != '0') if ie is not None else False
                 sze = rpr.find(f'{{{NS}}}sz')
+                sz = None
                 if sze is not None:
-                    try: sz = float(sze.get('val', 11)); any_fmt = True
+                    try: sz = float(sze.get('val', 11))
                     except Exception: pass
                 fne = rpr.find(f'{{{NS}}}rFont')
-                if fne is not None:
-                    rFont = fne.get('val', 'Calibri'); any_fmt = True
+                rFont = fne.get('val', 'Calibri') if fne is not None else None
             runs.append((txt, b, i, sz, rFont))
         if any_fmt and runs:
             index_runs[idx] = runs
