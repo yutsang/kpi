@@ -112,15 +112,22 @@ def _cref(col: int, row: int) -> str:
 
 # ── Byte-level XML primitives (no ET serialization → no namespace mangling) ───
 
+# Chars illegal in XML 1.0 (Excel drops cells containing them)
+_INVALID_XML = re.compile(
+    '[^\x09\x0A\x0D\x20-퟿-�\U00010000-\U0010FFFF]')
+
 def _xml_esc(text: str) -> str:
+    text = _INVALID_XML.sub('', str(text))
     return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 def _xml_esc_attr(val: str) -> str:
+    val = _INVALID_XML.sub('', str(val))
     return val.replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
 
 def _b_inline_c(col: int, row: int, text: str, s: str = '0') -> bytes:
     t = _xml_esc(str(text) if text is not None else '')
-    return f'<c r="{_cref(col,row)}" t="inlineStr" s="{s}"><is><t>{t}</t></is></c>'.encode('utf-8')
+    return (f'<c r="{_cref(col,row)}" t="inlineStr" s="{s}">'
+            f'<is><t xml:space="preserve">{t}</t></is></c>').encode('utf-8')
 
 def _b_num_c(col: int, row: int, value: float, s: str = '0') -> bytes:
     v = str(int(round(value))) if abs(value - round(value)) < 1e-9 else repr(value)
@@ -131,9 +138,20 @@ def _b_reref(cell_b: bytes, col: int, row: int) -> bytes:
     return re.sub(rb'\br="[A-Z]+\d+"', ('r="' + _cref(col, row) + '"').encode(), cell_b, count=1)
 
 def _b_strip_f(cell_b: bytes) -> bytes:
-    """Remove <f .../> and <f ...>...</f> formula elements."""
+    """Remove <f> formula elements. If the cell was a formula-string (t="str")
+    or formula-error (t="e") result, convert it to an inline string so Excel
+    keeps the cached value — a bare t="str"/t="e" with no <f> is INVALID and
+    Excel drops it ('Removed Records: Cell information')."""
     cell_b = re.sub(rb'<f\b[^>]*/>', b'', cell_b)
-    return re.sub(rb'<f\b[^>]*>.*?</f>', b'', cell_b, flags=re.DOTALL)
+    cell_b = re.sub(rb'<f\b[^>]*>.*?</f>', b'', cell_b, flags=re.DOTALL)
+    if b't="str"' in cell_b or b't="e"' in cell_b:
+        cell_b = cell_b.replace(b't="str"', b't="inlineStr"')
+        cell_b = cell_b.replace(b't="e"', b't="inlineStr"')
+        cell_b = re.sub(rb'<v>(.*?)</v>',
+                        rb'<is><t xml:space="preserve">\1</t></is>',
+                        cell_b, flags=re.DOTALL)
+        cell_b = re.sub(rb'<v\s*/>', b'<is><t></t></is>', cell_b)
+    return cell_b
 
 def _b_row(rn: int, row_el, cells: list) -> bytes:
     """Build <row r="N" safe-attrs>cells</row>. Drops namespaced + spans attrs."""
