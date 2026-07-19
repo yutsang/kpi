@@ -559,7 +559,7 @@ def _grp_match(got: str, want: str) -> bool:
 # ── Template（schema + 表頭 labels；唔再儲 style）────────────────────────────
 class Template:
     def __init__(self, hf: Path, log):
-        wb = openpyxl.load_workbook(hf, data_only=True)
+        wb = load_wb(hf)
         ws = wb.active
         self.maxcol = ws.max_column or 0
         self.subrow = detect_sub_row(ws, ws.max_row or 0, self.maxcol)
