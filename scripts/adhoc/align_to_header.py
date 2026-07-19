@@ -255,6 +255,31 @@ def _inject_sheet_drawings_raw(src_zip_src, src_sheet_name: str, out_path: Path)
         if k.startswith('xl/media/') and k not in out_files:
             out_files[k] = v
 
+    # ── 4b. 更新 [Content_Types].xml（必須，否則 Excel 報 "found a problem"）────
+    CT_PATH = '[Content_Types].xml'
+    DRW_CT  = 'application/vnd.openxmlformats-officedocument.drawing+xml'
+    _MEDIA_CT = {
+        'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+        'gif': 'image/gif', 'bmp': 'image/bmp', 'tiff': 'image/tiff',
+        'emf': 'image/x-emf', 'wmf': 'image/x-wmf', 'svg': 'image/svg+xml',
+    }
+    if CT_PATH in out_files:
+        ct = out_files[CT_PATH].decode('utf-8')
+        # 加 drawing Override（如未登記）
+        if new_fn not in ct:
+            ct = ct.replace(
+                '</Types>',
+                f'<Override PartName="/xl/drawings/{new_fn}" ContentType="{DRW_CT}"/></Types>')
+        # 加 media Default（如未登記）
+        for mp in (k for k in extra if k.startswith('xl/media/')):
+            ext = mp.rsplit('.', 1)[-1].lower()
+            mime = _MEDIA_CT.get(ext)
+            if mime and f'Extension="{ext}"' not in ct:
+                ct = ct.replace(
+                    '</Types>',
+                    f'<Default Extension="{ext}" ContentType="{mime}"/></Types>')
+        out_files[CT_PATH] = ct.encode('utf-8')
+
     # ── 5. 加 drawing relationship 入 output sheet rels ──────────────────────
     sheet_rels_p = f'xl/worksheets/_rels/sheet{out_idx}.xml.rels'
     rel_entry = (f'<Relationship Id="rId_drw{new_num}" Type="{REL_DRW}" '
