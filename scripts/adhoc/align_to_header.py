@@ -113,6 +113,12 @@ def _col_of_cell(cell_b: bytes) -> int:
     return _cidx(m.group(1).decode('ascii')) if m else 0
 
 
+def _s_of_cell(cell_b: bytes) -> "str | None":
+    """Parse the style index (s="..") from a <c ...> byte chunk."""
+    m = re.search(rb'\bs="(\d+)"', cell_b)
+    return m.group(1).decode('ascii') if m else None
+
+
 def _cref(col: int, row: int) -> str:
     return _cletter(col) + str(row)
 
@@ -818,6 +824,32 @@ def build_xml_col_map(tpl: Template, src_anchor: int, src_col_gs: dict):
     return col_map, derive_rules
 
 
+def build_hdr_col_map(tpl: Template, src_col_gs: dict) -> dict:
+    """
+    {tgt_col: src_col} by matching (group, sub) for ALL target columns
+    (copy AND derive). Used only to borrow the source's real cell styling
+    (fill / border / font) for the header row and for computed cells — so
+    derive columns (建議調整金額 etc.) don't fall back to a blank style.
+    """
+    m: dict = {}
+    used: set = set()
+    for tgt_c in range(1, tpl.maxcol + 1):
+        g, s = tpl.col_gs.get(tgt_c, ("", ""))
+        if not s:
+            continue
+        cand = None
+        for sc, (sg, ss) in src_col_gs.items():
+            if sc in used or ss != s:
+                continue
+            if g == "" or _grp_match(sg, g):
+                cand = sc
+                break
+        if cand:
+            m[tgt_c] = cand
+            used.add(cand)
+    return m
+
+
 def precompute_xml_values(tpl: Template, projs: list, col_map: dict,
                           derive_rules: dict, no_merge_tgt_cols: set) -> dict:
     """
@@ -868,6 +900,7 @@ def transform_sheet_xml(
     computed: dict,
     proj_spans: list,
     no_merge_tgt_cols: set,
+    hdr_col_map: "dict | None" = None,
 ) -> bytes:
     """
     Reorder columns in the sheet XML.
@@ -888,6 +921,11 @@ def transform_sheet_xml(
 
     grow, subrow = tpl.grow, tpl.subrow
     rev_map = {tgt: src for src, tgt in col_map.items()}
+    hdr_col_map = hdr_col_map or {}
+    # Prefer the (group,sub)-based header map (covers derive columns) and fall
+    # back to col_map's reverse (copy columns) so every target column can borrow
+    # its source styling.
+    style_src = {t: hdr_col_map.get(t, rev_map.get(t)) for t in range(1, tgt_total_cols + 1)}
 
     # Computed values by row
     computed_by_row: dict = {}
@@ -929,19 +967,19 @@ def transform_sheet_xml(
 
         # ── Header rows: rebuild from tpl.hdr_labels ──────────────────────
         if rn in (grow, subrow):
+            # Map this header row's source cells by column for style borrowing
+            hdr_src_style: dict = {}
+            if row_el is not None:
+                for c_el in row_el.findall(f'{{{NS}}}c'):
+                    hdr_src_style[_col_of(c_el.get('r', ''))] = c_el.get('s', def_s)
             cells: list = []
             for tgt_c in range(1, tgt_total_cols + 1):
                 label = tpl.hdr_labels.get((rn, tgt_c))
                 if label is None:
                     continue
-                # Borrow style index from the matching source cell
-                s_attr = def_s
-                src_c  = rev_map.get(tgt_c)
-                if src_c and row_el is not None:
-                    for c_el in row_el.findall(f'{{{NS}}}c'):
-                        if _col_of(c_el.get('r', '')) == src_c:
-                            s_attr = c_el.get('s', def_s)
-                            break
+                # Borrow style from the source header cell of the same (grp,sub)
+                src_c  = style_src.get(tgt_c)
+                s_attr = hdr_src_style.get(src_c, def_s) if src_c else def_s
                 cells.append(_b_inline_c(tgt_c, rn, str(label), s_attr))
             new_rows.append(_b_row(rn, row_el, cells))
             continue
@@ -973,10 +1011,18 @@ def transform_sheet_xml(
         for tgt_c, value in computed_by_row.get(rn, {}).items():
             if tgt_c < 1 or tgt_c > tgt_total_cols:
                 continue
+            # Keep the border/fill: reuse the style of the cell already there,
+            # else the source cell of the same (grp,sub) in this row, else def_s.
+            cs = _s_of_cell(by_col.get(tgt_c, b''))
+            if cs is None:
+                src_c = style_src.get(tgt_c)
+                if src_c is not None and src_c in src_cells:
+                    cs = _s_of_cell(src_cells[src_c])
+            cs = cs or def_s
             if isinstance(value, (int, float)):
-                by_col[tgt_c] = _b_num_c(tgt_c, rn, float(value), def_s)
+                by_col[tgt_c] = _b_num_c(tgt_c, rn, float(value), cs)
             elif value is not None:
-                by_col[tgt_c] = _b_inline_c(tgt_c, rn, str(value), def_s)
+                by_col[tgt_c] = _b_inline_c(tgt_c, rn, str(value), cs)
             else:
                 by_col.pop(tgt_c, None)
 
@@ -1070,7 +1116,7 @@ def transform_xlsx_zip(
 ) -> None:
     """
     src:         decrypted source (BytesIO or plain Path)
-    sheets_info: {sheet_name: (col_map, computed, proj_spans, no_merge_tgt_cols, src_subrow)}
+    sheets_info: {sheet_name: (col_map, computed, proj_spans, no_merge_tgt_cols, src_subrow, hdr_col_map)}
     Writes output xlsx to out_path.
     """
     if isinstance(src, io.BytesIO):
@@ -1103,7 +1149,7 @@ def transform_xlsx_zip(
         name_to_rID[n] = rID
 
     # Transform each main sheet
-    for sn, (col_map, computed, proj_spans, no_merge, src_subrow) in sheets_info.items():
+    for sn, (col_map, computed, proj_spans, no_merge, src_subrow, hdr_col_map) in sheets_info.items():
         rID        = name_to_rID.get(sn, '')
         sheet_path = rID_to_path.get(rID, '')
         if not sheet_path or sheet_path not in files:
@@ -1119,6 +1165,7 @@ def transform_xlsx_zip(
             computed=computed,
             proj_spans=proj_spans,
             no_merge_tgt_cols=no_merge,
+            hdr_col_map=hdr_col_map,
         )
         if os.environ.get("KPI_DUMP_XML"):
             safe = re.sub(r'[^\w]', '_', sn)
@@ -1312,7 +1359,7 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
         else:
             log(f"  （冇 source_2 match scope={scope} company={company}）")
 
-    sheets_info: dict = {}   # sheet_name → (col_map, computed, proj_spans, no_merge, subrow)
+    sheets_info: dict = {}   # sheet_name → (col_map, computed, proj_spans, no_merge, subrow, hdr_col_map)
 
     for sn in wb.sheetnames:
         ws = wb[sn]
@@ -1333,11 +1380,12 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
             preview_sheet(sn, projs, tpl, log)
             continue
         col_map, derive_rules = build_xml_col_map(tpl, anchor, col_gs)
+        hdr_col_map = build_hdr_col_map(tpl, col_gs)
         no_merge = {c for c in range(tpl.anchor or 1, tpl.maxcol + 1)
                     if tpl.col_gs.get(c, ("", ""))[1] in NO_MERGE_SUBS}
         computed = precompute_xml_values(tpl, projs, col_map, derive_rules, no_merge)
         proj_spans = [(p.r0, p.r1) for p in projs]
-        sheets_info[sn] = (col_map, computed, proj_spans, no_merge, subrow)
+        sheets_info[sn] = (col_map, computed, proj_spans, no_merge, subrow, hdr_col_map)
 
     wb.close()
 
