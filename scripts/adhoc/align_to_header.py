@@ -967,7 +967,14 @@ def transform_sheet_xml(
             else:
                 new_ref = _remap_merge(ref, col_map)
                 if new_ref:
-                    merges.append(new_ref)
+                    # Only keep left-half merges (both endpoints < anchor).
+                    # Right-half merges are rebuilt from scratch by project-span
+                    # merges below; keeping them here would create duplicates →
+                    # Excel removes both and reports "Removed Records: Merge cells".
+                    nc1 = _col_of(new_ref.split(':')[0])
+                    nc2 = _col_of(new_ref.split(':')[1])
+                    if nc1 < (tpl.anchor or 1) and nc2 < (tpl.anchor or 1):
+                        merges.append(new_ref)
 
     # Header merges from template schema
     for (mr1, mc1, mr2, mc2) in tpl.hdr_merges:
