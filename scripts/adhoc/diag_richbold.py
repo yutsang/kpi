@@ -98,13 +98,15 @@ def _dump_uv(path: Path, label: str, max_cells: int = 6):
         print("    （U/V 欄冇搵到有內容嘅 cell）")
 
 
-def _uv_runs_map(path: Path):
-    """{plain_text: [(run_text, bold_effective), ...]} for U/V rich cells.
-    bold_effective = run 明確 b，或 None 時用 cell-level bold（即 Excel 實際顯示）。"""
+def _uv_patterns(path: Path):
+    """{plain_text: Counter( bold_pattern )}，bold_pattern = 每個非空白 run 嘅
+    effective bold 組成嘅 tuple。同一文字可以有多個 cell（多個 pattern）→ 用 Counter
+    做 multiset，先唔會被行重排／同文字唔同粗體嘅情況呃到（假 mismatch）。"""
+    from collections import Counter, defaultdict
     from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.utils import get_column_letter
     wb = _open_any(path, rich=True)
-    out = {}
+    d = defaultdict(Counter)
     for sn in wb.sheetnames:
         ws = wb[sn]
         for row in ws.iter_rows():
@@ -115,38 +117,42 @@ def _uv_runs_map(path: Path):
                 if not isinstance(v, CellRichText):
                     continue
                 cb = bool(c.font and c.font.bold)
-                runs = []
+                pat = []
                 for p in v:
                     if isinstance(p, TextBlock):
                         b = getattr(p.font, 'b', None)
-                        runs.append((p.text, bool(b) if b is not None else cb))
+                        eff = bool(b) if b is not None else cb
+                        txt = p.text
                     else:
-                        runs.append((str(p), cb))
-                out[str(v)] = runs
-    return out
+                        eff, txt = cb, str(p)
+                    if txt.strip():
+                        pat.append(eff)
+                d[str(v)][tuple(pat)] += 1
+    return d
 
 
 def _uv_diff(src_path: Path, out_path: Path):
-    """掃晒 U/V rich cell，只報 source 同 output 實際粗體唔一致嘅段。"""
-    print("== U/V bold 逐段對比：只列 source ≠ output ==")
-    sm = _uv_runs_map(src_path)
-    om = _uv_runs_map(out_path)
+    """比較 source vs output 每個 U/V 文字嘅粗體 pattern MULTISET（唔理行位置）。
+    只有 output 嘅 pattern 集合同 source 唔同先算真錯判。"""
+    print("== U/V bold pattern 對比（multiset，唔理行位置）：只列真唔一致 ==")
+    sp = _uv_patterns(src_path)
+    op = _uv_patterns(out_path)
     mism = 0
-    for text, s_runs in sm.items():
-        o_runs = om.get(text)
-        if o_runs is None:
-            print(f"  ⚠ output 揾唔到呢格（key mismatch）: {text[:40]!r}")
+    for text, s_pats in sp.items():
+        o_pats = op.get(text)
+        if o_pats is None:
+            print(f"  ⚠ output 冇呢個文字嘅 U/V cell: {text[:36]!r}")
             mism += 1
             continue
-        # 逐段比 bold（用 effective bold；忽略純空白/換行段）
-        for (st, sb), (ot, ob) in zip(s_runs, o_runs):
-            if st.strip() and sb != ob:
-                print(f"  ✗ {text[:24]!r} …段 {st[:22]!r}: source粗={sb} → output粗={ob}")
-                mism += 1
+        if s_pats != o_pats:
+            mism += 1
+            print(f"  ✗ {text[:30]!r}")
+            print(f"      source patterns: {[list(map(int, p)) for p in s_pats]}")
+            print(f"      output patterns: {[list(map(int, p)) for p in o_pats]}")
     if mism == 0:
-        print("  ✓ 所有 U/V rich cell 嘅粗體，source 同 output 完全一致（冇錯判）。")
+        print("  ✓ 所有 U/V 文字嘅粗體 pattern 集合，source 同 output 完全一致（冇真錯判）。")
     else:
-        print(f"  共 {mism} 處唔一致。")
+        print(f"  共 {mism} 個文字真唔一致。")
     print()
 
 
