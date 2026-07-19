@@ -94,31 +94,60 @@ def _apply_text_style(dst, src_cell) -> None:
                               horizontal=(a.horizontal if a and a.horizontal else "left"))
 
 
-def _make_rich_lookup(src) -> "dict[str, list]":
-    """Parse xl/sharedStrings.xml，返 {plain_text: [run_spec, ...]}（只含有多 run 的 entries）。
-    run_spec = (text, b, i, sz, rFont)，b/i ∈ {True, False, None}，None = run 冇明確 <b>/<i>，
-    即係「繼承 cell-level」——留返 _rich_val 用 source cell 自己嘅 bold 去填。
-    （唔可以喺呢度直接 build InlineFont，因為 InlineFont.b 預設 False，會冚死「繼承」狀態。）
-    用文字 key：openpyxl 讀入後已把 shared-string index 換成 plain string。"""
+def _col_letters_to_idx(letters: str) -> int:
+    idx = 0
+    for ch in letters:
+        idx = idx * 26 + (ord(ch) - 64)
+    return idx
+
+
+def _make_rich_lookup(src) -> tuple:
+    """返 (index_runs, si_cell_map)：
+      index_runs  = {si_index: [run_spec, ...]}  （只含有多 run/有格式嘅 shared string）
+      si_cell_map = {sheet_name: {(row, col): si_index}}  （t="s" cell → 佢用邊個 si）
+    run_spec = (text, b, i, sz, rFont)，b/i ∈ {True, False, None}，None = run 冇明確 <b>/<i>
+    （繼承 cell-level，_rich_val 會用 source cell 自己嘅 bold 去填）。
+
+    改用 shared-string INDEX 做 key（唔用純文字）——因為同一段純文字可以喺唔同 si
+    有唔同粗體 pattern，用文字做 key 會撞、攞錯 pattern（會展支出果格就係咁錯判）。"""
     if _CellRichText is None or _TextBlock is None or _InlineFont is None:
-        return {}
-    import zipfile as _zf, xml.etree.ElementTree as _ET
-    NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+        return {}, {}
+    import zipfile as _zf, xml.etree.ElementTree as _ET, re as _re
+    NS   = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    NSr  = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    NSpk = 'http://schemas.openxmlformats.org/package/2006/relationships'
     try:
         if isinstance(src, io.BytesIO):
             src.seek(0)
         with _zf.ZipFile(src, 'r') as zf:
-            if 'xl/sharedStrings.xml' not in zf.namelist():
-                return {}
-            with zf.open('xl/sharedStrings.xml') as fh:
-                root = _ET.parse(fh).getroot()
+            names = set(zf.namelist())
+            if 'xl/sharedStrings.xml' not in names:
+                return {}, {}
+            sst_root = _ET.fromstring(zf.read('xl/sharedStrings.xml'))
+            wb_root  = _ET.fromstring(zf.read('xl/workbook.xml')) if 'xl/workbook.xml' in names else None
+            rels_root = (_ET.fromstring(zf.read('xl/_rels/workbook.xml.rels'))
+                         if 'xl/_rels/workbook.xml.rels' in names else None)
+            # sheet name -> sheet xml bytes
+            sheet_xmls: dict = {}
+            if wb_root is not None and rels_root is not None:
+                rid_target = {rel.get('Id'): rel.get('Target', '')
+                              for rel in rels_root.findall(f'{{{NSpk}}}Relationship')}
+                for sh in wb_root.findall(f'.//{{{NS}}}sheet'):
+                    nm  = sh.get('name', '')
+                    rid = sh.get(f'{{{NSr}}}id', '')
+                    tgt = rid_target.get(rid, '')
+                    path = tgt.lstrip('/') if tgt.startswith('/') else 'xl/' + tgt
+                    if path in names:
+                        sheet_xmls[nm] = zf.read(path)
     except Exception:
-        return {}
-    lookup: dict = {}
-    for si in root.findall(f'{{{NS}}}si'):
+        return {}, {}
+
+    # 1) index_runs：逐個 si（保留位置 index）
+    index_runs: dict = {}
+    for idx, si in enumerate(sst_root.findall(f'{{{NS}}}si')):
         rs = si.findall(f'{{{NS}}}r')
         if not rs:
-            continue        # 純文字，唔需要 rich text 處理
+            continue
         runs, any_fmt = [], False
         for r in rs:
             t_el = r.find(f'{{{NS}}}t')
@@ -144,20 +173,45 @@ def _make_rich_lookup(src) -> "dict[str, list]":
                     rFont = fne.get('val', 'Calibri'); any_fmt = True
             runs.append((txt, b, i, sz, rFont))
         if any_fmt and runs:
-            lookup[''.join(t for t, *_ in runs)] = runs
-    return lookup
+            index_runs[idx] = runs
+
+    # 2) si_cell_map：逐 sheet 掃 t="s" cell → si index
+    _cell_re = _re.compile(rb'<c\b[^>]*?/>|<c\b[^>]*?>.*?</c>', _re.DOTALL)
+    si_cell_map: dict = {}
+    for sn, xb in sheet_xmls.items():
+        m: dict = {}
+        for cm in _cell_re.finditer(xb):
+            cell = cm.group()
+            if b't="s"' not in cell:
+                continue
+            rm = _re.search(rb'\br="([A-Z]+)(\d+)"', cell)
+            vm = _re.search(rb'<v>(\d+)</v>', cell)
+            if rm and vm:
+                col = _col_letters_to_idx(rm.group(1).decode('ascii'))
+                row = int(rm.group(2))
+                m[(row, col)] = int(vm.group(1))
+        si_cell_map[sn] = m
+    return index_runs, si_cell_map
 
 
-def _rich_val(cell, rich_lookup: dict):
-    """若 cell.value 係 str 且 rich_lookup 有對應 runs → build CellRichText。
-    每個 run 嘅 bold 明確化：有 <b/> 用佢自己；冇 <b/>（含純文字段）→ 用 source
-    cell 自己嘅 bold（cell.font.bold）。咁「整格 bold」同「格內混合 bold」都跟返來源。"""
-    if not rich_lookup:
+def _rich_val(cell, rich):
+    """rich = (index_runs, si_cell_map)。用 cell 自己嘅 (sheet,row,col) 揾返佢個 si index，
+    再 build CellRichText——唔靠純文字 key，杜絕同段文字唔同粗體嘅撞 key 錯判。
+    每段 bold：有 <b/> 用佢自己；冇 <b/>（含純文字段）→ 用 source cell 自己嘅 bold。"""
+    if not rich:
+        return cell.value
+    index_runs, si_cell_map = rich
+    if not index_runs:
         return cell.value
     v = cell.value
     if not isinstance(v, str):
         return v
-    runs = rich_lookup.get(v)
+    try:
+        sheet = cell.parent.title
+        idx = si_cell_map.get(sheet, {}).get((cell.row, cell.column))
+    except Exception:
+        idx = None
+    runs = index_runs.get(idx) if idx is not None else None
     if runs is None:
         return v
     src_bold = bool(cell.font and cell.font.bold)
