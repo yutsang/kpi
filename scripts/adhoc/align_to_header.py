@@ -154,6 +154,134 @@ def _rich_val(cell, rich_lookup: dict):
     return v
 
 
+def _inject_sheet_drawings_raw(src_zip_src, src_sheet_name: str, out_path: Path) -> bool:
+    """Post-save ZIP-level：把 source sheet 嘅 drawing XML（含 TextBox/shapes/images）
+    完整注入 output xlsx，繞過 openpyxl 唔 load shapes 嘅限制。
+    Returns True 代表成功注入咗 drawing。"""
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    NS_WB  = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    NS_PKG = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    REL_DRW = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing'
+
+    # ── 1. 從 source ZIP 抽 drawing XML ──────────────────────────────────────
+    if isinstance(src_zip_src, io.BytesIO):
+        src_zip_src.seek(0)
+
+    extra: dict[str, bytes] = {}
+    drw_filename: str = ""
+    old_drw_rels: str = ""
+
+    try:
+        with zipfile.ZipFile(src_zip_src, 'r') as szf:
+            nl = set(szf.namelist())
+            wb_root = ET.fromstring(szf.read('xl/workbook.xml'))
+            src_idx = next(
+                (i for i, sh in enumerate(wb_root.findall(f'.//{{{NS_WB}}}sheet'), 1)
+                 if sh.get('name') == src_sheet_name),
+                None)
+            if src_idx is None:
+                return False
+
+            rels_p = f'xl/worksheets/_rels/sheet{src_idx}.xml.rels'
+            if rels_p not in nl:
+                return False
+            rroot = ET.fromstring(szf.read(rels_p))
+            drw_rel = next(
+                (r for r in rroot.findall(f'{{{NS_PKG}}}Relationship')
+                 if r.get('Type') == REL_DRW),
+                None)
+            if drw_rel is None:
+                return False
+
+            drw_filename = drw_rel.get('Target', '').split('/')[-1]
+            drw_path = f'xl/drawings/{drw_filename}'
+            if drw_path not in nl:
+                return False
+
+            extra[drw_path] = szf.read(drw_path)
+
+            old_drw_rels = f'xl/drawings/_rels/{drw_filename}.rels'
+            if old_drw_rels in nl:
+                drw_rels_bytes = szf.read(old_drw_rels)
+                extra[old_drw_rels] = drw_rels_bytes
+                for rel in ET.fromstring(drw_rels_bytes).findall(f'{{{NS_PKG}}}Relationship'):
+                    tgt = rel.get('Target', '')
+                    if tgt.startswith('../media/'):
+                        mp = 'xl/media/' + tgt.split('/')[-1]
+                        if mp in nl:
+                            extra[mp] = szf.read(mp)
+    except Exception:
+        return False
+
+    if not drw_filename:
+        return False
+
+    # ── 2. 讀 output ZIP ─────────────────────────────────────────────────────
+    try:
+        out_files: dict[str, bytes] = {}
+        with zipfile.ZipFile(out_path, 'r') as ozf:
+            for name in ozf.namelist():
+                out_files[name] = ozf.read(name)
+    except Exception:
+        return False
+
+    # ── 3. 揾 output sheet 的 index ──────────────────────────────────────────
+    try:
+        owb = ET.fromstring(out_files['xl/workbook.xml'])
+        name_try = (src_sheet_name, src_sheet_name[:31])
+        out_idx = next(
+            (i for i, sh in enumerate(owb.findall(f'.//{{{NS_WB}}}sheet'), 1)
+             if sh.get('name') in name_try),
+            None)
+        if out_idx is None:
+            return False
+    except Exception:
+        return False
+
+    # ── 4. 新 drawing 檔名（避免衝突）──────────────────────────────────────────
+    existing = [n for n in out_files if re.match(r'^xl/drawings/drawing\d+\.xml$', n)]
+    used = {int(re.search(r'(\d+)', n).group(1)) for n in existing} if existing else {0}
+    new_num = max(used) + 1
+    new_fn = f'drawing{new_num}.xml'
+    new_drw_path = f'xl/drawings/{new_fn}'
+    new_rels_path = f'xl/drawings/_rels/{new_fn}.rels'
+
+    out_files[new_drw_path] = extra[f'xl/drawings/{drw_filename}']
+    if old_drw_rels in extra:
+        out_files[new_rels_path] = extra[old_drw_rels]
+    for k, v in extra.items():
+        if k.startswith('xl/media/') and k not in out_files:
+            out_files[k] = v
+
+    # ── 5. 加 drawing relationship 入 output sheet rels ──────────────────────
+    sheet_rels_p = f'xl/worksheets/_rels/sheet{out_idx}.xml.rels'
+    rel_entry = (f'<Relationship Id="rId_drw{new_num}" Type="{REL_DRW}" '
+                 f'Target="../drawings/{new_fn}"/>')
+    if sheet_rels_p in out_files:
+        s = out_files[sheet_rels_p].decode('utf-8')
+        s = s.replace('</Relationships>', rel_entry + '</Relationships>')
+        out_files[sheet_rels_p] = s.encode('utf-8')
+    else:
+        ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
+        out_files[sheet_rels_p] = (
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Relationships xmlns="{ns}">{rel_entry}</Relationships>'
+        ).encode('utf-8')
+
+    # ── 6. 寫返 output ────────────────────────────────────────────────────────
+    try:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as ozf:
+            for name, data in out_files.items():
+                ozf.writestr(name, data)
+        out_path.write_bytes(buf.getvalue())
+        return True
+    except Exception:
+        return False
+
+
 def base_grid(cell, data_style: dict) -> None:
     """每個 data cell 打底：template data style + 完整四邊框 + wrap-top。"""
     _apply_style(cell, data_style)
@@ -285,10 +413,12 @@ NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通")}
 # ── I/O ──────────────────────────────────────────────────────────────────
 def load_wb(path: Path):
     """非 read-only（要 merged_cells）；加密就 dicj_kpmg 解。
-    load 後立即 build rich-text lookup（zip 仍開，archive 未關），cache 到 wb._kpi_rich_table。"""
+    load 後立即 build rich-text lookup（zip 仍開，archive 未關），cache 到 wb._kpi_rich_table。
+    wb._kpi_src_zip_src 儲 source ZIP（Path 或解密 BytesIO），供 post-save drawing injection 用。"""
     try:
         wb = openpyxl.load_workbook(path, data_only=True)
         wb._kpi_rich_table = _make_rich_lookup(path)
+        wb._kpi_src_zip_src = path
         return wb
     except Exception:
         import msoffcrypto
@@ -300,6 +430,8 @@ def load_wb(path: Path):
         buf.seek(0)
         wb = openpyxl.load_workbook(buf, data_only=True)
         wb._kpi_rich_table = _make_rich_lookup(buf)
+        buf.seek(0)
+        wb._kpi_src_zip_src = buf
         return wb
 
 
@@ -818,14 +950,8 @@ def write_sheet(ws_out, tpl: Template, ws_src, projs: list[Project],
                 except Exception:
                     pass
 
-    # #2 形狀/文字框：私密Confidencial 印章等（best-effort deepcopy drawing XML）
-    try:
-        from copy import deepcopy as _dc
-        drw = getattr(ws_src, "_drawing", None)
-        if drw is not None:
-            ws_out._drawing = _dc(drw)
-    except Exception:
-        pass
+    # #2 形狀/文字框（Confidencial 印章等）→ post-save ZIP-level injection（見 _inject_sheet_drawings_raw）
+    # deepcopy _drawing 唔 work：openpyxl 唔 load TextBox shapes → 由 process_file 注入
 
     plan = build_col_plan(tpl, src_anchor, src_col_gs, src_maxcol)
     inv = {sc: c for c, k in plan.items() if k[0] == "src" for sc in (k[1],)}  # 源欄→目標欄
@@ -1176,6 +1302,7 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
 
     out_wb = openpyxl.Workbook()
     out_wb.remove(out_wb.active)
+    aligned_sheets: list[str] = []   # source sheet names processed by write_sheet（用於 drawing injection）
     for sn in wb.sheetnames:
         ws = wb[sn]
         if is_junk_sheet(sn):
@@ -1200,6 +1327,8 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
         else:
             write_sheet(out_wb.create_sheet(sn[:31]), tpl, ws, projs,
                         anchor, subrow, col_gs, maxcol, maxrow, log)
+            aligned_sheets.append(sn)
+    src_zip_src = getattr(wb, '_kpi_src_zip_src', None)
     wb.close()
     if preview:
         return
@@ -1210,6 +1339,10 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
     if ENCRYPT_OUT:                              # 保留 source 密碼保護
         tmp = out_path.with_suffix(".plain.xlsx")
         out_wb.save(tmp)
+        # post-save ZIP injection：shapes/TextBox（Confidencial 等）
+        if src_zip_src and aligned_sheets:
+            for sn in aligned_sheets:
+                _inject_sheet_drawings_raw(src_zip_src, sn, tmp)
         if encrypt_file(tmp, out_path, log):
             tmp.unlink(missing_ok=True)
             log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}（已加密 dicj_kpmg）")
