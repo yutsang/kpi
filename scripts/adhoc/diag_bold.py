@@ -121,9 +121,13 @@ def inspect_rich(src_path: Path, out_path: Path | None):
     wb_o = None
     ws_o = None
     if out_path and out_path.exists():
-        import openpyxl
-        wb_o = openpyxl.load_workbook(out_path, data_only=True)
-        ws_o = wb_o.worksheets[0]
+        try:
+            import openpyxl
+            wb_o = openpyxl.load_workbook(out_path, data_only=True)
+            ws_o = wb_o.worksheets[0]
+        except Exception as e:
+            print(f"  [WARNING] Cannot load output file: {e}")
+            ws_o = None
 
     print(f"\n{'='*70}")
     print(f"  RICH CELL DETAILS — SOURCE: {src_path.name}")
