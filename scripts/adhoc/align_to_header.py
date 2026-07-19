@@ -50,6 +50,30 @@ ET.register_namespace('x14ac', 'http://schemas.microsoft.com/office/spreadsheetm
 ET.register_namespace('xr', 'http://schemas.microsoft.com/office/spreadsheetml/2014/revision')
 ET.register_namespace('xr2', 'http://schemas.microsoft.com/office/spreadsheetml/2015/revision2')
 ET.register_namespace('xr3', 'http://schemas.microsoft.com/office/spreadsheetml/2016/revision3')
+# Additional namespaces that appear in some XLSX files
+ET.register_namespace('x14', 'http://schemas.microsoft.com/office/spreadsheetml/2009/9/main')
+ET.register_namespace('x15', 'http://schemas.microsoft.com/office/spreadsheetml/2010/11/main')
+ET.register_namespace('x15ac', 'http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac')
+ET.register_namespace('xm', 'http://schemas.microsoft.com/office/excel/2006/main')
+
+
+def _register_all_ns(xml_bytes: bytes) -> None:
+    """Scan raw XML bytes for xmlns: declarations and register all prefixes.
+
+    Must be called before ET.parse() so ElementTree preserves original
+    namespace prefixes on write (otherwise unknown prefixes become ns0:, ns1:,
+    which makes Excel reject the file with a 'found a problem' dialog).
+    """
+    for prefix, uri in re.findall(rb'xmlns:([A-Za-z][A-Za-z0-9_.-]*)="([^"]+)"', xml_bytes):
+        try:
+            ET.register_namespace(prefix.decode('ascii', 'ignore'), uri.decode('ascii', 'ignore'))
+        except Exception:
+            pass
+    for uri in re.findall(rb'(?<![A-Za-z:])xmlns="([^"]+)"', xml_bytes):
+        try:
+            ET.register_namespace('', uri.decode('ascii', 'ignore'))
+        except Exception:
+            pass
 
 
 # ── Column index utilities ────────────────────────────────────────────────────
@@ -798,6 +822,7 @@ def transform_sheet_xml(
         for r in range(r0, r1 + 1):
             proj_rows.add(r)
 
+    _register_all_ns(sheet_bytes)
     tree = ET.parse(io.BytesIO(sheet_bytes))
     root = tree.getroot()
 
