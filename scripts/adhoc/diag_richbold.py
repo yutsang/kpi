@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+diag_richbold.py — 查真實 source 檔嘅 bold 到底喺邊、_make_rich_lookup 收唔收到、
+key 對唔對得上 cell.value。用嚟解「輸出完全冇 bold」。
+
+用法：
+    python scripts\\adhoc\\diag_richbold.py ^
+        "ad-hoc\\workspace\\source_1\\旅遊局\\SJM-投資計劃執行情況表二（旅遊局）.xlsx"
+
+會印：
+  [A] sharedStrings 裡面有幾多個 multi-run（rich）entry、頭幾個 key + run 嘅 b 狀態
+  [B] 逐 sheet 掃 cell：
+        - value 係 str 且喺 lookup（rich 命中）幾多個
+        - value 係 str 但唔喺 lookup（可能 key mismatch）幾多個，抽樣印出對唔上嘅 value
+        - cell.font.bold=True（cell-level 整格 bold）幾多個，抽樣
+  [C] 結論提示
+"""
+import io
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import align_to_header as A  # noqa: E402
+
+
+def _load(path: Path):
+    """returns (wb, rich_lookup)"""
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True)
+        rl = A._make_rich_lookup(path)
+        return wb, rl
+    except Exception:
+        import msoffcrypto
+        buf = io.BytesIO()
+        with open(path, "rb") as f:
+            off = msoffcrypto.OfficeFile(f)
+            off.load_key(password=A.PASSWORD)
+            off.decrypt(buf)
+        buf.seek(0)
+        wb = openpyxl.load_workbook(buf, data_only=True)
+        buf.seek(0)
+        rl = A._make_rich_lookup(buf)
+        return wb, rl
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("俾一個 source xlsx 路徑")
+        return
+    path = Path(sys.argv[1])
+    if not path.exists():
+        print("✗ 唔存在:", path)
+        return
+    wb, rl = _load(path)
+
+    print(f"# {path.name}")
+    print(f"[A] rich lookup entries（multi-run/有格式嘅 shared string）: {len(rl)}")
+    shown = 0
+    for k, runs in rl.items():
+        print(f"    key={k[:50]!r}  runs=" +
+              "; ".join(f"[{t[:12]!r} b={b}]" for t, b, i, sz, fn in runs))
+        shown += 1
+        if shown >= 6:
+            break
+    if not rl:
+        print("    ⚠⚠ lookup 係空！代表 sharedStrings.xml 冇 <r> run，或者讀唔到 →"
+              " 所有 run-level bold 一定會冇。")
+
+    print("\n[B] 逐 sheet 掃 cell（只計 value 係文字嘅）:")
+    tot_hit = tot_miss = tot_cellbold = 0
+    miss_samples, cellbold_samples, hit_samples = [], [], []
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        hit = miss = cbold = 0
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if isinstance(v, str) and v.strip():
+                    if v in rl:
+                        hit += 1
+                        if len(hit_samples) < 4:
+                            hit_samples.append((sn, c.coordinate, v[:30]))
+                    else:
+                        miss += 1
+                        if len(miss_samples) < 8:
+                            miss_samples.append((sn, c.coordinate, v[:40]))
+                try:
+                    if c.font and c.font.bold:
+                        cbold += 1
+                        if len(cellbold_samples) < 6:
+                            cellbold_samples.append((sn, c.coordinate, str(v)[:30]))
+                except Exception:
+                    pass
+        tot_hit += hit; tot_miss += miss; tot_cellbold += cbold
+        print(f"    · {sn!r}: rich命中={hit}  未命中(str)={miss}  cell-level-bold={cbold}")
+
+    print(f"\n  總: rich命中={tot_hit}  未命中={tot_miss}  cell-level-bold={tot_cellbold}")
+    if hit_samples:
+        print("  rich 命中樣本:")
+        for sn, co, t in hit_samples:
+            print(f"     {sn}!{co}: {t!r}")
+    if miss_samples:
+        print("  未命中(str, 唔喺 lookup)樣本 —— 若呢啲本應 rich，即係 key mismatch:")
+        for sn, co, t in miss_samples:
+            print(f"     {sn}!{co}: {t!r}")
+    if cellbold_samples:
+        print("  cell-level bold 樣本（呢啲應該行 non-rich path、copy src font）:")
+        for sn, co, t in cellbold_samples:
+            print(f"     {sn}!{co}: {t!r}")
+
+    print("\n[C] 判讀:")
+    if not rl:
+        print("  → lookup 空：sharedStrings 冇 run 或讀唔到。run-level bold 冇得救於呢條 path。")
+    elif tot_hit == 0:
+        print("  → lookup 有嘢但 0 命中：key 對唔上 cell.value（openpyxl 讀出嚟嘅文字同"
+              " raw run 串接唔一致）。要對齊 key。")
+    else:
+        print(f"  → lookup 有命中（{tot_hit}）。若輸出仍冇 bold，問題喺 _rich_val 之後"
+              "（apply/save/encrypt）或者 base_grid 覆蓋。")
+    if tot_cellbold:
+        print(f"  → 有 {tot_cellbold} 格 cell-level bold；呢啲行 non-rich path，"
+              "輸出理應有 bold。若都冇，即係 _apply_text_style 個 copy 冇生效。")
+
+
+if __name__ == "__main__":
+    main()
