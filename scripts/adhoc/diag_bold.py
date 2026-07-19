@@ -197,11 +197,41 @@ def inspect_rich(src_path: Path, out_path: Path | None):
         print(f"  [C] OUTPUT font.bold summary (non-empty cells): {Counter(all_bold_o)}")
 
 
+def derive_output_path(src: Path) -> Path | None:
+    """source_1/.../file.xlsx  →  _aligned/source_1/.../file.xlsx
+    搜 _aligned 資料夾尋 filename 相近的檔案（處理空格差異）。"""
+    parts = src.parts
+    try:
+        idx = next(i for i, p in enumerate(parts) if p == 'source_1')
+    except StopIteration:
+        return None
+    # 插入 _aligned 在 source_1 前
+    aligned_parts = parts[:idx] + ('_aligned',) + parts[idx:]
+    candidate = Path(*aligned_parts)
+    if candidate.exists():
+        return candidate
+    # fallback：在 _aligned/source_1/<subfolder> 尋找 stem 相似的檔
+    aligned_dir = candidate.parent
+    if aligned_dir.exists():
+        stem = src.stem.replace(' ', '')
+        for f in aligned_dir.glob('*.xlsx'):
+            if f.stem.replace(' ', '') == stem:
+                return f
+    return candidate  # 返回推導路徑（即使不存在，load 時會報 warning）
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python diag_bold.py <source.xlsx> [<aligned.xlsx>]")
+        print("  output path is auto-derived (source_1 → _aligned/source_1)")
         sys.exit(1)
 
     src_path = Path(sys.argv[1])
-    out_path = Path(sys.argv[2]) if len(sys.argv) >= 3 else None
+    if len(sys.argv) >= 3:
+        out_path = Path(sys.argv[2])
+    else:
+        out_path = derive_output_path(src_path)
+        if out_path:
+            print(f"  Auto-derived output path: {out_path}")
+
     inspect_rich(src_path, out_path)
