@@ -81,6 +81,13 @@ def _apply_text_style(dst, src_cell) -> None:
     is_rich = _CellRichText is not None and isinstance(dst.value, _CellRichText)
     if not is_rich:
         dst.font = copy(src_cell.font)
+    else:
+        # base_grid 先設咗 template data_style font（可能係 bold）。
+        # Rich cell 嘅 bold 由 InlineFont run-level 控制；cell-level bold 必須清零，
+        # 否則無 <b/> 嘅 run 會繼承 cell-level bold → 全格 bold。
+        _f = copy(dst.font)
+        _f.bold = False
+        dst.font = _f
     dst.fill = copy(src_cell.fill)
     dst.number_format = src_cell.number_format
     a = src_cell.alignment
