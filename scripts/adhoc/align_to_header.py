@@ -52,6 +52,7 @@ HDR_SCAN = 12                       # 掃頭幾行揾子表頭行
 GATE_NOADJ = True                   # 冇調整嘅項目 → 建議調整欄留空（唔填 0）；--fill-zero-adj 關掉
 ENCRYPT_OUT = True                  # 輸出用 dicj_kpmg 重新加密（保留 source 密碼）；--no-encrypt 關掉
 INSERT_XSGZ_FB_COL = True           # #1：輸出喺『承批公司的反饋意見』後插空白『跨司工作組的反饋意見』欄；--no-extra-col 關掉
+ADD_PROJ_CODE_COL = True            # #2(0720)：輸出最右加 helper 欄『項目編號』（按項目合併，提取項目碼）；--no-code-col 關掉
 _THIN = Side(style="thin", color="BFBFBF")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _WRAP_TOP = Alignment(wrap_text=True, vertical="top", horizontal="left")
@@ -838,6 +839,8 @@ def resolve(rule, p: Project):
     kind = rule[0]
     if kind == "blank":
         return None
+    if kind == "proj_code":              # #2：項目編號（提取項目碼）
+        return _seqcode(p.seq) or None
     if kind == "yn_followup":
         return "否"          # #5 預設「否」；source_2 有覆蓋（喺 cell_value 前置）先變「是」
     if kind == "copy_any":
@@ -998,6 +1001,27 @@ class Template:
         self.hdr_merges = new_merges
         if log:
             log(f"      ＋插 output-only 空白欄『{sub}』喺第 {P} 欄（{get_column_letter(P)}）")
+
+    def append_helper_col(self, sub: str, rule: tuple, log=None) -> None:
+        """#2：喺**最右**加一條 output-only helper 欄（唔位移，最簡單）。
+        rule 交俾 resolve()（例如 ('proj_code',)）；按項目 span 合併（唔喺 NO_MERGE_SUBS）。
+        表頭 row5:row6 合併做欄名、借最右欄風格。"""
+        P = self.maxcol + 1
+        self.col_gs[P] = ("", canon_sub(sub))
+        self.rules[P] = rule
+        self.gm[P] = ""
+        last = get_column_letter(self.maxcol)
+        for r in range(1, self.subrow + 1):
+            nb = self.hdr_cells.get((r, self.maxcol))
+            style = nb[1] if nb else self.data_style
+            # 欄名放 row5（分組行，合併 row5:row6 一齊顯示）
+            self.hdr_cells[(r, P)] = (sub if r == self.grow else None, style)
+        self.widths[get_column_letter(P)] = self.widths.get(last, 15)
+        self.hdr_merges.append(
+            f"{get_column_letter(P)}{self.grow}:{get_column_letter(P)}{self.subrow}")
+        self.maxcol = P
+        if log:
+            log(f"      ＋加 helper 欄『{sub}』喺最右（第 {P} 欄 {get_column_letter(P)}）")
 
 
 # ── source 欄 → 目標欄 對位圖 ───────────────────────────────────────────────
@@ -1365,6 +1389,16 @@ def _seqkey(seq: str) -> str:
         return nkey(m.group(1))
     m2 = re.match(r"^\s*(\d+)", s)
     return m2.group(1) if m2 else nkey(s)
+
+
+def _seqcode(seq: str) -> str:
+    """#2 顯示用項目碼（保留原格式，唔 nkey）：76 / CE001 / 項目35 / B11.1 / OPCG017 / GPGF005。
+    對唔到就 fallback 攞第一個 dash 前段。cross-check 兩邊會再 nkey 正規化。"""
+    s = re.sub(r"^.*?投資項目序號及名稱[:：]?\s*", "", _s(seq)).strip()
+    m = re.match(r"^([A-Za-z]{0,6}\d+(?:\.\d+)?|項目\s*\d+)", s)
+    if m:
+        return re.sub(r"\s+", "", m.group(1))
+    return re.split(r"\s*[-–]\s*", s, maxsplit=1)[0].strip()
 
 
 def apply_overlay(projs, overlay: dict, tpl: Template, log):
@@ -1819,6 +1853,8 @@ def main():
                     help="輸出唔加密（預設用 dicj_kpmg 重新加密）")
     ap.add_argument("--no-extra-col", action="store_true",
                     help="唔插『跨司工作組的反饋意見』output-only 空白欄（#1）")
+    ap.add_argument("--no-code-col", action="store_true",
+                    help="唔加最右『項目編號』helper 欄（#2）")
     ap.add_argument("--out", default="_aligned", help="輸出子資料夾（root 底下）")
     a = ap.parse_args()
     global GATE_NOADJ, ENCRYPT_OUT
@@ -1856,6 +1892,8 @@ def main():
 
     if INSERT_XSGZ_FB_COL and not a.no_extra_col:      # #1 output-only 空白欄
         tpl.insert_blank_col("承批公司的反饋意見", GT, "跨司工作組的反饋意見", log)
+    if ADD_PROJ_CODE_COL and not a.no_code_col:        # #2 最右 helper 欄『項目編號』
+        tpl.append_helper_col("項目編號", ("proj_code",), log)
 
     if a.only:
         targets = [a.only]
