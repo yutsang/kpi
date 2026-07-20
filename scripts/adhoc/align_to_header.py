@@ -1490,8 +1490,23 @@ def is_dup_file(rel: str) -> bool:
     return any(k in stem for k in (" - Copy", "-Copy", "- Copy", "副本", "複本"))
 
 
+def _apply_qingdan_code(projs, company: str, qd_map: dict):
+    """#2b：輸出『項目編號』欄跟清單原格式。查 cross-check 對到嘅清單『承批公司項目序號』，
+    寫入 p.override['項目編號']（cell_value override 為準）；對唔到 → 唔寫 → fallback 表二 _seqcode。"""
+    cmap = qd_map.get(company)
+    if cmap is None:                                     # 大小寫 fallback
+        cmap = {k.lower(): v for k, v in qd_map.items()}.get(company.lower())
+    if not cmap:
+        return
+    key = nkey("項目編號")
+    for p in projs:
+        disp = cmap.get(_norm_code(_seqcode(p.seq)))
+        if disp and _s(disp) != "":
+            p.override[key] = disp
+
+
 def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
-                 preview: bool, with_overlay: bool, log):
+                 preview: bool, with_overlay: bool, log, qd_map: dict | None = None):
     src = root / rel
     log(f"\n{'='*74}\n# {rel}")
     if not src.exists():
@@ -1529,6 +1544,8 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
                 light_copy_sheet(out_wb.create_sheet(sn), ws)
             continue
         warn_unmapped_source(tpl, anchor, col_gs, log)      # 風險 B：漏欄示警
+        if qd_map:                                          # #2b 項目編號跟清單格式
+            _apply_qingdan_code(projs, company, qd_map)
         if overlay:
             apply_overlay(projs, overlay, tpl, log)
         if preview:
@@ -1738,8 +1755,10 @@ def _norm_code(c) -> str:
 
 
 def load_qingdan_codes(qingdan_dir: Path, log) -> dict:
-    """{公司: set(正規化編號)} — 由 data\\投資項目清單 6 檔抽『(承批公司)項目序號』欄全部碼。
-    自動用表頭 label『項目序號』搵欄（唔硬編碼 E/D）；掃每個 sheet；1M 空行 sheet 有 cap。"""
+    """{公司: {正規化編號: 清單原格式編號}} — 由 6 個清單抽『(承批公司)項目序號』欄。
+    display = 清單原格式（項目76 / B1.1 / IV003…），俾 align『項目編號』欄跟清單格式（#2b user 選）。
+    優先『承批公司項目序號』欄過 generic『項目序號』欄。verify cross-check `norm in qd[company]`
+    照 work（查 dict keys）。自動用表頭 label 搵欄（唔硬編碼 E/D）；1M 空行 sheet 有 cap。"""
     d: dict = {}
     base = Path(qingdan_dir)
     if not base.exists():
@@ -1755,24 +1774,32 @@ def load_qingdan_codes(qingdan_dir: Path, log) -> dict:
         except Exception as e:
             log(f"  ⚠ 清單開唔到 {f.name}: {type(e).__name__}: {e}")
             continue
-        codes: set = set()
+        codes: dict = {}          # norm -> 清單原格式 display
+        pr: dict = {}             # norm -> 來源優先度（承批公司項目序號=1 > 項目序號=0）
         for sn in wb.sheetnames:
             ws = wb[sn]
             mr, mc = ws.max_row or 0, min(ws.max_column or 0, 30)
             code_col = hdr_r = None
+            prio = 0
             for r in range(1, min(6, mr) + 1):
                 for c in range(1, mc + 1):
-                    if "項目序號" in _s(ws.cell(r, c).value):
+                    lab = _s(ws.cell(r, c).value)
+                    if "項目序號" in lab:
                         code_col, hdr_r = c, r
+                        prio = 1 if "承批公司項目序號" in lab else 0
                         break
                 if code_col:
                     break
             if not code_col:
                 continue
             for r in range(hdr_r + 1, min(mr, hdr_r + 3000) + 1):
-                nc = _norm_code(ws.cell(r, code_col).value)
-                if nc:
-                    codes.add(nc)
+                raw = ws.cell(r, code_col).value
+                nc = _norm_code(raw)
+                if not nc:
+                    continue
+                if nc not in codes or prio > pr.get(nc, -1):   # 高優先度覆蓋、否則首見為準
+                    codes[nc] = _s(raw)
+                    pr[nc] = prio
         d[company] = codes
         log(f"  清單 {company}: {len(codes)} 個編號  ({f.name})")
         wb.close()
@@ -1989,8 +2016,11 @@ def main():
 
     if INSERT_XSGZ_FB_COL and not a.no_extra_col:      # #1 output-only 空白欄
         tpl.insert_blank_col("承批公司的反饋意見", GT, "跨司工作組的反饋意見", log)
+    qd_map = {}
     if ADD_PROJ_CODE_COL and not a.no_code_col:        # #2 最右 helper 欄『項目編號』
         tpl.append_helper_col("項目編號", ("proj_code",), log)
+        # #2b：項目編號跟清單原格式（對唔到清單先 fallback 表二序號）
+        qd_map = load_qingdan_codes(Path(a.qingdan_dir), log)
 
     if a.only:
         targets = [a.only]
@@ -2009,7 +2039,7 @@ def main():
             log(f"  ⏭ 跳過重複檔（使用者 check 用）: {rel}")
             continue
         try:
-            process_file(root, rel, tpl, out_dir, a.preview, use_overlay, log)
+            process_file(root, rel, tpl, out_dir, a.preview, use_overlay, log, qd_map)
         except Exception as e:
             import traceback
             log(f"  ✗ 出錯: {type(e).__name__}: {e}")
