@@ -527,7 +527,17 @@ TARGET_SCHEMA = [
 # 潛在調整組內「唔係調整類型」嘅子表頭（其餘全部當調整類型入列舉）
 ADJ_NON_TYPE = {nkey(x) for x in
                 ["申報投資金額", "潛在調整合計", "調整後投資金額", "跨司工作組確認投資金額"]}
-# source_2 覆蓋會蓋嘅表頭欄（sub nkey）
+# source_2 覆蓋策略（2026-07-20 user：source_2 係把需要跟進嗰啲抽出俾對家跟進 →
+#   「大部分都 follow source_2 如果有」）。改用**黑名單**：source_2 有值就蓋，除以下：
+#   ① 畢馬威審查 3 欄（AD-AF：建議調整金額/調整原因/建議調整後金額）= 我哋由 source_1 seed/enum 算，唔可俾 source_2 蓋。
+#   ② 兩輪問題諮詢同名欄（第一/二輪都有 問題狀態/KPMG分析/…）= overlay 只有 sub 名分唔到輪次，
+#      蓋落去會兩輪撈亂 → 保留 source_1（用戶講嘅 U/V/跟進/跨司反饋全部係 GT 區，唔喺呢度）。
+_OVERLAY_EXCLUDE = {nkey(x) for x in
+                    ["建議調整金額", "調整原因", "建議調整後金額",
+                     "是否有希望諮詢的問題", "問題狀態", "KPMG提出日期", "KPMG分析",
+                     "承批公司管理層解釋", "KPMG希望進一步向跨司工作組瞭解的事項",
+                     "跨司工作組的回覆"]}
+# 舊 whitelist 保留作參考／verify 用（原本只蓋呢 8 欄）
 OVERLAY_SUBS = [nkey(x) for x in
                 ["是否需進一步與跨司工作組溝通", "需溝通關注事項", "該關注事項涉及調整金額",
                  "跨司工作組主責部門針對該關注事項已給的反饋意見",
@@ -1326,7 +1336,8 @@ def build_overlay(path: Path, log) -> dict[str, dict]:
         for p in projs:
             d = {}
             for (g, s), v in p.by_gs.items():
-                if s not in OVERLAY_SUBS or _s(v) == "":
+                # 黑名單：AD-AF + 兩輪同名欄唔蓋；其餘 source_2 有值就蓋
+                if s in _OVERLAY_EXCLUDE or _s(v) == "":
                     continue
                 # 該關注事項涉及調整金額：由下面 _concern_enum 統一砌（多關注事項串一格），呢度跳過
                 if s == nkey("該關注事項涉及調整金額"):
@@ -1681,6 +1692,7 @@ def verify(root: Path, tpl: Template, tol: float, log):
     G_before = G_after = G_total = 0.0
     G_s2_amt = 0.0            # Σ source_2 該關注事項涉及調整金額
     G_s2_hit = G_s2_miss = 0  # source_2 命中/未命中 項目數
+    G_s2_fb = 0               # #4：source_2 有填「跨司工作組的反饋意見」嘅項目數
     log(f"# VERIFY 數字對數（read-only，唔寫檔）：source_1 共 {len(files)} 檔  容差 {fmt_amt(tol)} 萬\n")
     for rel in files:
         if any(pp.lower() == "ss" for pp in Path(rel).parts) or is_dup_file(rel):
@@ -1735,8 +1747,9 @@ def verify(root: Path, tpl: Template, tol: float, log):
         if ofile and file_projs:
             overlay = build_overlay(ofile, _quiet)
             f_amt = 0.0
-            f_hit = f_miss = 0
+            f_hit = f_miss = f_fb = 0
             miss_seqs = []
+            _FB_SUB = nkey("跨司工作組的反饋意見")
             for p in file_projs:
                 d = overlay.get(_seqkey(p.seq))
                 if d:
@@ -1744,6 +1757,8 @@ def verify(root: Path, tpl: Template, tol: float, log):
                     a = num(d.get(nkey("該關注事項涉及調整金額")))
                     if a:
                         f_amt += abs(a)
+                    if _s(d.get(_FB_SUB)) != "":     # #4：新 source_2 有填跨司反饋
+                        f_fb += 1
                 else:
                     # 有潛在調整但 source_2 揾唔到跟進 → 值得核
                     t = _adj_total(p)
@@ -1754,11 +1769,12 @@ def verify(root: Path, tpl: Template, tol: float, log):
             G_s2_amt += f_amt
             G_s2_hit += f_hit
             G_s2_miss += f_miss
+            G_s2_fb += f_fb
             if not printed:
                 log(f"▸ {rel}")
                 printed = True
             log(f"    ⟐ source_2 {ofile.name}: 命中 {f_hit} 項目  "
-                f"Σ涉及調整金額={fmt_amt(f_amt)}"
+                f"Σ涉及調整金額={fmt_amt(f_amt)}  跨司反饋填咗 {f_fb}"
                 + (f"  ⚠ {f_miss} 個有調整但 source_2 冇跟進" if f_miss else ""))
             for sq in miss_seqs:
                 log(f"        ⚠[source_2缺] 「{sq}」有潛在調整但 source_2 揾唔到")
@@ -1774,6 +1790,7 @@ def verify(root: Path, tpl: Template, tol: float, log):
         f"(應 ≈ Σ合計 {fmt_amt(G_total)}，差 {fmt_amt(G_after - G_before - G_total)})")
     log("\n# source_2（跨司工作組跟進）對數")
     log(f"source_2 命中項目            : {G_s2_hit}")
+    log(f"其中有填『跨司工作組反饋意見』: {G_s2_fb}   ← #4 新 source_2 重點欄")
     log(f"有調整但 source_2 冇跟進     : {G_s2_miss}   ← 值得逐個核")
     log(f"Σ source_2 涉及調整金額     : {fmt_amt(G_s2_amt)} 萬  "
         f"(對 |Σ潛在調整合計|={fmt_amt(abs(G_total))}，差 {fmt_amt(G_s2_amt - abs(G_total))})")
