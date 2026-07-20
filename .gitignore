@@ -80,3 +80,12 @@ results/
 conf/
 docs/
 v_override_patches/
+
+# Confidential report screenshots (phone photos, e.g. IMG_0094.JPG) — never commit
+IMG_*.JPG
+IMG_*.jpg
+IMG_*.JPEG
+IMG_*.jpeg
+*.JPG
+*.jpg
+*.jpeg
