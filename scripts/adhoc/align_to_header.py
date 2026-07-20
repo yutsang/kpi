@@ -1718,16 +1718,72 @@ def _project_number_checks(p: Project, tol: float) -> tuple[list[str], list[str]
     return idi, mpi
 
 
-def verify(root: Path, tpl: Template, tol: float, log):
+def _norm_code(c) -> str:
+    """#2 cross-check 正規化項目碼：去空白、去『項目』前綴、去前導零（純數字時）。
+    B1.1→b1.1 / 項目3→3 / 076→76 / IV003→iv003 / CE001→ce001。"""
+    s = re.sub(r"\s+", "", str(c if c is not None else ""))
+    s = re.sub(r"^項目", "", s)
+    m = re.match(r"^0*(\d+)$", s)
+    return (m.group(1) if m else s).lower()
+
+
+def load_qingdan_codes(qingdan_dir: Path, log) -> dict:
+    """{公司: set(正規化編號)} — 由 data\\投資項目清單 6 檔抽『(承批公司)項目序號』欄全部碼。
+    自動用表頭 label『項目序號』搵欄（唔硬編碼 E/D）；掃每個 sheet；1M 空行 sheet 有 cap。"""
+    d: dict = {}
+    base = Path(qingdan_dir)
+    if not base.exists():
+        log(f"  ⚠ 清單資料夾唔存在: {base} → 跳過 cross-check（用 --qingdan-dir 指定）")
+        return d
+    for f in sorted(base.glob("*.xlsx")):
+        if f.name.startswith("~$"):
+            continue
+        m = re.search(r"[.\s]([A-Za-z]{2,})[.\s]", f.name)   # 3.Galaxy.2025… → Galaxy
+        company = (m.group(1) if m else f.stem)
+        try:
+            wb = load_wb(f)
+        except Exception as e:
+            log(f"  ⚠ 清單開唔到 {f.name}: {type(e).__name__}: {e}")
+            continue
+        codes: set = set()
+        for sn in wb.sheetnames:
+            ws = wb[sn]
+            mr, mc = ws.max_row or 0, min(ws.max_column or 0, 30)
+            code_col = hdr_r = None
+            for r in range(1, min(6, mr) + 1):
+                for c in range(1, mc + 1):
+                    if "項目序號" in _s(ws.cell(r, c).value):
+                        code_col, hdr_r = c, r
+                        break
+                if code_col:
+                    break
+            if not code_col:
+                continue
+            for r in range(hdr_r + 1, min(mr, hdr_r + 3000) + 1):
+                nc = _norm_code(ws.cell(r, code_col).value)
+                if nc:
+                    codes.add(nc)
+        d[company] = codes
+        log(f"  清單 {company}: {len(codes)} 個編號  ({f.name})")
+        wb.close()
+    return d
+
+
+def verify(root: Path, tpl: Template, tol: float, log, qingdan_dir: Path = None):
     """逐個 source_1 sheet 逐項目對數：識別算式（#3 會爆）＋我哋映射寫嘅數；
-    另出每 sheet／全域 Σ申報／Σ調整後／Σ合計 頂線，俾你同自己 total 拍。唔寫 xlsx。"""
+    另出每 sheet／全域 Σ申報／Σ調整後／Σ合計 頂線，俾你同自己 total 拍。唔寫 xlsx。
+    #2：另 cross-check 每項目編號有冇喺對應公司『投資項目清單』內。"""
     files = list(iter_source1(root))
     n_proj = n_idfail = n_mpfail = 0
     G_before = G_after = G_total = 0.0
     G_s2_amt = 0.0            # Σ source_2 該關注事項涉及調整金額
     G_s2_hit = G_s2_miss = 0  # source_2 命中/未命中 項目數
     G_s2_fb = 0               # #4：source_2 有填「跨司工作組的反饋意見」嘅項目數
+    G_qd_ok = G_qd_miss = 0   # #2：編號喺清單／唔喺清單
     log(f"# VERIFY 數字對數（read-only，唔寫檔）：source_1 共 {len(files)} 檔  容差 {fmt_amt(tol)} 萬\n")
+    qd = load_qingdan_codes(qingdan_dir, log) if qingdan_dir else {}
+    if qd:
+        log("")
     for rel in files:
         if any(pp.lower() == "ss" for pp in Path(rel).parts) or is_dup_file(rel):
             continue
@@ -1812,6 +1868,31 @@ def verify(root: Path, tpl: Template, tol: float, log):
                 + (f"  ⚠ {f_miss} 個有調整但 source_2 冇跟進" if f_miss else ""))
             for sq in miss_seqs:
                 log(f"        ⚠[source_2缺] 「{sq}」有潛在調整但 source_2 揾唔到")
+
+        # ── #2 cross-check：每項目編號有冇喺對應公司『投資項目清單』內 ──
+        if qd and file_projs:
+            qcodes = qd.get(company)
+            if qcodes is None:  # 公司名對唔到清單檔（e.g. 大小寫/縮寫）
+                if not printed:
+                    log(f"▸ {rel}"); printed = True
+                log(f"    ⊘ 清單 cross-check: 揾唔到公司 {company!r} 嘅清單檔（清單有: {sorted(qd)}）")
+            else:
+                ok = 0
+                bad = []
+                for p in file_projs:
+                    code = _seqcode(p.seq)
+                    if _norm_code(code) in qcodes:
+                        ok += 1
+                    else:
+                        bad.append((code, p.seq))
+                G_qd_ok += ok
+                G_qd_miss += len(bad)
+                if not printed:
+                    log(f"▸ {rel}"); printed = True
+                log(f"    ⊗ 清單 cross-check（{company}）: 對到 {ok}/{len(file_projs)}"
+                    + (f"  ⚠ {len(bad)} 個編號唔喺清單" if bad else "  ✓ 全部喺清單"))
+                for code, sq in bad[:10]:
+                    log(f"        ⚠[清單缺] 編號 {code!r}（{sq[:30]}）唔喺 {company} 清單")
         wb.close()
     log("\n" + "=" * 64 + "\n# 對數匯總")
     log(f"項目總數                    : {n_proj}")
@@ -1828,6 +1909,10 @@ def verify(root: Path, tpl: Template, tol: float, log):
     log(f"有調整但 source_2 冇跟進     : {G_s2_miss}   ← 值得逐個核")
     log(f"Σ source_2 涉及調整金額     : {fmt_amt(G_s2_amt)} 萬  "
         f"(對 |Σ潛在調整合計|={fmt_amt(abs(G_total))}，差 {fmt_amt(G_s2_amt - abs(G_total))})")
+    if qd:
+        log("\n# 投資項目清單 cross-check（#2）")
+        log(f"編號喺清單                  : {G_qd_ok}")
+        log(f"編號唔喺清單                : {G_qd_miss}   ← 值得逐個核（可能格式差/清單漏/表二多咗）")
 
 
 def main():
@@ -1842,6 +1927,8 @@ def main():
                     help="read-only 對數：逐項目查調整算式＋映射寫嘅數，出 Σ 頂線（唔寫檔）")
     ap.add_argument("--tol", type=float, default=TOL_ADJ,
                     help="對數容差（萬澳門元，預設 0.5）")
+    ap.add_argument("--qingdan-dir", default="data/投資項目清單",
+                    help="投資項目清單資料夾（--verify #2 cross-check 用；預設 data/投資項目清單）")
     ap.add_argument("--preview", action="store_true", help="只吐抽取+映射文字，唔寫 xlsx")
     ap.add_argument("--with-overlay", action="store_true",
                     help="（已預設開，保留兼容）套 source_2 per-範疇覆蓋")
@@ -1884,7 +1971,7 @@ def main():
         return
 
     if a.verify:
-        verify(root, tpl, a.tol, log)
+        verify(root, tpl, a.tol, log, qingdan_dir=Path(a.qingdan_dir))
         rp = root / "_align_verify.txt"
         rp.write_text("\n".join(lines), encoding="utf-8")
         print(f"\n✓ verify 寫入 {rp.resolve()}（貼返嚟俾我）")
