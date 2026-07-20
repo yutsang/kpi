@@ -1323,22 +1323,32 @@ def find_overlay_file(root: Path, scope: str, company: str) -> Path | None:
     return sorted(cands, key=lambda x: len(x.as_posix()))[0] if cands else None
 
 
-def _concern_sum(ws, p, col_gs) -> float | None:
-    """source_2 多個關注事項嘅調整金額加總（numeric，方便 Excel 加總）。
-    逐行掃『該關注事項涉及調整金額』非空數字，去重後加 |abs|，返回總和；冇 → None。"""
+def _concern_val(ws, p, col_gs):
+    """source_2『該關注事項涉及調整金額』→ 照抄原文（user 2026-07-20：一律 follow source_2 原文）。
+    逐行去重收集非空值：
+      · 單一值（數字或文字）→ 原文照返（SJM 常見：一格列舉文字「1、…：9萬」或純數字「1」）。
+      · 多行且全部數字 → 加總 |abs|（保留可加總語義）。
+      · 多行含文字 → 原文逐行 join（照抄，唔會夾硬變數字）。
+      · 冇 → None（Z 跌返 source_1 abs_total）。"""
     col_amt = next((c for c, (g, s) in col_gs.items()
                     if s == nkey("該關注事項涉及調整金額")), None)
     if col_amt is None:
         return None
-    total, prev, found = 0.0, None, False
+    vals, prev = [], None
     for r in range(p.r0, p.r1 + 1):
-        a = num(ws.cell(r, col_amt).value)
-        if a is None or a == prev:       # 逐行重複（冇 merge）→ 去重
+        v = ws.cell(r, col_amt).value
+        if v is None or _s(v) == "" or v == prev:   # 空 / 逐行重複（merge 或重覆）→ 去重
             continue
-        prev = a
-        total += abs(a)
-        found = True
-    return total if found else None
+        prev = v
+        vals.append(v)
+    if not vals:
+        return None
+    nums = [num(v) for v in vals]
+    if len(vals) > 1 and all(n is not None for n in nums):   # 真多行純數字 → 加總
+        return sum(abs(n) for n in nums)
+    if len(vals) == 1:                                       # 單一值 → 原文照返
+        return vals[0]
+    return "\n".join(_s(v) for v in vals)                    # 多行含文字 → 原文 join
 
 
 def build_overlay(path: Path, log) -> dict[str, dict]:
@@ -1363,13 +1373,13 @@ def build_overlay(path: Path, log) -> dict[str, dict]:
                 # 黑名單：AD-AF + 兩輪同名欄唔蓋；其餘 source_2 有值就蓋
                 if s in _OVERLAY_EXCLUDE or _s(v) == "":
                     continue
-                # 該關注事項涉及調整金額：由下面 _concern_enum 統一砌（多關注事項串一格），呢度跳過
+                # 該關注事項涉及調整金額：由下面 _concern_val 照抄 source_2 原文（文字/數字），呢度跳過
                 if s == nkey("該關注事項涉及調整金額"):
                     continue
                 d[s] = v
-            # source_2 多關注事項 → 各 concern 金額加總（numeric）填入該欄（方便加總）
-            cs = _concern_sum(ws, p, col_gs)
-            if cs is not None:
+            # source_2『該關注事項涉及調整金額』照抄原文（單一值原文、多行純數字加總、含文字 join）
+            cs = _concern_val(ws, p, col_gs)
+            if cs is not None and _s(cs) != "":
                 d[nkey("該關注事項涉及調整金額")] = cs
             if d:
                 out[_seqkey(p.seq)] = d
