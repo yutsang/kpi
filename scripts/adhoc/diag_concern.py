@@ -130,12 +130,17 @@ def main():
             continue
         print(f"\n{'-'*66}\n# source_2 sheet {sn!r}（{len(projs2)} 項目）")
         dump_side("source_2", ws2, projs2, col_gs2)
-        # 每項目：_concern_sum 實際返乜（align 會攞呢個做 override）
-        print(f"\n  ── source_2 sheet {sn!r}：_concern_sum（align 會寫落 Z override）──")
+        # 每項目：_concern_val 實際返乜（align 會攞呢個做 Z override，照抄 source_2 原文）
+        print(f"\n  ── source_2 sheet {sn!r}：_concern_val（align 會寫落 Z override）──")
         for p in projs2:
-            cs = A._concern_sum(ws2, p, col_gs2)
-            print(f"      [{A._seqkey(p.seq)}] _concern_sum = "
-                  f"{A.fmt_amt(cs) if cs is not None else 'None（→ Z 跌返 source_1）'}")
+            cs = A._concern_val(ws2, p, col_gs2)
+            if cs is None:
+                disp = "None（→ Z 跌返 source_1）"
+            elif isinstance(cs, (int, float)):
+                disp = A.fmt_amt(cs) + "（數字）"
+            else:
+                disp = f"「{A._s(cs)[:40]}」（原文）"
+            print(f"      [{A._seqkey(p.seq)}] _concern_val = {disp}")
 
 
 if __name__ == "__main__":
