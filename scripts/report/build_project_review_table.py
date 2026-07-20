@@ -53,7 +53,75 @@ CANON_ORDER = [
 ]
 
 
-def build_year(df: pd.DataFrame, year: int) -> pd.DataFrame:
+def _norm(c) -> str:
+    """項目編號正規化：去空白、去『項目』、去前導零 → 對 清單 承批公司項目序號。"""
+    s = re.sub(r"\s+", "", str(c if c is not None else ""))
+    s = re.sub(r"^項目", "", s)
+    m = re.match(r"^0*(\d+(?:\.\d+)?)$", s)
+    return (m.group(1) if m else s).lower()
+
+
+# 每個報告年 → 清單「計劃投資金額」欄 header 嘅正則（database sheet；萬澳門元）
+_PLAN_RE = {
+    25: re.compile(r"2025.*預計投資金額.*合計|2025.*預計投資金額（萬"),
+    24: re.compile(r"2024.*預計投資金額.*合計|2024.*預計投資金額（萬"),
+    23: re.compile(r"2023.*預計投資金額"),
+}
+
+
+def load_plan(path: Path, log=print) -> dict:
+    """{報告年: {正規化項目編號: 計劃投資金額_萬}} — 由投資項目清單 database sheet 抽。"""
+    import openpyxl
+    out = {25: {}, 24: {}, 23: {}}
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception as e:
+        log(f"  ⚠ 清單開唔到 {path}: {e}"); return out
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        rows = []
+        for i, r in enumerate(ws.iter_rows(values_only=True)):
+            rows.append(r)
+            if i > 2500:
+                break
+        # 揾表頭行（含『承批公司項目序號』）
+        hdr_r = code_c = None
+        for ri in range(min(14, len(rows))):
+            for ci, v in enumerate(rows[ri] or []):
+                if "承批公司項目序號" in ("" if v is None else str(v)):
+                    hdr_r, code_c = ri, ci; break
+            if hdr_r is not None:
+                break
+        if hdr_r is None:
+            continue
+        hdr = [("" if v is None else str(v).replace("\n", "")) for v in rows[hdr_r]]
+        # 每年計劃欄
+        plan_c = {}
+        for yr, rgx in _PLAN_RE.items():
+            for ci, h in enumerate(hdr):
+                if rgx.search(h):
+                    plan_c[yr] = ci; break
+        if not plan_c:
+            continue
+        log(f"  清單 sheet {sn!r}: 計劃欄 " +
+            ", ".join(f"{yr}→{hdr[ci][:20]!r}" for yr, ci in plan_c.items()))
+        for ri in range(hdr_r + 1, len(rows)):
+            row = rows[ri]
+            code = _norm(row[code_c]) if code_c < len(row) else ""
+            if not code:
+                continue
+            for yr, ci in plan_c.items():
+                if ci < len(row):
+                    try:
+                        val = float(row[ci])
+                        out[yr].setdefault(code, val)
+                    except (TypeError, ValueError):
+                        pass
+        break   # database sheet 夠，唔使掃其他
+    return out
+
+
+def build_year(df: pd.DataFrame, year: int, plan: dict | None = None) -> pd.DataFrame:
     d = df[df["報告年"] == year].copy()
     if d.empty:
         return pd.DataFrame()
@@ -88,32 +156,53 @@ def build_year(df: pd.DataFrame, year: int) -> pd.DataFrame:
     num = ["申報投資金額"] + adj_cols + other + ["潛在調整合計", "潛在調整後投資金額"]
     for c in num:
         tab[c] = tab[c].round(1)
-    tab = tab[["項目編號", "項目名稱", "範疇", "類型"] + num]
-    # 合計行
-    total = {c: (tab[c].sum().round(1) if c in num else "") for c in tab.columns}
+    plan_cols = []
+    if plan:
+        tab["計劃投資金額"] = pd.to_numeric(
+            tab["項目編號"].map(lambda x: plan.get(_norm(x))), errors="coerce").round(1)
+        plan_cols = ["計劃投資金額"]
+    tab = tab[["項目編號", "項目名稱", "範疇", "類型"] + num + plan_cols]
+    # 合計行（num + 計劃 加總）
+    total = {c: "" for c in tab.columns}
     total["項目編號"] = "合計"
+    for c in num + plan_cols:
+        total[c] = round(pd.to_numeric(tab[c], errors="coerce").sum(), 1)
     tab = pd.concat([tab, pd.DataFrame([total])], ignore_index=True)
+    # 完成率 = 潛在調整後投資金額 ÷ 計劃投資金額（逐行 + 合計自動）
+    if plan:
+        rate = (pd.to_numeric(tab["潛在調整後投資金額"], errors="coerce")
+                / pd.to_numeric(tab["計劃投資金額"], errors="coerce"))
+        tab["完成率"] = rate.replace([float("inf"), float("-inf")], pd.NA).round(4)
     return tab, other
 
 
 def main():
     args = sys.argv[1:]
-    entity = None
+    entity = qingdan = None
     if "--entity" in args:
         i = args.index("--entity"); entity = args[i + 1].lower(); del args[i:i + 2]
+    if "--qingdan" in args:
+        i = args.index("--qingdan"); qingdan = args[i + 1]; del args[i:i + 2]
     if not args:
-        print("俾 tableau feed csv 路徑"); return
+        print("俾 tableau feed csv 路徑（--qingdan <清單.xlsx> 加計劃金額+完成率）"); return
     src = Path(args[0])
     df = pd.read_csv(src, low_memory=False)
     if entity and "entity" in df.columns:
         df = df[df["entity"].astype(str).str.lower() == entity]
     df["報告年"] = pd.to_numeric(df["報告年"], errors="coerce")
 
+    plan = None
+    if qingdan:
+        print(f"── 讀清單計劃金額: {qingdan}")
+        plan = load_plan(Path(qingdan))
+        for yr in (25, 24, 23):
+            print(f"    報告年{yr}: {len(plan.get(yr, {}))} 個項目有計劃金額")
+
     out = Path(f"{entity or 'all'}_項目審查匯總.xlsx")
     unmapped_all = set()
     with pd.ExcelWriter(out, engine="openpyxl") as xw:
         for yr in (25, 24, 23):
-            res = build_year(df, yr)
+            res = build_year(df, yr, plan.get(yr) if plan else None)
             if isinstance(res, tuple):
                 tab, other = res
             else:
