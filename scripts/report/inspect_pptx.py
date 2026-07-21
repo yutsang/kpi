@@ -261,13 +261,17 @@ def inspect_file(path: Path, rng=None, brief=False):
         print("\n".join(lines))
         return lines
     total = len(prs.slides)
-    out(f"  投影片尺寸: {_emu_in(prs.slide_width)}x{_emu_in(prs.slide_height)}in，共 {total} 頁"
-        + (f"（只印 {rng[0]}-{rng[1]}）" if rng else "") + ("（brief 每版一行）" if brief else ""))
-    lo, hi = (rng if rng else (1, total))
     slides = list(prs.slides)
+    if rng:
+        want = sorted({si for (a, b) in rng for si in range(a - 1, min(b, total))})
+        rng_desc = "（只印 " + ",".join(f"{a}-{b}" for a, b in rng) + "）"
+    else:
+        want = list(range(total)); rng_desc = ""
+    out(f"  投影片尺寸: {_emu_in(prs.slide_width)}x{_emu_in(prs.slide_height)}in，共 {total} 頁"
+        + rng_desc + ("（brief 每版一行）" if brief else ""))
     if brief:
         out("  [S頁/總 | tbl/chart/pic | txt字數 D敘述 T模板 P空格 | 估類型 | 標題]")
-        for si in range(lo - 1, min(hi, total)):
+        for si in want:
             out("  " + brief_slide(slides[si], si, total))
         txt = "\n".join(lines)
         print(txt)
@@ -277,7 +281,7 @@ def inspect_file(path: Path, rng=None, brief=False):
         except Exception as e:
             print(f"\n⚠ 寫唔到 txt: {e}")
         return lines
-    for si in range(lo - 1, min(hi, total)):
+    for si in want:
         slide = slides[si]
         lay = ""
         try:
@@ -315,10 +319,11 @@ def main():
     if "--range" in args:
         i = args.index("--range")
         try:
-            a, b = args[i + 1].split("-")
-            rng = (int(a), int(b))
+            rng = []
+            for part in args[i + 1].split(","):
+                a, b = part.split("-"); rng.append((int(a), int(b)))
         except Exception:
-            print("✗ --range 格式 A-B（例 1-41）"); return
+            print("✗ --range 格式 A-B 或 A-B,C-D（例 2-7,84-105）"); return
         del args[i:i + 2]
     if not args:
         print('俾 pptx 路徑或 data\\reports 資料夾')
