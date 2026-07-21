@@ -12,6 +12,7 @@ inspect_biao2.py — 拆解「表2」(表二審查底稿) 結構。表2 = per-pr
   · 每欄：Excel字母 | 組標題(r上) | 欄名(r下) | 第一個非空樣本值
   · key 欄(投資項目序號及名稱) + 金額/調整/發現欄位置
 """
+import io
 import re
 import sys
 from pathlib import Path
@@ -21,6 +22,24 @@ try:
     from openpyxl.utils import get_column_letter
 except ImportError:
     print("✗ pip install openpyxl"); sys.exit(1)
+
+PASSWORD = "dicj_kpmg"     # 表2 同報告一樣加密（msoffcrypto）
+
+
+def load_wb(path, password=PASSWORD):
+    """開 xlsx；『not a zip file』＝加密 → msoffcrypto 用密碼解。回 openpyxl workbook。"""
+    try:
+        return openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception:
+        pass
+    import msoffcrypto
+    buf = io.BytesIO()
+    with open(path, "rb") as f:
+        off = msoffcrypto.OfficeFile(f)
+        off.load_key(password=password)
+        off.decrypt(buf)
+    buf.seek(0)
+    return openpyxl.load_workbook(buf, data_only=True, read_only=True)
 
 KEY_HINT = ["投資項目序號", "項目序號及名稱", "項目序號"]
 NARR_HINT = ["KPMG分析", "關注事項", "管理層解釋", "調整金額", "調整原因", "分析意見",
@@ -49,7 +68,9 @@ def _ffill(seq):
 def inspect_one(path: Path):
     print(f"\n{'#'*84}\n# {path.name}")
     try:
-        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        wb = load_wb(path)
+    except ImportError:
+        print("  ✗ 加密檔要 msoffcrypto → pip install msoffcrypto-tool"); return
     except Exception as e:
         print(f"  ✗ 開唔到: {type(e).__name__}: {e}"); return
     for sn in wb.sheetnames:

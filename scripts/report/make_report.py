@@ -26,11 +26,11 @@ try:
 except ImportError:
     print("✗ pip install pandas python-pptx openpyxl"); sys.exit(1)
 
-# 報告配色（IMG_0105）：navy 表頭白字、section 淺藍、小計灰、總計稍深
-HDR = RGBColor(0x1F, 0x38, 0x64)
+# 報告配色：KPMG 品牌藍 #00338D 表頭白字（報告通篇 heading 用呢個）、section 淺藍、小計灰、總計稍深
+HDR = RGBColor(0x00, 0x33, 0x8D)
 SEC = RGBColor(0xD9, 0xE1, 0xF2)
 SUB = RGBColor(0xE7, 0xE6, 0xE6)
-TOT = RGBColor(0xC5, 0xD0, 0xE6)
+TOT = RGBColor(0xBD, 0xD7, 0xEE)
 
 import build_project_review_table as B
 import build_summary_tables as S
@@ -282,8 +282,14 @@ def main():
             R.render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns))
 
     out = Path(f"{entity}_報告數字表.pptx")
-    prs.save(out)
-    print(f"✓ {out.resolve()}  共 {len(list(prs.slides))} 頁（單個項目審查匯總 + 金額匯總 + 設施vs活動）")
+    try:
+        prs.save(out)
+    except PermissionError:      # 舊檔喺 PowerPoint 開住鎖住 → 改名唔 crash
+        import time
+        out = Path(f"{entity}_報告數字表_{time.strftime('%H%M%S')}.pptx")
+        prs.save(out)
+        print(f"⚠ 原檔開住(鎖住)，改存 → {out.name}（開之前記得閂舊 pptx）")
+    print(f"✓ {out.resolve()}  共 {len(list(prs.slides))} 頁（概述 + 主要發現 + 金額匯總 + 設施 + 單項審查）")
 
 
 if __name__ == "__main__":
