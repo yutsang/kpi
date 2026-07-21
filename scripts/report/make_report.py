@@ -216,6 +216,80 @@ def render_findings(prs, ent_up, df, narr):
                 y += 3.0
 
 
+def _prose_slide(prs, title, bullets):
+    """一版敘述（navy 標題 + ■ bullet；bullet=(粗體引子, 內文)）。"""
+    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    slide_w = prs.slide_width / 914400.0
+    slide = prs.slides.add_slide(blank)
+    tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(slide_w - 0.8), Inches(0.4))
+    R._set_title(tb, title)
+    box = slide.shapes.add_textbox(Inches(0.5), Inches(0.95), Inches(slide_w - 1.0), Inches(5.6))
+    tf = box.text_frame; tf.word_wrap = True
+    for i, (head, body) in enumerate(bullets):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.space_after = Pt(8)
+        rm = p.add_run(); rm.text = "■ "; rm.font.size = Pt(10); rm.font.color.rgb = HDR
+        if head:
+            rh = p.add_run(); rh.text = head
+            rh.font.bold = True; rh.font.size = Pt(10); rh.font.color.rgb = HDR
+            rh.font.name = "Microsoft JhengHei"
+        rt = p.add_run(); rt.text = body
+        rt.font.size = Pt(10); rt.font.name = "Microsoft JhengHei"
+
+
+def _pct(v):
+    return f"{v*100:.1f}%" if isinstance(v, (int, float)) and not pd.isna(v) else "—"
+
+
+def _rate_of(df, name, col):
+    r = df[df["範疇"] == name]
+    if not len(r) or col not in df.columns:
+        return None
+    v = r.iloc[0][col]
+    return v if isinstance(v, (int, float)) and not pd.isna(v) else None
+
+
+def render_exec_prose(prs, ent_up, ov):
+    """整體執行概況敘述（報告 slide 11-14）：完成率高/低範疇，全部由 overview 數字生成。"""
+    g = _rate_of(ov, "博彩項目小計", "投資計劃完成率")
+    ng = _rate_of(ov, "非博彩項目小計", "投資計劃完成率")
+    tot = _rate_of(ov, "總計", "投資計劃完成率")
+    ga = _rate_of(ov, "博彩項目小計", "潛在調整後投資計劃完成率")
+    nga = _rate_of(ov, "非博彩項目小計", "潛在調整後投資計劃完成率")
+    cat = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))].copy()
+    cat = cat[cat["投資計劃完成率"].apply(lambda v: isinstance(v, (int, float)) and not pd.isna(v))]
+    high = cat[cat["投資計劃完成率"] >= 1.0].sort_values("投資計劃完成率", ascending=False)
+    low = cat[cat["投資計劃完成率"] < 0.5].sort_values("投資計劃完成率")
+    high_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in high.iterrows()) or "—"
+    low_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in low.iterrows()) or "—"
+    bullets = [
+        ("", f"{ent_up}於2025年度計劃投資項目涵蓋博彩及非博彩範疇。在報告投資金額中，"
+             f"博彩項目的投資計劃完成率為{_pct(g)}，非博彩項目為{_pct(ng)}，整體為{_pct(tot)}。"),
+        ("", f"考慮投資金額的潛在調整後，博彩項目的投資計劃完成率為{_pct(ga)}，"
+             f"非博彩項目的平均完成率為{_pct(nga)}。"),
+        ("報告投資金額完成率較高的範疇包括：", f"{high_s}。"),
+        ("報告投資金額完成率相對較低的範疇包括：", f"{low_s}。"),
+    ]
+    _prose_slide(prs, f"{ent_up} 2025年度投資項目的整體執行概況", bullets)
+
+
+def render_adj_prose(prs, ent_up, adj):
+    """潛在調整事項匯總敘述（報告 slide 16-17）：逐調整類型 + 金額，由 adjustment_bridge 生成。"""
+    tot_row = adj[adj["潛在調整事項"] == "合計"]
+    total = tot_row.iloc[0]["合計"] if len(tot_row) else 0
+    bullets = [("", f"{ent_up}於2025年度報告投資金額中，經審查識別出潛在調整事項合計約"
+                    f"{abs(total):,.0f}萬澳門元，主要涉及以下類型：")]
+    for _, r in adj.iterrows():
+        name = r["潛在調整事項"]
+        if name == "合計":
+            continue
+        amt = r["合計"] if "合計" in adj.columns else 0
+        if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
+            continue
+        bullets.append((f"{name}：", f"約{abs(amt):,.0f}萬澳門元。"))
+    _prose_slide(prs, f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總", bullets)
+
+
 def main():
     entity = (sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "mgm").lower()
     feed = Path(FEED)
@@ -248,10 +322,12 @@ def main():
     # ① 2025年度投資計劃執行情況概述（報告 slide 8-18）
     divider(prs, "一、2025年度投資計劃執行情況概述")
     ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan)
+    adj = O.adjustment_bridge(sdf)
     if not ov.empty:
         render_generic(prs, f"{ent_up} 2025年度投資項目的整體執行概況", ov.fillna(""))
-    render_generic(prs, f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
-                   O.adjustment_bridge(sdf).fillna(""))
+        render_exec_prose(prs, ent_up, ov)          # slide 11-14 敘述
+    render_generic(prs, f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總", adj.fillna(""))
+    render_adj_prose(prs, ent_up, adj)               # slide 16-17 敘述
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
