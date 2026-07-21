@@ -83,6 +83,14 @@ def adjustment_bridge(df):
             r[bk] = round(d[(d["_bucket"] == bk) & (d["_adj"] == adj)]["調整_萬"].sum(), 1)
         r["合計"] = round(sum(r[bk] for bk in S.BUCKET_ORDER), 1)
         rows.append(r)
+    # 跨年及其他調整（唔喺報告 7 類，多數係期後嘅跨期/將往年計入本年）→ 令 bucket 合計對返概況潛在調整
+    other = {"潛在調整事項": "跨年及其他調整"}
+    for bk in S.BUCKET_ORDER:
+        tot_bk = round(d[d["_bucket"] == bk]["調整_萬"].sum(), 1)
+        other[bk] = round(tot_bk - sum(x[bk] for x in rows), 1)
+    other["合計"] = round(sum(other[bk] for bk in S.BUCKET_ORDER), 1)
+    if any(abs(other[bk]) > 0.05 for bk in S.BUCKET_ORDER):
+        rows.append(other)
     tot = {"潛在調整事項": "合計"}
     for bk in S.BUCKET_ORDER + ["合計"]:
         tot[bk] = round(sum(x[bk] for x in rows), 1)
