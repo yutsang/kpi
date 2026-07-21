@@ -30,14 +30,20 @@ import render_review_table_pptx as R
 FEED = "tableau_combined_25.csv"
 
 
-def _find(dirp, entity, ext):
+def _find(dirp, entity, ext, prefer=None):
     d = Path(dirp)
     if not d.exists():
         return None
     cands = [p for p in sorted(d.rglob("*"))
              if p.suffix.lower() == ext and entity.lower() in p.name.lower()
              and not p.name.startswith("~$")]
-    return cands[0] if cands else None
+    if not cands:
+        return None
+    for pk in (prefer or []):                    # 例：template 優先揀 2025 果份（唔好揀到 2023 舊報告）
+        for p in cands:
+            if pk in p.name:
+                return p
+    return cands[0]
 
 
 def render_generic(prs, title, df):
@@ -99,7 +105,7 @@ def main():
     if not feed.exists():
         print(f"✗ 揾唔到 feed {feed}（root 應有 tableau_combined_25.csv）"); return
     qingdan = _find("data/投資項目清單", entity, ".xlsx")
-    template = _find("data/reports", entity, ".pptx")
+    template = _find("data/reports", entity, ".pptx", prefer=["2025"])
     ent_up = entity.upper()
     print(f"entity={ent_up}  feed={feed.name}  清單={qingdan.name if qingdan else '(冇)'}  "
           f"template={template.name if template else '(冇→用 13.33x7.5)'}")
