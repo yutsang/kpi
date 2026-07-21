@@ -43,14 +43,12 @@ def _norm_code(v):
     return m.group(1) if m else s
 
 
-def main():
-    args = sys.argv[1:]
-    entity = None
-    if "--entity" in args:
-        i = args.index("--entity"); entity = args[i + 1].lower(); del args[i:i + 2]
-    if not args:
-        print("俾清單 xlsx 路徑（--entity mgm）"); return
-    wb = openpyxl.load_workbook(args[0], data_only=True, read_only=True)
+OUT_COLS = ["項目序號", "項目名稱", "項目類型"] + [n for n, _ in CONCEPTS]
+
+
+def load_narrative(path, log=lambda *a: None) -> dict:
+    """讀清單 → {正規化項目編號: rec}，rec 有 項目序號/名稱/類型 + 每概念（取最新非空）。"""
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     ws = None
     for sn in wb.sheetnames:
         if sn.lower().startswith("database") or sn == "Database":
@@ -74,16 +72,13 @@ def main():
         if hdr_r is not None:
             break
     if hdr_r is None:
-        print("✗ 揾唔到『承批公司項目序號』表頭"); return
+        log("✗ 揾唔到『承批公司項目序號』表頭"); return {}
     hdr = [("" if v is None else str(v).replace("\n", "")) for v in rows[hdr_r]]
-    # 每概念 → 符合嘅欄 index list
     concept_cols = {name: [ci for ci, h in enumerate(hdr) if any(k in h for k in keys)]
                     for name, keys in CONCEPTS}
-    print(f"（{entity}）清單 header row {hdr_r+1}；概念欄命中：" +
-          ", ".join(f"{n}:{len(concept_cols[n])}" for n, _ in CONCEPTS))
-
-    out_cols = ["項目序號", "項目名稱", "項目類型"] + [n for n, _ in CONCEPTS]
-    out_rows = []
+    log(f"清單 header row {hdr_r+1}；概念欄命中：" +
+        ", ".join(f"{n}:{len(concept_cols[n])}" for n, _ in CONCEPTS))
+    out = {}
     for ri in range(hdr_r + 1, len(rows)):
         row = rows[ri]
         code = _norm_code(row[code_c]) if code_c < len(row) else ""
@@ -99,8 +94,21 @@ def main():
                     sv = str(row[ci]).strip()
                     if sv and sv not in vals and sv.lower() not in ("n/a", "nan"):
                         vals.append(sv)
-            rec[name] = vals[-1] if vals else ""      # 取最後一個非空＝最新年度
-        out_rows.append(rec)
+            rec[name] = vals[-1] if vals else ""
+        out.setdefault(code, rec)
+    return out
+
+
+def main():
+    args = sys.argv[1:]
+    entity = None
+    if "--entity" in args:
+        i = args.index("--entity"); entity = args[i + 1].lower(); del args[i:i + 2]
+    if not args:
+        print("俾清單 xlsx 路徑（--entity mgm）"); return
+    narr = load_narrative(args[0], log=lambda m: print(f"（{entity}）{m}"))
+    out_cols = OUT_COLS
+    out_rows = list(narr.values())
 
     out = Path(f"{entity or 'all'}_narrative.xlsx")
     wb2 = openpyxl.Workbook(); wsx = wb2.active; wsx.title = "narrative"
