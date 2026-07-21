@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import pandas as pd
     from pptx import Presentation
-    from pptx.util import Inches, Pt
+    from pptx.util import Inches, Pt, Emu
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
     from pptx.enum.shapes import MSO_SHAPE
@@ -151,9 +151,29 @@ def render_generic(prs, title, df):
                        color=(R.RED if txt.startswith("(") else None), fill=fill)
 
 
+def _finding_body(box, find, mgmt, grey):
+    """body 文字框：KPMG分析發現 / 管理層解釋 兩段，label 加粗。"""
+    tf = box.text_frame; tf.word_wrap = True
+    tf.margin_left = tf.margin_right = Emu(45000)
+    tf.margin_top = tf.margin_bottom = Emu(27000)
+    first = True
+    for label, text, col in [("KPMG分析發現", find, None), ("管理層解釋", mgmt, grey)]:
+        if not text:
+            continue
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        rl = p.add_run(); rl.text = label + "："
+        rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "Microsoft JhengHei"
+        rl.font.color.rgb = HDR if col is None else col
+        rt = p.add_run(); rt.text = str(text)[:300]
+        rt.font.size = Pt(8); rt.font.name = "Microsoft JhengHei"
+        if col is not None:
+            rt.font.color.rgb = col
+
+
 def render_findings(prs, ent_up, df, narr):
-    """③ 主要發現（slide 28-40）：每 canonical 調整類型 → 受影響項目，
-    金額(feed 報告/調整) + 清單抄字(KPMG分析發現 / 管理層解釋)。text slides，每頁 3 個項目。"""
+    """③ 主要發現（slide 28-40）：每 canonical 調整類型 → 受影響項目 card
+    = navy 標題條(項目+金額) + body(KPMG分析發現/管理層解釋 清單抄字)。每頁 2 個項目。"""
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
@@ -171,27 +191,29 @@ def render_findings(prs, ent_up, df, narr):
             nr = narr.get(N._norm_code(p["dicj code"]), {})
             recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"], p["調整"],
                          nr.get("KPMG分析發現", ""), nr.get("管理層解釋", "")))
-        pages = [recs[i:i + 3] for i in range(0, len(recs), 3)]
+        pages = [recs[i:i + 2] for i in range(0, len(recs), 2)]
         for pi, page in enumerate(pages):
             slide = prs.slides.add_slide(blank)
             tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
-            R._set_title(tb, f"{ent_up} 主要發現：{adj}"
+            R._set_title(tb, f"{ent_up} 本年度主要發現 — {adj}"
                          + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
-            y = 0.78
+            y = 0.8
             for code, name, rep, adjv, find, mgmt in page:
-                box = slide.shapes.add_textbox(Inches(0.5), Inches(y), Inches(slide_w - 1.0), Inches(1.95))
-                tf = box.text_frame; tf.word_wrap = True
-                r0 = tf.paragraphs[0].add_run()
-                r0.text = f"{code}　{name[:34]}　│　報告 {R.fmt_money(rep)}／調整 {R.fmt_money(adjv)} 萬"
-                r0.font.bold = True; r0.font.size = Pt(9); r0.font.color.rgb = HDR
-                r0.font.name = "Microsoft JhengHei"
-                if find:
-                    r1 = tf.add_paragraph().add_run(); r1.text = "發現：" + find[:230]
-                    r1.font.size = Pt(8); r1.font.name = "Microsoft JhengHei"
-                if mgmt:
-                    r2 = tf.add_paragraph().add_run(); r2.text = "管理層解釋：" + mgmt[:190]
-                    r2.font.size = Pt(8); r2.font.color.rgb = grey; r2.font.name = "Microsoft JhengHei"
-                y += 2.05
+                # navy 標題條（項目 + 金額）
+                bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(y),
+                                             Inches(slide_w - 0.8), Inches(0.3))
+                bar.fill.solid(); bar.fill.fore_color.rgb = HDR; bar.line.fill.background()
+                btf = bar.text_frame; btf.word_wrap = True
+                btf.margin_left = Emu(54000); btf.margin_top = btf.margin_bottom = Emu(9000)
+                br = btf.paragraphs[0].add_run()
+                br.text = f"{code}　{name[:32]}　│　報告 {R.fmt_money(rep)}／潛在調整 {R.fmt_money(adjv)} 萬澳門元"
+                br.font.bold = True; br.font.size = Pt(9)
+                br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "Microsoft JhengHei"
+                # body
+                body = slide.shapes.add_textbox(Inches(0.4), Inches(y + 0.32),
+                                                Inches(slide_w - 0.8), Inches(2.5))
+                _finding_body(body, find, mgmt, grey)
+                y += 3.0
 
 
 def main():
