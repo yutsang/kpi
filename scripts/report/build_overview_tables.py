@@ -44,32 +44,66 @@ def _rate(a, b):
 
 
 def overview_by_bucket(df, bucket, plan):
-    """S10-14 / 19-26：博彩/非博彩/總計 × 計劃/報告/潛在調整/調整後/完成率/調整後完成率。"""
+    """整體投資概況（S10-14 = 2025計劃有計劃/完成率；S19-26 = 期後冇計劃、多潛在調整金額欄）。
+    逐範疇 + 博彩/非博彩小計 + 總計。欄跟報告 IMG_0104/0105：
+      2025計劃：項目數量 | 獲批的計劃投資金額 | 報告投資金額 | 完成率 | 潛在調整後投資金額 | 完成率 | 設施建設 | 活動舉辦
+      期後    ：項目數量 | 報告投資金額 | 潛在調整金額 | 潛在調整後投資金額 | 設施建設 | 活動舉辦
+    ⚠ 項目數量/逐範疇計劃 = feed 出現嘅碼；零申報項目未計入（報告項目數量含零申報）→ 小計/總計計劃用清單準數。"""
     d = df[df["_bucket"] == bucket]
-    yr = BUCKET_PLANYR[bucket]
-    if d.empty and not (plan or {}).get(yr):
+    if d.empty:
         return pd.DataFrame()
-    cols = ["範疇", "計劃投資金額", "報告投資金額", "潛在調整合計", "調整後投資金額",
-            "投資計劃完成率", "潛在調整後投資計劃完成率"]
+    yr = BUCKET_PLANYR[bucket]
+    is_py = (bucket == "2025年度投資計劃")
+    idx = ["_scope", "_go", "_ngn", "_sub"]
+    g = d.groupby(idx, dropna=False).agg(
+        項目數量=("dicj code", "nunique"), 報告=("調整前_萬", "sum"),
+        調整=("調整_萬", "sum"), 後=("調整後_萬", "sum")).reset_index()
+    cap = d[d["final_capex_opex"] == "Capex"].groupby(idx)["調整後_萬"].sum().rename("設施")
+    ope = d[d["final_capex_opex"] == "Opex"].groupby(idx)["調整後_萬"].sum().rename("活動")
+    g = g.merge(cap.reset_index(), on=idx, how="left").merge(ope.reset_index(), on=idx, how="left")
+    g[["設施", "活動"]] = g[["設施", "活動"]].fillna(0.0)
+    g = g.sort_values(idx)
+
+    plan_by_sub = {}
+    if is_py and plan:
+        sub_of = {}
+        for _, r in d.drop_duplicates("dicj code").iterrows():
+            sub_of[(r["ng_scope"] == "gaming", B._norm(r["dicj code"]))] = r["_sub"]
+        for (gm, code), v in (plan.get(yr, {}) or {}).items():
+            sub = sub_of.get((gm, code))
+            if sub is not None:
+                plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
+
+    def mk(name, cnt, pl, rep, adj, aft, fac, act):
+        r = {"範疇": name, "項目數量": int(cnt), "報告投資金額": round(rep, 1),
+             "潛在調整金額": round(adj, 1), "潛在調整後投資金額": round(aft, 1),
+             "設施建設/資本性支出": round(fac, 1), "活動舉辦/營運性支出": round(act, 1)}
+        if is_py:
+            r["獲批的計劃投資金額"] = round(pl, 1)
+            r["投資計劃完成率"] = _rate(rep, pl)
+            r["潛在調整後投資計劃完成率"] = _rate(aft, pl)
+        return r
+
     rows = []
-    tot = dict(計劃=0.0, 報告=0.0, 調整=0.0, 後=0.0)
-    for scope, gaming, name in [(0, True, "博彩項目"), (1, False, "非博彩項目")]:
-        sc = d[d["_scope"] == scope]
-        pl = _plan_tot(plan, yr, gaming)
-        if sc.empty and pl == 0:
+    for scope in [0, 1]:
+        sc = g[g["_scope"] == scope]
+        if sc.empty:
             continue
-        rep = round(sc["調整前_萬"].sum(), 1)
-        adj = round(sc["調整_萬"].sum(), 1)
-        aft = round(sc["調整後_萬"].sum(), 1)
-        rows.append({"範疇": name, "計劃投資金額": pl, "報告投資金額": rep, "潛在調整合計": adj,
-                     "調整後投資金額": aft, "投資計劃完成率": _rate(rep, pl),
-                     "潛在調整後投資計劃完成率": _rate(aft, pl)})
-        tot["計劃"] += pl; tot["報告"] += rep; tot["調整"] += adj; tot["後"] += aft
-    rows.append({"範疇": "總計", "計劃投資金額": round(tot["計劃"], 1), "報告投資金額": round(tot["報告"], 1),
-                 "潛在調整合計": round(tot["調整"], 1), "調整後投資金額": round(tot["後"], 1),
-                 "投資計劃完成率": _rate(tot["報告"], tot["計劃"]),
-                 "潛在調整後投資計劃完成率": _rate(tot["後"], tot["計劃"])})
-    return pd.DataFrame(rows, columns=cols)
+        name = "博彩項目" if scope == 0 else "非博彩項目"
+        for _, row in sc.iterrows():
+            rows.append(mk(row["_sub"], row["項目數量"], plan_by_sub.get(row["_sub"], 0.0),
+                           row["報告"], row["調整"], row["後"], row["設施"], row["活動"]))
+        rows.append(mk(f"{name}小計", sc["項目數量"].sum(), _plan_tot(plan, yr, scope == 0),
+                       sc["報告"].sum(), sc["調整"].sum(), sc["後"].sum(), sc["設施"].sum(), sc["活動"].sum()))
+    rows.append(mk("總計", g["項目數量"].sum(), _plan_tot(plan, yr, None),
+                   g["報告"].sum(), g["調整"].sum(), g["後"].sum(), g["設施"].sum(), g["活動"].sum()))
+    if is_py:
+        cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額", "投資計劃完成率",
+                "潛在調整後投資金額", "潛在調整後投資計劃完成率", "設施建設/資本性支出", "活動舉辦/營運性支出"]
+    else:
+        cols = ["範疇", "項目數量", "報告投資金額", "潛在調整金額", "潛在調整後投資金額",
+                "設施建設/資本性支出", "活動舉辦/營運性支出"]
+    return pd.DataFrame(rows)[cols]
 
 
 def adjustment_bridge(df):
