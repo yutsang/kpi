@@ -11,6 +11,7 @@ make_report.py — 一鍵：由底層數據(feed) 做齊報告數字表 → 一�
        template = data\\reports\\*{ENTITY}*.pptx（跟 slide 尺寸）。
 出 {entity}_報告數字表.pptx：單個項目審查匯總(25/24/23) + 金額匯總 + 設施vs活動×3，全部 native + 3色。
 """
+import re
 import sys
 from pathlib import Path
 
@@ -34,6 +35,7 @@ TOT = RGBColor(0xC5, 0xD0, 0xE6)
 import build_project_review_table as B
 import build_summary_tables as S
 import build_overview_tables as O
+import build_narrative as N
 import render_review_table_pptx as R
 
 FEED = "tableau_combined_25.csv"
@@ -149,6 +151,49 @@ def render_generic(prs, title, df):
                        color=(R.RED if txt.startswith("(") else None), fill=fill)
 
 
+def render_findings(prs, ent_up, df, narr):
+    """③ 主要發現（slide 28-40）：每 canonical 調整類型 → 受影響項目，
+    金額(feed 報告/調整) + 清單抄字(KPMG分析發現 / 管理層解釋)。text slides，每頁 3 個項目。"""
+    d = df.copy()
+    d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
+    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    slide_w = prs.slide_width / 914400.0
+    grey = RGBColor(0x40, 0x40, 0x40)
+    for adj in B.ADJ7:
+        sub = d[(d["_adj"] == adj) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
+        if sub.empty:
+            continue
+        projs = sub.groupby("dicj code").agg(名稱=("project", "first"), 報告=("調整前_萬", "sum"),
+                                             調整=("調整_萬", "sum")).reset_index()
+        projs = projs.reindex(projs["調整"].abs().sort_values(ascending=False).index)
+        recs = []
+        for _, p in projs.iterrows():
+            nr = narr.get(N._norm_code(p["dicj code"]), {})
+            recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"], p["調整"],
+                         nr.get("KPMG分析發現", ""), nr.get("管理層解釋", "")))
+        pages = [recs[i:i + 3] for i in range(0, len(recs), 3)]
+        for pi, page in enumerate(pages):
+            slide = prs.slides.add_slide(blank)
+            tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
+            R._set_title(tb, f"{ent_up} 主要發現：{adj}"
+                         + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
+            y = 0.78
+            for code, name, rep, adjv, find, mgmt in page:
+                box = slide.shapes.add_textbox(Inches(0.5), Inches(y), Inches(slide_w - 1.0), Inches(1.95))
+                tf = box.text_frame; tf.word_wrap = True
+                r0 = tf.paragraphs[0].add_run()
+                r0.text = f"{code}　{name[:34]}　│　報告 {R.fmt_money(rep)}／調整 {R.fmt_money(adjv)} 萬"
+                r0.font.bold = True; r0.font.size = Pt(9); r0.font.color.rgb = HDR
+                r0.font.name = "Microsoft JhengHei"
+                if find:
+                    r1 = tf.add_paragraph().add_run(); r1.text = "發現：" + find[:230]
+                    r1.font.size = Pt(8); r1.font.name = "Microsoft JhengHei"
+                if mgmt:
+                    r2 = tf.add_paragraph().add_run(); r2.text = "管理層解釋：" + mgmt[:190]
+                    r2.font.size = Pt(8); r2.font.color.rgb = grey; r2.font.name = "Microsoft JhengHei"
+                y += 2.05
+
+
 def main():
     entity = (sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "mgm").lower()
     feed = Path(FEED)
@@ -165,6 +210,9 @@ def main():
     df["報告年"] = pd.to_numeric(df["報告年"], errors="coerce")
     df["_plan_year"] = df["year_bucket"].map(B._plan_year)
     plan = B.load_plan(qingdan) if qingdan else None
+    narr = N.load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
+    if narr:
+        print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
 
     prs = Presentation()
     if template:
@@ -195,6 +243,8 @@ def main():
     fs = O.finding_summary(sdf)
     if not fs.empty:
         render_generic(prs, f"{ent_up} 主要發現摘要", fs.fillna(""))
+    if narr:      # 逐調整類型 × 項目：金額(feed) + 發現/管理層解釋(清單抄字)
+        render_findings(prs, ent_up, sdf, narr)
 
     # ④ 其他信息（報告 slide 42-63）
     divider(prs, "四、其他信息")
