@@ -170,7 +170,85 @@ def dump_shape(sh, indent, out, idx=""):
         out(f"{indent}  PICTURE（可能係 Tableau 截圖／logo）")
 
 
-def inspect_file(path: Path):
+def _walk(shapes):
+    for sh in shapes:
+        yield sh
+        try:
+            if sh.shape_type == MSO_SHAPE_TYPE.GROUP:
+                yield from _walk(sh.shapes)
+        except Exception:
+            pass
+
+
+def _slide_title(slide):
+    best = ""
+    for sh in _walk(slide.shapes):
+        if getattr(sh, "has_text_frame", False) and sh.has_text_frame:
+            t = sh.text_frame.text.strip().replace("\n", " ")
+            if t and (not best or len(t) < len(best) or len(best) > 44):
+                if 0 < len(t) <= 60:
+                    return t
+                if not best:
+                    best = t
+    return best[:60]
+
+
+def brief_slide(slide, si, total):
+    """一版一行：標題 + table/chart/pic 數 + 文字分類 + 估類型（快速 map 全報告）。"""
+    nt = nc = npic = 0
+    desc = tmpl = ph = 0
+    textchars = 0
+    tbl_has_num = False
+    for sh in _walk(slide.shapes):
+        if getattr(sh, "has_chart", False):
+            nc += 1
+        if getattr(sh, "has_table", False):
+            nt += 1
+            for row in sh.table.rows:
+                for cell in row.cells:
+                    if _NUM.search(cell.text or ""):
+                        tbl_has_num = True
+        try:
+            if sh.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                npic += 1
+        except Exception:
+            pass
+        if getattr(sh, "has_text_frame", False) and sh.has_text_frame:
+            for para in sh.text_frame.paragraphs:
+                full = "".join(r.text for r in para.runs) or para.text
+                s = full.strip()
+                if not s:
+                    continue
+                textchars += len(s)
+                h = _classify_text(full)
+                if "PLACEHOLDER" in h:
+                    ph += 1
+                elif "descriptive" in h:
+                    desc += 1
+                elif "template" in h:
+                    tmpl += 1
+    if nc:
+        kind = "CHART(data→feed)"
+    elif nt and tbl_has_num:
+        kind = "TABLE(data→feed)"
+    elif npic and textchars < 40:
+        kind = "PIC(可能Tableau截圖→feed)"
+    elif desc:
+        kind = "敘述(LLM)"
+    elif nt:
+        kind = "TABLE(版面/text)"
+    elif textchars and textchars < 60:
+        kind = "標題/章節(template)"
+    elif textchars:
+        kind = "template文字"
+    else:
+        kind = "?(空/圖)"
+    title = _slide_title(slide)
+    return (f"S{si+1:>3}/{total} | tbl={nt} chart={nc} pic={npic} | "
+            f"txt={textchars} D{desc} T{tmpl} P{ph} | {kind:<22} | {title[:46]!r}")
+
+
+def inspect_file(path: Path, rng=None, brief=False):
     lines = []
 
     def out(s=""):
@@ -182,15 +260,31 @@ def inspect_file(path: Path):
         out(f"  ✗ 開唔到: {type(e).__name__}: {e}")
         print("\n".join(lines))
         return lines
-    out(f"  投影片尺寸: {_emu_in(prs.slide_width)}x{_emu_in(prs.slide_height)}in，"
-        f"共 {len(prs.slides)} 頁")
-    for si, slide in enumerate(prs.slides):
+    total = len(prs.slides)
+    out(f"  投影片尺寸: {_emu_in(prs.slide_width)}x{_emu_in(prs.slide_height)}in，共 {total} 頁"
+        + (f"（只印 {rng[0]}-{rng[1]}）" if rng else "") + ("（brief 每版一行）" if brief else ""))
+    lo, hi = (rng if rng else (1, total))
+    slides = list(prs.slides)
+    if brief:
+        out("  [S頁/總 | tbl/chart/pic | txt字數 D敘述 T模板 P空格 | 估類型 | 標題]")
+        for si in range(lo - 1, min(hi, total)):
+            out("  " + brief_slide(slides[si], si, total))
+        txt = "\n".join(lines)
+        print(txt)
+        outp = path.with_suffix(".brief.txt")
+        try:
+            outp.write_text(txt, encoding="utf-8"); print(f"\n✓ 寫入 {outp}（貼返嚟俾我）")
+        except Exception as e:
+            print(f"\n⚠ 寫唔到 txt: {e}")
+        return lines
+    for si in range(lo - 1, min(hi, total)):
+        slide = slides[si]
         lay = ""
         try:
             lay = slide.slide_layout.name
         except Exception:
             pass
-        out(f"\n{'='*70}\n## SLIDE {si+1}/{len(prs.slides)}  layout={lay!r}  shapes={len(slide.shapes)}")
+        out(f"\n{'='*70}\n## SLIDE {si+1}/{total}  layout={lay!r}  shapes={len(slide.shapes)}")
         for k, sh in enumerate(slide.shapes):
             dump_shape(sh, "  ", out, idx=str(k))
         # notes
@@ -214,8 +308,22 @@ def inspect_file(path: Path):
 
 def main():
     args = sys.argv[1:]
+    brief = False
+    rng = None
+    if "--brief" in args:
+        brief = True; args.remove("--brief")
+    if "--range" in args:
+        i = args.index("--range")
+        try:
+            a, b = args[i + 1].split("-")
+            rng = (int(a), int(b))
+        except Exception:
+            print("✗ --range 格式 A-B（例 1-41）"); return
+        del args[i:i + 2]
     if not args:
         print('俾 pptx 路徑或 data\\reports 資料夾')
+        print('  --brief       每版一行（快速 map 全報告）')
+        print('  --range 1-41  只睇指定版')
         return
     targets = []
     for a in args:
@@ -229,7 +337,7 @@ def main():
     for t in targets:
         if t.name.startswith("~$"):
             continue
-        inspect_file(t)
+        inspect_file(t, rng=rng, brief=brief)
 
 
 if __name__ == "__main__":
