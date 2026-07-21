@@ -135,6 +135,8 @@ def _rate(rep, plan):
 
 def build_year(df: pd.DataFrame, year: int, plan: dict | None = None):
     d = df[df["報告年"] == year].copy()
+    # 只留乾淨「項目N」碼（丟 項目CAPEX-5 等 pseudo/分攤碼）
+    d = d[d["dicj code"].astype(str).str.match(r"^項目\s*\d")]
     if d.empty:
         return None, []
     d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])

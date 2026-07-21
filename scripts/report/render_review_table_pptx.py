@@ -39,6 +39,11 @@ WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 RED = RGBColor(0xC0, 0x00, 0x00)
 
 ROWS_PER_SLIDE = 24                       # 每頁資料行（含 section/小計），近報告
+YEAR_TITLE = {
+    "報告年25": "MGM 2025年度投資計劃單個項目審查結果匯總表",
+    "報告年24": "MGM 2024年度投資計劃單個項目截至2025年末的審查結果匯總表",
+    "報告年23": "MGM 2023年度投資計劃單個項目截至2025年末的審查結果匯總表",
+}
 
 
 def fmt_money(v):
@@ -120,7 +125,7 @@ def render_sheet(prs, sheet_name, df, cols):
         slide = prs.slides.add_slide(blank)
         # 標題
         tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(slide_w - 0.8), Inches(0.4))
-        _set_title(tb, f"MGM {sheet_name} 單個項目審查結果匯總表（{pi+1}/{len(pages)}）")
+        _set_title(tb, f"{YEAR_TITLE.get(sheet_name, sheet_name)}（{pi+1}/{len(pages)}）")
         sub = df.iloc[a:b]
         nrow = 2 + len(sub)     # 2 header rows
         ncol = len(cols)
@@ -186,15 +191,14 @@ def main():
     xlsx = Path(args[0])
     sheets = pd.read_excel(xlsx, sheet_name=None)
 
+    # fresh 包（唔可以 clone template 再刪 slide：sldId 刪咗但 slide part 仲喺 → 撞名 corrupt）
+    prs = Presentation()
     if template and Path(template).exists():
-        prs = Presentation(template)
-        # 清走原有 slides，只保留 master/layout/尺寸
-        xml_slides = prs.slides._sldIdLst
-        for sid in list(xml_slides):
-            xml_slides.remove(sid)
-        print(f"── 用 template 尺寸: {prs.slide_width/914400:.2f}x{prs.slide_height/914400:.2f}in")
+        ref = Presentation(template)
+        prs.slide_width = ref.slide_width
+        prs.slide_height = ref.slide_height
+        print(f"── 跟 template 尺寸: {prs.slide_width/914400:.2f}x{prs.slide_height/914400:.2f}in（fresh 包避免撞名）")
     else:
-        prs = Presentation()
         prs.slide_width = Inches(13.333); prs.slide_height = Inches(7.5)
         print("── 冇 template，用 13.33x7.5in（想跟報告尺寸請 --template 報告.pptx）")
 
