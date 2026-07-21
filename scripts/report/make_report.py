@@ -216,6 +216,63 @@ def render_findings(prs, ent_up, df, narr):
                 y += 3.0
 
 
+def render_site_visits(prs, ent_up, df, narr, threshold=2000):
+    """附件二 現場走訪（slide 93-100）：capex ≥ 2,000萬 設施項目（報告走訪準則），
+    配清單 實施地點 + 實際投資內容 做走訪概述。每頁 2 個項目 card。"""
+    cap = df[df["final_capex_opex"] == "Capex"].copy()
+    cap = cap[cap["dicj code"].astype(str).str.match(r"^項目\s*\d")]
+    g = cap.groupby(["ng_scope", "dicj code"]).agg(
+        名稱=("project", "first"), 報告=("調整前_萬", "sum")).reset_index()
+    g = g[g["報告"] >= threshold]
+    if g.empty:
+        return
+    g["_s"] = (g["ng_scope"] != "gaming").astype(int)
+    g = g.sort_values(["_s", "報告"], ascending=[True, False])
+    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    slide_w = prs.slide_width / 914400.0
+    grey = RGBColor(0x40, 0x40, 0x40)
+    recs = []
+    for _, p in g.iterrows():
+        nr = narr.get(N._norm_code(p["dicj code"]), {})
+        recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"],
+                     nr.get("實施地點", ""), nr.get("實際投資內容", "")))
+    pages = [recs[i:i + 2] for i in range(0, len(recs), 2)]
+    for pi, page in enumerate(pages):
+        slide = prs.slides.add_slide(blank)
+        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
+        R._set_title(tb, f"{ent_up} 附件二 部分項目的現場走訪情況"
+                     + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
+        y = 0.8
+        for code, name, amt, loc, desc in page:
+            bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(y),
+                                         Inches(slide_w - 0.8), Inches(0.3))
+            bar.fill.solid(); bar.fill.fore_color.rgb = HDR; bar.line.fill.background()
+            btf = bar.text_frame; btf.word_wrap = True
+            btf.margin_left = Emu(54000); btf.margin_top = btf.margin_bottom = Emu(9000)
+            br = btf.paragraphs[0].add_run()
+            br.text = f"{code}　{name[:30]}　│　設施建設（資本性支出）{R.fmt_money(amt)} 萬澳門元"
+            br.font.bold = True; br.font.size = Pt(9)
+            br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "Microsoft JhengHei"
+            body = slide.shapes.add_textbox(Inches(0.4), Inches(y + 0.32), Inches(slide_w - 0.8), Inches(2.5))
+            tf = body.text_frame; tf.word_wrap = True
+            tf.margin_left = tf.margin_right = Emu(45000)
+            first = True
+            for label, text, col in [("地點", loc, HDR), ("現場走訪概述", desc, None),
+                                     ("現場走訪圖片", "〔待插入〕", grey)]:
+                if label != "現場走訪圖片" and not text:
+                    continue
+                p0 = tf.paragraphs[0] if first else tf.add_paragraph()
+                first = False
+                rl = p0.add_run(); rl.text = label + "："
+                rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "Microsoft JhengHei"
+                rl.font.color.rgb = HDR if col is None else col
+                rt = p0.add_run(); rt.text = str(text)[:300]
+                rt.font.size = Pt(8); rt.font.name = "Microsoft JhengHei"
+                if col is not None and label != "地點":
+                    rt.font.color.rgb = col
+            y += 3.0
+
+
 def _prose_slide(prs, title, bullets):
     """一版敘述（navy 標題 + ■ bullet；bullet=(粗體引子, 內文)）。"""
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
@@ -356,6 +413,11 @@ def main():
         tab, _ = B.build_year(df, yr, plan.get(yr) if plan else None)
         if tab is not None and not tab.empty:
             R.render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns))
+
+    # ⑥ 附件二 現場走訪（slide 93-100）
+    if narr:
+        divider(prs, "六、附件")
+        render_site_visits(prs, ent_up, sdf, narr)
 
     out = Path(f"{entity}_報告數字表.pptx")
     try:
