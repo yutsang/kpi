@@ -357,6 +357,71 @@ def _rate_of(df, name, col):
     return v if isinstance(v, (int, float)) and not pd.isna(v) else None
 
 
+def _prose_paginated(prs, title, bullets, per):
+    if not bullets:
+        return
+    pages = [bullets[i:i + per] for i in range(0, len(bullets), per)]
+    for pi, page in enumerate(pages):
+        t = title + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else "")
+        _prose_slide(prs, t, page)
+
+
+def render_category_overview(prs, ent_up, ov, df, narr):
+    """slide 13-14 按範疇的項目概況：逐範疇「主要包括{清單實際投資內容}。完成率{X}%」。"""
+    if not narr:
+        return
+    d = df.copy()
+    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
+    cats = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))]
+    bullets = []
+    for _, r in cats.iterrows():
+        sub = str(r["範疇"]); rate = r.get("投資計劃完成率")
+        if not isinstance(rate, (int, float)) or pd.isna(rate):
+            continue
+        pr = proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False)
+        content = ""
+        for _, pp in pr.iterrows():
+            c = narr.get(N._norm_code(pp["dicj code"]), {}).get("實際投資內容", "")
+            if c:
+                content = c; break
+        summ = (content[:100] + "…") if len(content) > 100 else content
+        body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}。" if summ
+                else f"投資計劃金額完成率為{_pct(rate)}。")
+        bullets.append((f"{sub}：", body))
+    _prose_paginated(prs, f"{ent_up} 按範疇的項目概況", bullets, 7)
+
+
+def render_adj_detail(prs, ent_up, adj, df, narr):
+    """slide 16-17 潛在調整事項詳述：逐類型「（約X萬）：涉及{項目}。{清單分析發現}」。"""
+    if not narr:
+        return
+    d = df.copy()
+    d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
+    bullets = []
+    for _, r in adj.iterrows():
+        t = str(r["潛在調整事項"])
+        if t in ("合計", "跨年及其他調整"):
+            continue
+        amt = r.get("合計", 0)
+        if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
+            continue
+        sub = d[(d["_adj"] == t) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
+        if sub.empty:
+            continue
+        names = "、".join(str(x) for x in sub.groupby("dicj code")["project"].first().tolist()[:3])
+        reason = ""
+        for code in sub["dicj code"].drop_duplicates():
+            nr = narr.get(N._norm_code(code), {})
+            f = nr.get("KPMG分析發現", "") or nr.get("調整事項備註", "")
+            if f:
+                reason = f; break
+        r2 = (reason[:160] + "…") if len(reason) > 160 else reason
+        body = f"主要涉及{names}等項目。{r2}" if r2 else f"主要涉及{names}等項目。"
+        bullets.append((f"{t}（約{abs(amt):,.0f}萬澳門元）：", body))
+    _prose_paginated(prs, f"{ent_up} 報告投資金額的潛在調整事項（詳述）", bullets, 4)
+
+
 def render_exec_prose(prs, ent_up, ov):
     """整體執行概況敘述（報告 slide 11-14）：完成率高/低範疇，全部由 overview 數字生成。"""
     g = _rate_of(ov, "博彩項目小計", "投資計劃完成率")
@@ -434,9 +499,11 @@ def main():
     if not ov.empty:
         render_overview_headline(prs, ent_up, ov, sdf, plan)   # slide 10 整體投資支出概況
         render_generic(prs, f"{ent_up} 2025年度投資項目的整體執行概況", ov.fillna(""))
-        render_exec_prose(prs, ent_up, ov)          # slide 11-14 敘述
+        render_exec_prose(prs, ent_up, ov)              # slide 11 執行概況敘述
+        render_category_overview(prs, ent_up, ov, sdf, narr)   # slide 13-14 逐範疇概況
     render_generic(prs, f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總", adj.fillna(""))
-    render_adj_prose(prs, ent_up, adj)               # slide 16-17 敘述
+    render_adj_prose(prs, ent_up, adj)                   # slide 15 調整匯總敘述
+    render_adj_detail(prs, ent_up, adj, sdf, narr)       # slide 16-17 調整事項詳述
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
