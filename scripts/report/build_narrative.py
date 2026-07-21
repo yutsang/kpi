@@ -108,22 +108,19 @@ def main():
     for rec in out_rows:
         wsx.append([rec.get(c, "") for c in out_cols])
     wb2.save(out)
-    print(f"\n✓ {out.resolve()}：{len(out_rows)} 個項目 × {len(out_cols)} 欄")
-    # console 預覽（有 KPMG分析發現 嘅頭 6 個）
-    print("\n── 有『KPMG分析發現』嘅項目預覽（抄落主要發現/走訪概述）──")
-    shown = 0
-    for rec in out_rows:
-        if rec["KPMG分析發現"] or rec["實際投資內容"]:
-            print(f"\n[{rec['項目序號']}] {str(rec['項目名稱'])[:30]}（{rec['項目類型']}｜{rec['項目狀況']}）")
-            if rec["實際投資內容"]:
-                print(f"  實際投資內容: {rec['實際投資內容'][:120]}")
-            if rec["KPMG分析發現"]:
-                print(f"  KPMG分析發現: {rec['KPMG分析發現'][:120]}")
-            if rec["管理層解釋"]:
-                print(f"  管理層解釋: {rec['管理層解釋'][:120]}")
-            shown += 1
-            if shown >= 6:
-                break
+    n_find = sum(1 for r in out_rows if r["KPMG分析發現"])
+    n_adj = sum(1 for r in out_rows if r["調整事項備註"])
+    print(f"\n✓ {out.resolve()}：{len(out_rows)} 個項目 × {len(out_cols)} 欄"
+          f"（{n_find} 個有 KPMG分析發現、{n_adj} 個有調整備註）")
+    # console 預覽：優先有『KPMG分析發現』嘅項目（＝主要發現 narrative 來源），跳過「如期開展」冇調整嘅
+    finding_recs = [r for r in out_rows if r["KPMG分析發現"]]
+    print(f"\n── 有『KPMG分析發現』嘅項目（主要發現/走訪概述來源）頭 8 個預覽 ──")
+    for rec in finding_recs[:8]:
+        print(f"\n[{rec['項目序號']}] {str(rec['項目名稱'])[:30]}（{rec['項目類型']}｜{rec['項目狀況']}）")
+        if rec["KPMG分析發現"]:
+            print(f"  KPMG分析發現: {rec['KPMG分析發現'][:150]}")
+        if rec["管理層解釋"]:
+            print(f"  管理層解釋: {rec['管理層解釋'][:150]}")
 
 
 if __name__ == "__main__":
