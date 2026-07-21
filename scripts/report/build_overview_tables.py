@@ -90,6 +90,7 @@ def overview_by_bucket(df, bucket, plan):
         if sc.empty:
             continue
         name = "博彩項目" if scope == 0 else "非博彩項目"
+        rows.append({"範疇": name})     # section 標題行（跟報告 IMG_0105：博彩項目 / 非博彩項目）
         for _, row in sc.iterrows():
             rows.append(mk(row["_sub"], row["項目數量"], plan_by_sub.get(row["_sub"], 0.0),
                            row["報告"], row["調整"], row["後"], row["設施"], row["活動"]))
