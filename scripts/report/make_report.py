@@ -19,9 +19,17 @@ try:
     import pandas as pd
     from pptx import Presentation
     from pptx.util import Inches, Pt
-    from pptx.enum.text import PP_ALIGN
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+    from pptx.enum.shapes import MSO_SHAPE
 except ImportError:
     print("✗ pip install pandas python-pptx openpyxl"); sys.exit(1)
+
+# 報告配色（IMG_0105）：navy 表頭白字、section 淺藍、小計灰、總計稍深
+HDR = RGBColor(0x1F, 0x38, 0x64)
+SEC = RGBColor(0xD9, 0xE1, 0xF2)
+SUB = RGBColor(0xE7, 0xE6, 0xE6)
+TOT = RGBColor(0xC5, 0xD0, 0xE6)
 
 import build_project_review_table as B
 import build_summary_tables as S
@@ -36,6 +44,21 @@ def _is_num(v):
         float(v); return True
     except (TypeError, ValueError):
         return False
+
+
+def divider(prs, text):
+    """章節分隔頁（navy 底白字），俾 deck 有報告 section 結構。"""
+    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    slide = prs.slides.add_slide(blank)
+    rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
+    rect.fill.solid(); rect.fill.fore_color.rgb = HDR
+    rect.line.fill.background()
+    tf = rect.text_frame; tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
+    r = p.add_run(); r.text = text
+    r.font.size = Pt(26); r.font.bold = True
+    r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); r.font.name = "Microsoft JhengHei"
 
 
 def _find(dirp, entity, ext, prefer=None):
@@ -55,60 +78,74 @@ def _find(dirp, entity, ext, prefer=None):
 
 
 def render_generic(prs, title, df):
-    """render 一張 summary 表（範疇 + 數字欄；欄名有『·』= 2-row group header）。"""
+    """render 一張表（範疇/項目 + 數字欄；欄名有『·』= 2-row group header）。報告配色 IMG_0105。"""
     cols = list(df.columns)
     grouped = any("·" in c for c in cols)
     n = len(df)
-    ROWS = 26
+    ROWS = 28
     pages = [(i, min(i + ROWS, n)) for i in range(0, n, ROWS)] or [(0, 0)]
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
     slide_w = prs.slide_width / 914400.0
-    widths = [1.7 if c in ("範疇", "項目名稱") else 0.92 for c in cols]
+    widths = [1.9 if c in ("範疇", "項目名稱", "潛在調整事項") else
+              (2.6 if c == "主要涉及項目" else 0.92) for c in cols]
     scale = min(1.0, (slide_w - 0.8) / sum(widths))
     widths = [w * scale for w in widths]
     hrows = 2 if grouped else 1
+    ncol = len(cols)
+
+    def hdr(cell, text, align=PP_ALIGN.CENTER):
+        R._set(cell, text, size=7, bold=True, align=align, color=R.WHITE, fill=HDR)
+
     for pi, (a, b) in enumerate(pages):
         slide = prs.slides.add_slide(blank)
-        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(slide_w - 0.8), Inches(0.4))
+        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
         R._set_title(tb, f"{title}（{pi+1}/{len(pages)}）" if len(pages) > 1 else title)
         sub = df.iloc[a:b]
-        ncol = len(cols)
-        t = slide.shapes.add_table(hrows + len(sub), ncol, Inches(0.4), Inches(0.75),
+        t = slide.shapes.add_table(hrows + len(sub), ncol, Inches(0.4), Inches(0.72),
                                    Inches(sum(widths)), Inches(0.3 * (hrows + len(sub)))).table
         for ci, w in enumerate(widths):
             t.columns[ci].width = Inches(w)
+        # navy 表頭 + 左上角「萬澳門元」
         if grouped:
             groups = [c.split("·")[0] if "·" in c else c for c in cols]
-            ci = 0
+            t.cell(0, 0).merge(t.cell(1, 0)); hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
+            ci = 1
             while ci < ncol:
-                g = groups[ci]; cj = ci
-                while cj + 1 < ncol and groups[cj + 1] == g:
+                gg = groups[ci]; cj = ci
+                while cj + 1 < ncol and groups[cj + 1] == gg:
                     cj += 1
                 if cj > ci:
                     t.cell(0, ci).merge(t.cell(0, cj))
-                R._set(t.cell(0, ci), g, size=7, bold=True, align=PP_ALIGN.CENTER, color=R.WHITE, fill=R.BLUE)
+                hdr(t.cell(0, ci), gg)
                 ci = cj + 1
-            for ci, c in enumerate(cols):
-                R._set(t.cell(1, ci), c.split("·")[1] if "·" in c else c, size=6.5, bold=True,
-                       align=PP_ALIGN.CENTER, color=R.WHITE, fill=R.BLUE)
+            for ci, c in enumerate(cols[1:], start=1):
+                hdr(t.cell(1, ci), c.split("·")[1] if "·" in c else c)
         else:
-            for ci, c in enumerate(cols):
-                R._set(t.cell(0, ci), c, size=6.5, bold=True, align=PP_ALIGN.CENTER, color=R.WHITE, fill=R.BLUE)
+            hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
+            for ci, c in enumerate(cols[1:], start=1):
+                hdr(t.cell(0, ci), c)
+        # data rows：section 標題 / 小計 / 總計 / 一般
         for ri, (_, row) in enumerate(sub.iterrows(), start=hrows):
-            first = str(row[cols[0]])
-            bold = first.endswith(("小計", "合計", "總計"))
-            fill = R.GREY if bold else None
+            first = str(row[cols[0]]).strip()
+            if all(str(row[c]).strip() == "" for c in cols[1:]):        # section 標題行
+                for ci in range(ncol):
+                    R._set(t.cell(ri, ci), first if ci == 0 else "", size=7, bold=True,
+                           align=PP_ALIGN.LEFT, fill=SEC)
+                continue
+            is_tot = first.endswith("總計")
+            is_sub = is_tot or first.endswith(("小計", "合計"))
+            fill = TOT if is_tot else (SUB if is_sub else None)
             for ci, c in enumerate(cols):
                 v = row[c]
                 if ci == 0:
                     txt, al = first, PP_ALIGN.LEFT
-                elif "率" in c:                        # 完成率 → 百分比
+                elif "率" in c:
                     txt, al = R.fmt_pct(v), PP_ALIGN.RIGHT
                 elif _is_num(v):
                     txt, al = R.fmt_money(v), PP_ALIGN.RIGHT
-                else:                                  # 文字欄（e.g. 主要涉及項目）→ 靠左
+                else:
                     txt, al = ("" if v is None else str(v)), PP_ALIGN.LEFT
-                R._set(t.cell(ri, ci), txt, size=6.5, bold=bold, align=al,
+                R._set(t.cell(ri, ci), txt, size=7, bold=is_sub, align=al,
                        color=(R.RED if txt.startswith("(") else None), fill=fill)
 
 
@@ -138,26 +175,36 @@ def main():
 
     sdf = S._load(feed, entity)     # 於2025發生 slice（概述 + 金額匯總 共用）
 
-    # ①②③ 概述數字（報告 slide 10-40）
-    for bk in S.BUCKET_ORDER:
+    # ① 2025年度投資計劃執行情況概述（報告 slide 8-18）
+    divider(prs, "一、2025年度投資計劃執行情況概述")
+    ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan)
+    if not ov.empty:
+        render_generic(prs, f"{ent_up} 2025年度投資項目的整體執行概況", ov.fillna(""))
+    render_generic(prs, f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
+                   O.adjustment_bridge(sdf).fillna(""))
+
+    # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
+    divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
+    for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
         ov = O.overview_by_bucket(sdf, bk, plan)
         if not ov.empty:
-            render_generic(prs, f"{ent_up} {bk}整體投資概況", ov.fillna(""))
-    render_generic(prs, f"{ent_up} 報告投資金額的潛在調整事項匯總", O.adjustment_bridge(sdf).fillna(""))
+            render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""))
+
+    # ③ 本年度審查工作的主要發現（報告 slide 28-40）
+    divider(prs, "三、本年度審查工作的主要發現")
     fs = O.finding_summary(sdf)
     if not fs.empty:
-        render_generic(prs, f"{ent_up} 本年度主要發現摘要", fs.fillna(""))
+        render_generic(prs, f"{ent_up} 主要發現摘要", fs.fillna(""))
 
-    # ④ 金額匯總 + 設施vs活動（slide 42-45）
+    # ④ 其他信息（報告 slide 42-63）
+    divider(prs, "四、其他信息")
     render_generic(prs, f"{ent_up} 2025年度投資計劃及過往年度期後投資於2025年發生的投資金額匯總",
                    S.summary_amount(sdf).fillna(""))
     for bk in S.BUCKET_ORDER:
         fa = S.facility_activity(sdf, bk)
         if not fa.empty:
             render_generic(prs, f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額", fa.fillna(""))
-
-    # ④ 單個項目審查匯總（slide 46-63，計劃年 25/24/23）
-    for yr in (25, 24, 23):
+    for yr in (25, 24, 23):     # 單個項目審查匯總（slide 46-63）
         tab, _ = B.build_year(df, yr, plan.get(yr) if plan else None)
         if tab is not None and not tab.empty:
             R.render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns))
