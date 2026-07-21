@@ -25,9 +25,17 @@ except ImportError:
 
 import build_project_review_table as B
 import build_summary_tables as S
+import build_overview_tables as O
 import render_review_table_pptx as R
 
 FEED = "tableau_combined_25.csv"
+
+
+def _is_num(v):
+    try:
+        float(v); return True
+    except (TypeError, ValueError):
+        return False
 
 
 def _find(dirp, entity, ext, prefer=None):
@@ -91,10 +99,15 @@ def render_generic(prs, title, df):
             bold = first.endswith(("小計", "合計", "總計"))
             fill = R.GREY if bold else None
             for ci, c in enumerate(cols):
+                v = row[c]
                 if ci == 0:
                     txt, al = first, PP_ALIGN.LEFT
-                else:
-                    txt, al = R.fmt_money(row[c]), PP_ALIGN.RIGHT
+                elif "率" in c:                        # 完成率 → 百分比
+                    txt, al = R.fmt_pct(v), PP_ALIGN.RIGHT
+                elif _is_num(v):
+                    txt, al = R.fmt_money(v), PP_ALIGN.RIGHT
+                else:                                  # 文字欄（e.g. 主要涉及項目）→ 靠左
+                    txt, al = ("" if v is None else str(v)), PP_ALIGN.LEFT
                 R._set(t.cell(ri, ci), txt, size=6.5, bold=bold, align=al,
                        color=(R.RED if txt.startswith("(") else None), fill=fill)
 
@@ -123,20 +136,31 @@ def main():
     else:
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
 
-    # 1) 單個項目審查匯總（計劃年 25/24/23）
+    sdf = S._load(feed, entity)     # 於2025發生 slice（概述 + 金額匯總 共用）
+
+    # ①②③ 概述數字（報告 slide 10-40）
+    for bk in S.BUCKET_ORDER:
+        ov = O.overview_by_bucket(sdf, bk, plan)
+        if not ov.empty:
+            render_generic(prs, f"{ent_up} {bk}整體投資概況", ov.fillna(""))
+    render_generic(prs, f"{ent_up} 報告投資金額的潛在調整事項匯總", O.adjustment_bridge(sdf).fillna(""))
+    fs = O.finding_summary(sdf)
+    if not fs.empty:
+        render_generic(prs, f"{ent_up} 本年度主要發現摘要", fs.fillna(""))
+
+    # ④ 金額匯總 + 設施vs活動（slide 42-45）
+    render_generic(prs, f"{ent_up} 2025年度投資計劃及過往年度期後投資於2025年發生的投資金額匯總",
+                   S.summary_amount(sdf).fillna(""))
+    for bk in S.BUCKET_ORDER:
+        fa = S.facility_activity(sdf, bk)
+        if not fa.empty:
+            render_generic(prs, f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額", fa.fillna(""))
+
+    # ④ 單個項目審查匯總（slide 46-63，計劃年 25/24/23）
     for yr in (25, 24, 23):
         tab, _ = B.build_year(df, yr, plan.get(yr) if plan else None)
         if tab is not None and not tab.empty:
             R.render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns))
-
-    # 2) 金額匯總 + 設施vs活動（於2025發生）
-    sdf = S._load(feed, entity)
-    amt = S.summary_amount(sdf)
-    render_generic(prs, f"{ent_up} 2025年度投資計劃及過往年度期後投資於2025年發生的投資金額匯總", amt.fillna(""))
-    for bk in S.BUCKET_ORDER:
-        fa = S.facility_activity(sdf, bk)
-        if not fa.empty:
-            render_generic(prs, f"{ent_up} {bk} 區分設施建設/活動舉辦的投資金額", fa.fillna(""))
 
     out = Path(f"{entity}_報告數字表.pptx")
     prs.save(out)
