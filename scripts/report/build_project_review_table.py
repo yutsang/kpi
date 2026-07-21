@@ -71,6 +71,17 @@ def _norm(c) -> str:
     return (m.group(1) if m else s).lower()
 
 
+def _plan_year(yb) -> int:
+    """year_bucket → 計劃年份（報告匯總表按計劃年分，唔係支出年）：
+    25→25(2025計劃), 25_24SY→24(2024計劃嘅2025期後), 25_23SY→23, 24→24, 24_23SY→23, 23→23。"""
+    s = str(yb).strip()
+    m = re.search(r"_(\d+)SY", s)          # 有 _NNSY = 該計劃年嘅期後
+    if m:
+        return int(m.group(1))
+    m2 = re.match(r"^(\d{2})", s)
+    return int(m2.group(1)) if m2 else -1
+
+
 def load_plan(path: Path, log=print) -> dict:
     """{報告年: {(is_gaming, 正規化項目編號): 計劃_萬}}（清單 database；博彩/非博彩共用項目N → key 帶 scope）。"""
     import openpyxl
@@ -134,7 +145,8 @@ def _rate(rep, plan):
 
 
 def build_year(df: pd.DataFrame, year: int, plan: dict | None = None):
-    d = df[df["報告年"] == year].copy()
+    # 按計劃年份(plan year)分表：跨年期後(25_24SY 等)落返啱嘅計劃年，唔會爆 2025 表小計
+    d = df[df["_plan_year"] == year].copy()
     # 只留乾淨「項目N」碼（丟 項目CAPEX-5 等 pseudo/分攤碼）
     d = d[d["dicj code"].astype(str).str.match(r"^項目\s*\d")]
     if d.empty:
@@ -235,6 +247,7 @@ def main():
     if entity and "entity" in df.columns:
         df = df[df["entity"].astype(str).str.lower() == entity]
     df["報告年"] = pd.to_numeric(df["報告年"], errors="coerce")
+    df["_plan_year"] = df["year_bucket"].map(_plan_year)     # 計劃年份分表用
 
     plan = None
     if qingdan:
