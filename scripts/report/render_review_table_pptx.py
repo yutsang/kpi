@@ -32,11 +32,15 @@ G1 = ["項目序號", "項目名稱", "計劃投資金額", "報告投資金額"
 G3 = ["調整後投資金額", "潛在調整後投資計劃完成率", "設施建設/資本性支出", "活動舉辦/營運性支出"]
 GROUP_LABEL = {"G1": "項目基本信息", "G2": "投資金額的潛在調整事項", "G3": "潛在調整後投資金額"}
 
-BLUE = RGBColor(0x00, 0x33, 0x8D)        # KPMG 藍（表頭）— 精細 3 色後補
+BLUE = RGBColor(0x00, 0x33, 0x8D)        # KPMG 藍（標題）
 LBLUE = RGBColor(0xD9, 0xE1, 0xF2)       # section 淺藍
-GREY = RGBColor(0xF2, 0xF2, 0xF2)
+GREY = RGBColor(0xE7, 0xE6, 0xE6)        # 小計灰
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 RED = RGBColor(0xC0, 0x00, 0x00)
+# 3 色欄組（more or less 跟報告 IMG）：基本信息=青、潛在調整事項=淺藍、潛在調整後=深藍
+GROUP_FILL = {"G1": RGBColor(0x2E, 0x9B, 0xD6), "G2": RGBColor(0x9D, 0xC3, 0xE6),
+              "G3": RGBColor(0x1F, 0x38, 0x64)}
+GROUP_TEXT = {"G1": WHITE, "G2": RGBColor(0x1F, 0x38, 0x64), "G3": WHITE}
 
 ROWS_PER_SLIDE = 24                       # 每頁資料行（含 section/小計），近報告
 YEAR_TITLE = {
@@ -133,7 +137,7 @@ def render_sheet(prs, sheet_name, df, cols):
                                       Inches(sum(widths)), Inches(0.3 * nrow)).table
         for ci, w in enumerate(widths):
             gtab.columns[ci].width = Inches(w)
-        # header row0：group 合併
+        # header row0：group 合併（3 色）
         ci = 0
         while ci < ncol:
             g = col_group(cols[ci])
@@ -143,12 +147,13 @@ def render_sheet(prs, sheet_name, df, cols):
             if cj > ci:
                 gtab.cell(0, ci).merge(gtab.cell(0, cj))
             _set(gtab.cell(0, ci), GROUP_LABEL[g], size=8, bold=True,
-                 align=PP_ALIGN.CENTER, color=WHITE, fill=BLUE)
+                 align=PP_ALIGN.CENTER, color=GROUP_TEXT[g], fill=GROUP_FILL[g])
             ci = cj + 1
-        # header row1：欄名
+        # header row1：欄名（跟欄組色）
         for ci, c in enumerate(cols):
+            g = col_group(c)
             _set(gtab.cell(1, ci), c, size=6.5, bold=True, align=PP_ALIGN.CENTER,
-                 color=WHITE, fill=BLUE)
+                 color=GROUP_TEXT[g], fill=GROUP_FILL[g])
         # data rows
         for ri, (_, row) in enumerate(sub.iterrows(), start=2):
             kind = row_kind(row["項目序號"])
