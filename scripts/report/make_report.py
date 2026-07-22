@@ -48,6 +48,18 @@ def _is_num(v):
         return False
 
 
+def _load_llm(entity):
+    """有 {entity}_llm_narrative.json（build_llm_narrative.py 出）就用 LLM summary。"""
+    import json
+    p = Path(f"{entity}_llm_narrative.json")
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
 def divider(prs, text):
     """章節分隔頁（navy 底白字），俾 deck 有報告 section 結構。"""
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
@@ -422,10 +434,11 @@ def _prose_2col(prs, title, bullets, per=12):
             _bullets_into(rb, page[half:], size=8)
 
 
-def render_category_overview(prs, ent_up, ov, df, narr):
-    """slide 13-14 按範疇的項目概況：逐範疇「主要包括{清單實際投資內容}。完成率{X}%」。"""
+def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
+    """slide 13-14 按範疇的項目概況：LLM summary 優先，否則清單「主要包括…完成率X%…」。"""
     if not narr:
         return
+    llm_cat = (llm or {}).get("cat", {})
     d = df.copy()
     d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
@@ -435,6 +448,10 @@ def render_category_overview(prs, ent_up, ov, df, narr):
         sub = str(r["範疇"]); rate = r.get("投資計劃完成率")
         if not isinstance(rate, (int, float)) or pd.isna(rate):
             continue
+        if sub in llm_cat and llm_cat[sub]:               # LLM 寫嘅摘要優先
+            txt = llm_cat[sub]
+            txt = txt[len(sub) + 1:] if txt.startswith(sub + "：") else txt
+            bullets.append((f"{sub}：", txt)); continue
         scope = "gaming" if sub.startswith("博彩") else "non_gaming"
         pr = proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False)
         content = reason = ""       # content=清單實際投資內容；reason=清單管理層解釋(變更原因)
@@ -454,10 +471,11 @@ def render_category_overview(prs, ent_up, ov, df, narr):
     _prose_2col(prs, f"{ent_up} 按範疇的項目概況", bullets, 12)
 
 
-def _adj_detail_bullets(ent_up, adj, df, narr):
-    """slide 16-17 潛在調整事項詳述 → 回 bullets：逐類型「（約X萬）：涉及{項目}。{清單分析發現}」。"""
+def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
+    """slide 16-17 潛在調整事項詳述 → 回 bullets：LLM summary 優先，否則清單分析發現。"""
     if not narr:
         return []
+    llm_adj = (llm or {}).get("adj", {})
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
     bullets = []
@@ -468,6 +486,8 @@ def _adj_detail_bullets(ent_up, adj, df, narr):
         amt = r.get("合計", 0)
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
+        if t in llm_adj and llm_adj[t]:                   # LLM 寫嘅摘要優先
+            bullets.append((f"{t}（約{abs(amt):,.0f}萬澳門元）：", llm_adj[t])); continue
         sub = d[(d["_adj"] == t) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
             continue
@@ -545,6 +565,9 @@ def main():
     narr = N.load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
+    llm = _load_llm(entity)     # {entity}_llm_narrative.json（build_llm_narrative.py 出）有就用 LLM 文字
+    if llm:
+        print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
 
     prs = Presentation()
     if template:
@@ -564,12 +587,12 @@ def main():
         exb = _exec_bullets(ent_up, ov)
         render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 2025年度計劃的整體投資支出及執行概況",
                              hl, ov.fillna(""), hlb + exb)
-        render_category_overview(prs, ent_up, ov, sdf, narr)   # slide 13-14 逐範疇概況（敘述）
+        render_category_overview(prs, ent_up, ov, sdf, narr, llm)   # slide 13-14 逐範疇概況（LLM 優先）
     ahl, ab = _adj_summary(ent_up, adj)      # slide 15：表左 + 匯總敘述右
     render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 報告投資金額的潛在調整事項匯總",
                          ahl, adj.fillna(""), ab)
     _prose_2col(prs, f"{ent_up} 2025年度報告投資金額的潛在調整事項（詳述）",
-                _adj_detail_bullets(ent_up, adj, sdf, narr), 6)   # slide 16-17 詳述（2 欄）
+                _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6)   # slide 16-17 詳述（LLM 優先）
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
