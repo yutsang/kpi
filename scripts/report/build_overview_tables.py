@@ -66,8 +66,8 @@ def overview_by_bucket(df, bucket, plan):
 
     plan_by_sub = {}
     if is_py and plan:
-        sub_of = {}
-        for _, r in d.drop_duplicates("dicj code").iterrows():
+        sub_of = {}       # (gaming,碼)→範疇；博彩/非博彩共用項目N 都要留（唔可以 drop 淨 code）
+        for _, r in d.drop_duplicates(["ng_scope", "dicj code"]).iterrows():
             sub_of[(r["ng_scope"] == "gaming", B._norm(r["dicj code"]))] = r["_sub"]
         for (gm, code), v in (plan.get(yr, {}) or {}).items():
             sub = sub_of.get((gm, code))
