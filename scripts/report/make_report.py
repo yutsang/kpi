@@ -79,76 +79,112 @@ def _find(dirp, entity, ext, prefer=None):
     return cands[0]
 
 
-def render_generic(prs, title, df):
-    """render 一張表（範疇/項目 + 數字欄；欄名有『·』= 2-row group header）。報告配色 IMG_0105。"""
+def _draw_table(slide, df, x, y, max_w, font=7):
+    """喺 slide (x,y) 畫 navy 表（單 chunk，caller 自行分頁）。max_w=可用闊(吋)。"""
     cols = list(df.columns)
     grouped = any("·" in c for c in cols)
-    n = len(df)
-    ROWS = 28
+    ncol = len(cols)
+    hrows = 2 if grouped else 1
+    widths = [1.9 if c in ("範疇", "項目名稱", "潛在調整事項") else
+              (2.6 if c == "主要涉及項目" else 0.92) for c in cols]
+    scale = min(1.0, max_w / sum(widths))
+    widths = [w * scale for w in widths]
+
+    def hdr(cell, text, align=PP_ALIGN.CENTER):
+        R._set(cell, text, size=font, bold=True, align=align, color=R.WHITE, fill=HDR)
+    t = slide.shapes.add_table(hrows + len(df), ncol, Inches(x), Inches(y),
+                               Inches(sum(widths)), Inches(0.3 * (hrows + len(df)))).table
+    for ci, w in enumerate(widths):
+        t.columns[ci].width = Inches(w)
+    if grouped:
+        groups = [c.split("·")[0] if "·" in c else c for c in cols]
+        t.cell(0, 0).merge(t.cell(1, 0)); hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
+        ci = 1
+        while ci < ncol:
+            gg = groups[ci]; cj = ci
+            while cj + 1 < ncol and groups[cj + 1] == gg:
+                cj += 1
+            if cj > ci:
+                t.cell(0, ci).merge(t.cell(0, cj))
+            hdr(t.cell(0, ci), gg)
+            ci = cj + 1
+        for ci, c in enumerate(cols[1:], start=1):
+            hdr(t.cell(1, ci), c.split("·")[1] if "·" in c else c)
+    else:
+        hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
+        for ci, c in enumerate(cols[1:], start=1):
+            hdr(t.cell(0, ci), c)
+    for ri, (_, row) in enumerate(df.iterrows(), start=hrows):
+        first = str(row[cols[0]]).strip()
+        if all(str(row[c]).strip() == "" for c in cols[1:]):
+            for ci in range(ncol):
+                R._set(t.cell(ri, ci), first if ci == 0 else "", size=font, bold=True,
+                       align=PP_ALIGN.LEFT, fill=SEC)
+            continue
+        is_tot = first.endswith("總計")
+        is_sub = is_tot or first.endswith(("小計", "合計"))
+        fill = TOT if is_tot else (SUB if is_sub else None)
+        for ci, c in enumerate(cols):
+            v = row[c]
+            if ci == 0:
+                txt, al = first, PP_ALIGN.LEFT
+            elif "率" in c:
+                txt, al = R.fmt_pct(v), PP_ALIGN.RIGHT
+            elif _is_num(v):
+                txt, al = R.fmt_money(v), PP_ALIGN.RIGHT
+            else:
+                txt, al = ("" if v is None else str(v)), PP_ALIGN.LEFT
+            R._set(t.cell(ri, ci), txt, size=font, bold=is_sub, align=al,
+                   color=(R.RED if txt.startswith("(") else None), fill=fill)
+
+
+def _bullets_into(box, bullets, size=8):
+    tf = box.text_frame; tf.word_wrap = True
+    for i, (head, body) in enumerate(bullets):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.space_after = Pt(6)
+        rm = p.add_run(); rm.text = "■ "; rm.font.size = Pt(size); rm.font.color.rgb = HDR
+        if head:
+            rh = p.add_run(); rh.text = head
+            rh.font.bold = True; rh.font.size = Pt(size); rh.font.color.rgb = HDR
+            rh.font.name = "Microsoft JhengHei"
+        rt = p.add_run(); rt.text = body
+        rt.font.size = Pt(size); rt.font.name = "Microsoft JhengHei"
+
+
+def render_overview_page(prs, subtitle, headline, table_df, bullets):
+    """報告概述式 2 欄版：頂 subtitle + navy headline，左 表，右 敘述。"""
+    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    slide_w = prs.slide_width / 914400.0
+    slide = prs.slides.add_slide(blank)
+    st = slide.shapes.add_textbox(Inches(0.4), Inches(0.14), Inches(slide_w - 0.8), Inches(0.24))
+    sp = st.text_frame.paragraphs[0]; sr = sp.add_run(); sr.text = subtitle
+    sr.font.size = Pt(9); sr.font.color.rgb = RGBColor(0x60, 0x60, 0x60); sr.font.name = "Microsoft JhengHei"
+    if headline:
+        hb = slide.shapes.add_textbox(Inches(0.4), Inches(0.4), Inches(slide_w - 0.8), Inches(1.0))
+        htf = hb.text_frame; htf.word_wrap = True
+        hr = htf.paragraphs[0].add_run(); hr.text = headline
+        hr.font.bold = True; hr.font.size = Pt(11); hr.font.color.rgb = HDR; hr.font.name = "Microsoft JhengHei"
+    top = 1.5 if headline else 0.6
+    left_w = 5.5
+    if table_df is not None and not table_df.empty:
+        _draw_table(slide, table_df, 0.4, top, left_w, font=6.5)
+    rx = 0.4 + left_w + 0.2
+    box = slide.shapes.add_textbox(Inches(rx), Inches(top), Inches(slide_w - rx - 0.3), Inches(6.6 - top))
+    _bullets_into(box, bullets, size=8)
+
+
+def render_generic(prs, title, df):
+    """單張表（範疇/項目 + 數字欄；·=2-row group header），自行分頁。"""
+    n = len(df); ROWS = 28
     pages = [(i, min(i + ROWS, n)) for i in range(0, n, ROWS)] or [(0, 0)]
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
     slide_w = prs.slide_width / 914400.0
-    widths = [1.9 if c in ("範疇", "項目名稱", "潛在調整事項") else
-              (2.6 if c == "主要涉及項目" else 0.92) for c in cols]
-    scale = min(1.0, (slide_w - 0.8) / sum(widths))
-    widths = [w * scale for w in widths]
-    hrows = 2 if grouped else 1
-    ncol = len(cols)
-
-    def hdr(cell, text, align=PP_ALIGN.CENTER):
-        R._set(cell, text, size=7, bold=True, align=align, color=R.WHITE, fill=HDR)
-
     for pi, (a, b) in enumerate(pages):
         slide = prs.slides.add_slide(blank)
         tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
         R._set_title(tb, f"{title}（{pi+1}/{len(pages)}）" if len(pages) > 1 else title)
-        sub = df.iloc[a:b]
-        t = slide.shapes.add_table(hrows + len(sub), ncol, Inches(0.4), Inches(0.72),
-                                   Inches(sum(widths)), Inches(0.3 * (hrows + len(sub)))).table
-        for ci, w in enumerate(widths):
-            t.columns[ci].width = Inches(w)
-        # navy 表頭 + 左上角「萬澳門元」
-        if grouped:
-            groups = [c.split("·")[0] if "·" in c else c for c in cols]
-            t.cell(0, 0).merge(t.cell(1, 0)); hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
-            ci = 1
-            while ci < ncol:
-                gg = groups[ci]; cj = ci
-                while cj + 1 < ncol and groups[cj + 1] == gg:
-                    cj += 1
-                if cj > ci:
-                    t.cell(0, ci).merge(t.cell(0, cj))
-                hdr(t.cell(0, ci), gg)
-                ci = cj + 1
-            for ci, c in enumerate(cols[1:], start=1):
-                hdr(t.cell(1, ci), c.split("·")[1] if "·" in c else c)
-        else:
-            hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
-            for ci, c in enumerate(cols[1:], start=1):
-                hdr(t.cell(0, ci), c)
-        # data rows：section 標題 / 小計 / 總計 / 一般
-        for ri, (_, row) in enumerate(sub.iterrows(), start=hrows):
-            first = str(row[cols[0]]).strip()
-            if all(str(row[c]).strip() == "" for c in cols[1:]):        # section 標題行
-                for ci in range(ncol):
-                    R._set(t.cell(ri, ci), first if ci == 0 else "", size=7, bold=True,
-                           align=PP_ALIGN.LEFT, fill=SEC)
-                continue
-            is_tot = first.endswith("總計")
-            is_sub = is_tot or first.endswith(("小計", "合計"))
-            fill = TOT if is_tot else (SUB if is_sub else None)
-            for ci, c in enumerate(cols):
-                v = row[c]
-                if ci == 0:
-                    txt, al = first, PP_ALIGN.LEFT
-                elif "率" in c:
-                    txt, al = R.fmt_pct(v), PP_ALIGN.RIGHT
-                elif _is_num(v):
-                    txt, al = R.fmt_money(v), PP_ALIGN.RIGHT
-                else:
-                    txt, al = ("" if v is None else str(v)), PP_ALIGN.LEFT
-                R._set(t.cell(ri, ci), txt, size=7, bold=is_sub, align=al,
-                       color=(R.RED if txt.startswith("(") else None), fill=fill)
+        _draw_table(slide, df.iloc[a:b], 0.4, 0.72, slide_w - 0.8, font=7)
 
 
 def _finding_body(box, find, mgmt, grey):
@@ -302,11 +338,11 @@ def _prose_slide(prs, title, bullets, headline=None):
         rt.font.size = Pt(10); rt.font.name = "Microsoft JhengHei"
 
 
-def render_overview_headline(prs, ent_up, ov, df, plan):
-    """slide 10 整體投資支出概況 headline：計劃→報告→調整後、項目數、調整，全 mechanical 由數字生成。"""
+def _headline(ent_up, ov, df, plan):
+    """slide 10 整體投資支出概況 → 回 (headline 句, bullets)。全 mechanical 由數字生成。"""
     tot = ov[ov["範疇"] == "總計"]
     if not len(tot):
-        return
+        return "", []
     r = tot.iloc[0]
 
     def num(x):
@@ -342,7 +378,7 @@ def render_overview_headline(prs, ent_up, ov, df, plan):
          f"（涉及{n_adj}個投資項目，合計約{yi(adj_amt)}億澳門元）。考慮潛在調減事項後，{ent_up} 2025年度投資支出金額"
          f"約{yi(after_amt)}億澳門元，投資計劃金額完成率應為{_pct(after_rate)}。"),
     ]
-    _prose_slide(prs, f"{ent_up} 2025年度計劃的整體投資支出概況", bullets, headline=headline)
+    return headline, bullets
 
 
 def _pct(v):
@@ -397,10 +433,10 @@ def render_category_overview(prs, ent_up, ov, df, narr):
     _prose_paginated(prs, f"{ent_up} 按範疇的項目概況", bullets, 7)
 
 
-def render_adj_detail(prs, ent_up, adj, df, narr):
-    """slide 16-17 潛在調整事項詳述：逐類型「（約X萬）：涉及{項目}。{清單分析發現}」。"""
+def _adj_detail_bullets(ent_up, adj, df, narr):
+    """slide 16-17 潛在調整事項詳述 → 回 bullets：逐類型「（約X萬）：涉及{項目}。{清單分析發現}」。"""
     if not narr:
-        return
+        return []
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
     bullets = []
@@ -424,11 +460,11 @@ def render_adj_detail(prs, ent_up, adj, df, narr):
         r2 = (reason[:160] + "…") if len(reason) > 160 else reason
         body = f"主要涉及{names}等項目。{r2}" if r2 else f"主要涉及{names}等項目。"
         bullets.append((f"{t}（約{abs(amt):,.0f}萬澳門元）：", body))
-    _prose_paginated(prs, f"{ent_up} 報告投資金額的潛在調整事項（詳述）", bullets, 4)
+    return bullets
 
 
-def render_exec_prose(prs, ent_up, ov):
-    """整體執行概況敘述（報告 slide 11-14）：完成率高/低範疇，全部由 overview 數字生成。"""
+def _exec_bullets(ent_up, ov):
+    """整體執行概況敘述（報告 slide 11）：完成率高/低範疇，全部由 overview 數字生成 → 回 bullets。"""
     g = _rate_of(ov, "博彩項目小計", "投資計劃完成率")
     ng = _rate_of(ov, "非博彩項目小計", "投資計劃完成率")
     tot = _rate_of(ov, "總計", "投資計劃完成率")
@@ -448,15 +484,16 @@ def render_exec_prose(prs, ent_up, ov):
         ("報告投資金額完成率較高的範疇包括：", f"{high_s}。"),
         ("報告投資金額完成率相對較低的範疇包括：", f"{low_s}。"),
     ]
-    _prose_slide(prs, f"{ent_up} 2025年度投資項目的整體執行概況", bullets)
+    return bullets
 
 
-def render_adj_prose(prs, ent_up, adj):
-    """潛在調整事項匯總敘述（報告 slide 16-17）：逐調整類型 + 金額，由 adjustment_bridge 生成。"""
+def _adj_summary(ent_up, adj):
+    """潛在調整事項匯總（報告 slide 15）→ 回 (headline, bullets)。逐類型金額。"""
     tot_row = adj[adj["潛在調整事項"] == "合計"]
     total = tot_row.iloc[0]["合計"] if len(tot_row) else 0
-    bullets = [("", f"{ent_up}於2025年度報告投資金額中，經審查識別出潛在調整事項合計約"
-                    f"{abs(total):,.0f}萬澳門元，主要涉及以下類型：")]
+    headline = (f"基於各項審查程序，我們認為{ent_up}報告的2025年度投資金額中存在多類潛在調整事項，"
+                f"潛在調減投資金額約{abs(total):,.0f}萬澳門元，主要涉及以下類型：")
+    bullets = []
     for _, r in adj.iterrows():
         name = r["潛在調整事項"]
         if name == "合計":
@@ -465,7 +502,7 @@ def render_adj_prose(prs, ent_up, adj):
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
         bullets.append((f"{name}：", f"約{abs(amt):,.0f}萬澳門元。"))
-    _prose_slide(prs, f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總", bullets)
+    return headline, bullets
 
 
 def main():
@@ -501,14 +538,17 @@ def main():
     divider(prs, "一、2025年度投資計劃執行情況概述")
     ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan)
     adj = O.adjustment_bridge(sdf)
-    if not ov.empty:
-        render_overview_headline(prs, ent_up, ov, sdf, plan)   # slide 10 整體投資支出概況
-        render_generic(prs, f"{ent_up} 2025年度投資項目的整體執行概況", ov.fillna(""))
-        render_exec_prose(prs, ent_up, ov)              # slide 11 執行概況敘述
-        render_category_overview(prs, ent_up, ov, sdf, narr)   # slide 13-14 逐範疇概況
-    render_generic(prs, f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總", adj.fillna(""))
-    render_adj_prose(prs, ent_up, adj)                   # slide 15 調整匯總敘述
-    render_adj_detail(prs, ent_up, adj, sdf, narr)       # slide 16-17 調整事項詳述
+    if not ov.empty:      # slide 10-11：表左 + headline/執行敘述右（報告 2 欄式）
+        hl, hlb = _headline(ent_up, ov, sdf, plan)
+        exb = _exec_bullets(ent_up, ov)
+        render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 2025年度計劃的整體投資支出及執行概況",
+                             hl, ov.fillna(""), hlb + exb)
+        render_category_overview(prs, ent_up, ov, sdf, narr)   # slide 13-14 逐範疇概況（敘述）
+    ahl, ab = _adj_summary(ent_up, adj)      # slide 15：表左 + 匯總敘述右
+    render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 報告投資金額的潛在調整事項匯總",
+                         ahl, adj.fillna(""), ab)
+    _prose_paginated(prs, f"{ent_up} 2025年度報告投資金額的潛在調整事項（詳述）",
+                     _adj_detail_bullets(ent_up, adj, sdf, narr), 4)   # slide 16-17 詳述
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
