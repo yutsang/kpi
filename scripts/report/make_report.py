@@ -380,14 +380,19 @@ def render_category_overview(prs, ent_up, ov, df, narr):
         if not isinstance(rate, (int, float)) or pd.isna(rate):
             continue
         pr = proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False)
-        content = ""
+        content = reason = ""       # content=清單實際投資內容；reason=清單管理層解釋(變更原因)
         for _, pp in pr.iterrows():
-            c = narr.get(N._norm_code(pp["dicj code"]), {}).get("實際投資內容", "")
-            if c:
-                content = c; break
-        summ = (content[:100] + "…") if len(content) > 100 else content
-        body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}。" if summ
-                else f"投資計劃金額完成率為{_pct(rate)}。")
+            nr = narr.get(N._norm_code(pp["dicj code"]), {})
+            if not content:
+                content = nr.get("實際投資內容", "")
+            if not reason:
+                reason = nr.get("管理層解釋", "") or nr.get("KPMG分析發現", "")
+            if content and reason:
+                break
+        summ = (content[:90] + "…") if len(content) > 90 else content
+        rsn = ("，主要由於" + (reason[:80] + "…" if len(reason) > 80 else reason)) if reason else ""
+        body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
+                else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
         bullets.append((f"{sub}：", body))
     _prose_paginated(prs, f"{ent_up} 按範疇的項目概況", bullets, 7)
 
