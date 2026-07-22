@@ -444,24 +444,30 @@ def _prose_paginated(prs, title, bullets, per):
         _prose_slide(prs, t, page)
 
 
-def _prose_2col(prs, title, bullets, per=12):
-    """報告式 2 欄敘述（每頁 per 個 bullet，左右各半）。"""
+def _prose_2col(prs, title, bullets, per=12, subtitle=None):
+    """報告式 2 欄敘述（每頁 per 個 bullet，左右各半）。subtitle=標題下灰色小註。"""
     if not bullets:
         return
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
     slide_w = prs.slide_width / 914400.0
     colw = (slide_w - 1.0) / 2 - 0.1
+    top = 0.95 if subtitle else 0.85
     pages = [bullets[i:i + per] for i in range(0, len(bullets), per)]
     for pi, page in enumerate(pages):
         slide = prs.slides.add_slide(blank)
         _furniture(prs, slide, 0)
         tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.4))
         R._set_title(tb, title + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
+        if subtitle:
+            sb = slide.shapes.add_textbox(Inches(0.4), Inches(0.68), Inches(slide_w - 0.8), Inches(0.24))
+            sr = sb.text_frame.paragraphs[0].add_run(); sr.text = subtitle
+            sr.font.size = Pt(8); sr.font.italic = True
+            sr.font.color.rgb = RGBColor(0x70, 0x70, 0x70); sr.font.name = "Microsoft JhengHei"
         half = (len(page) + 1) // 2
-        lb = slide.shapes.add_textbox(Inches(0.4), Inches(0.85), Inches(colw), Inches(5.9))
+        lb = slide.shapes.add_textbox(Inches(0.4), Inches(top), Inches(colw), Inches(6.0 - top + 0.85))
         _bullets_into(lb, page[:half], size=8)
         if page[half:]:
-            rb = slide.shapes.add_textbox(Inches(0.4 + colw + 0.2), Inches(0.85), Inches(colw), Inches(5.9))
+            rb = slide.shapes.add_textbox(Inches(0.4 + colw + 0.2), Inches(top), Inches(colw), Inches(6.0 - top + 0.85))
             _bullets_into(rb, page[half:], size=8)
 
 
@@ -491,7 +497,7 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
             if not content:
                 content = nr.get("實際投資內容", "")
             if not reason:
-                reason = nr.get("管理層解釋", "") or nr.get("KPMG分析發現", "")
+                reason = nr.get("管理層解釋", "")   # 業務原因；唔用 KPMG分析發現（審計腔）
             if content and reason:
                 break
         summ = (content[:90] + "…") if len(content) > 90 else content
@@ -499,7 +505,8 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
                 else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
         bullets.append((f"{sub}：", body))
-    _prose_2col(prs, f"{ent_up} 按範疇的項目概況", bullets, 12)
+    _prose_2col(prs, f"{ent_up} 按範疇的項目概況", bullets, 12,
+                subtitle="若無特別說明，以下為承批公司2025年度投資執行報告的信息")
 
 
 def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
