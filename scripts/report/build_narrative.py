@@ -43,6 +43,21 @@ def _norm_code(v):
     return m.group(1) if m else s
 
 
+_PLACEHOLDER_RE = re.compile(r"參閱附件|請參閱|見附件|同附件|詳見|組織架構進展|^n/?a$|^-+$")
+
+
+def _is_placeholder(s):
+    s = str(s).strip()
+    return len(s) < 8 or bool(_PLACEHOLDER_RE.search(s))
+
+
+def nlook(narr, ng_scope, code):
+    """由 (ng_scope, dicj code) 揾清單 rec —— 處理博彩/非博彩共用項目N 撞號（先試 exact）。"""
+    g = (ng_scope == "gaming")
+    c = _norm_code(code)
+    return narr.get((g, c)) or narr.get((not g, c)) or {}
+
+
 OUT_COLS = ["項目序號", "項目名稱", "項目類型"] + [n for n, _ in CONCEPTS]
 
 
@@ -84,18 +99,24 @@ def load_narrative(path, log=lambda *a: None) -> dict:
         code = _norm_code(row[code_c]) if code_c < len(row) else ""
         if not code:
             continue
+        ptype = (row[type_c] if type_c is not None and type_c < len(row) else "") or ""
+        gaming = str(ptype).strip().startswith("博彩")     # 博彩/非博彩 共用項目N → key 帶 gaming
         rec = {"項目序號": f"項目{code}",
                "項目名稱": (row[name_c] if name_c is not None and name_c < len(row) else "") or "",
-               "項目類型": (row[type_c] if type_c is not None and type_c < len(row) else "") or ""}
+               "項目類型": ptype}
         for name, _ in CONCEPTS:
             vals = []
             for ci in concept_cols[name]:
                 if ci < len(row) and row[ci] not in (None, "", 0, "0"):
                     sv = str(row[ci]).strip()
-                    if sv and sv not in vals and sv.lower() not in ("n/a", "nan"):
+                    if not sv or sv.lower() in ("n/a", "nan"):
+                        continue
+                    if name in ("實際投資內容", "計劃投資內容") and _is_placeholder(sv):
+                        continue                            # 跳 「參閱附件/請參閱/見附件」等 placeholder
+                    if sv not in vals:
                         vals.append(sv)
             rec[name] = vals[-1] if vals else ""
-        out.setdefault(code, rec)
+        out.setdefault((gaming, code), rec)                 # key = (博彩?, 正規化碼)
     return out
 
 

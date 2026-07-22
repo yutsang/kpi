@@ -219,12 +219,12 @@ def render_findings(prs, ent_up, df, narr):
         sub = d[(d["_adj"] == adj) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
             continue
-        projs = sub.groupby("dicj code").agg(名稱=("project", "first"), 報告=("調整前_萬", "sum"),
-                                             調整=("調整_萬", "sum")).reset_index()
+        projs = sub.groupby(["ng_scope", "dicj code"]).agg(名稱=("project", "first"),
+                             報告=("調整前_萬", "sum"), 調整=("調整_萬", "sum")).reset_index()
         projs = projs.reindex(projs["調整"].abs().sort_values(ascending=False).index)
         recs = []
         for _, p in projs.iterrows():
-            nr = narr.get(N._norm_code(p["dicj code"]), {})
+            nr = N.nlook(narr, p["ng_scope"], p["dicj code"])
             recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"], p["調整"],
                          nr.get("KPMG分析發現", ""), nr.get("管理層解釋", "")))
         pages = [recs[i:i + 2] for i in range(0, len(recs), 2)]
@@ -269,7 +269,7 @@ def render_site_visits(prs, ent_up, df, narr, threshold=2000):
     grey = RGBColor(0x40, 0x40, 0x40)
     recs = []
     for _, p in g.iterrows():
-        nr = narr.get(N._norm_code(p["dicj code"]), {})
+        nr = N.nlook(narr, p["ng_scope"], p["dicj code"])
         recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"],
                      nr.get("實施地點", ""), nr.get("實際投資內容", "")))
     pages = [recs[i:i + 2] for i in range(0, len(recs), 2)]
@@ -402,6 +402,26 @@ def _prose_paginated(prs, title, bullets, per):
         _prose_slide(prs, t, page)
 
 
+def _prose_2col(prs, title, bullets, per=12):
+    """報告式 2 欄敘述（每頁 per 個 bullet，左右各半）。"""
+    if not bullets:
+        return
+    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    slide_w = prs.slide_width / 914400.0
+    colw = (slide_w - 1.0) / 2 - 0.1
+    pages = [bullets[i:i + per] for i in range(0, len(bullets), per)]
+    for pi, page in enumerate(pages):
+        slide = prs.slides.add_slide(blank)
+        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
+        R._set_title(tb, title + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
+        half = (len(page) + 1) // 2
+        lb = slide.shapes.add_textbox(Inches(0.4), Inches(0.8), Inches(colw), Inches(6.0))
+        _bullets_into(lb, page[:half], size=8)
+        if page[half:]:
+            rb = slide.shapes.add_textbox(Inches(0.4 + colw + 0.2), Inches(0.8), Inches(colw), Inches(6.0))
+            _bullets_into(rb, page[half:], size=8)
+
+
 def render_category_overview(prs, ent_up, ov, df, narr):
     """slide 13-14 按範疇的項目概況：逐範疇「主要包括{清單實際投資內容}。完成率{X}%」。"""
     if not narr:
@@ -415,10 +435,11 @@ def render_category_overview(prs, ent_up, ov, df, narr):
         sub = str(r["範疇"]); rate = r.get("投資計劃完成率")
         if not isinstance(rate, (int, float)) or pd.isna(rate):
             continue
+        scope = "gaming" if sub.startswith("博彩") else "non_gaming"
         pr = proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False)
         content = reason = ""       # content=清單實際投資內容；reason=清單管理層解釋(變更原因)
         for _, pp in pr.iterrows():
-            nr = narr.get(N._norm_code(pp["dicj code"]), {})
+            nr = N.nlook(narr, scope, pp["dicj code"])
             if not content:
                 content = nr.get("實際投資內容", "")
             if not reason:
@@ -430,7 +451,7 @@ def render_category_overview(prs, ent_up, ov, df, narr):
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
                 else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
         bullets.append((f"{sub}：", body))
-    _prose_paginated(prs, f"{ent_up} 按範疇的項目概況", bullets, 7)
+    _prose_2col(prs, f"{ent_up} 按範疇的項目概況", bullets, 12)
 
 
 def _adj_detail_bullets(ent_up, adj, df, narr):
@@ -452,8 +473,8 @@ def _adj_detail_bullets(ent_up, adj, df, narr):
             continue
         names = "、".join(str(x) for x in sub.groupby("dicj code")["project"].first().tolist()[:3])
         reason = ""
-        for code in sub["dicj code"].drop_duplicates():
-            nr = narr.get(N._norm_code(code), {})
+        for _, pp in sub.drop_duplicates("dicj code").iterrows():
+            nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
             f = nr.get("KPMG分析發現", "") or nr.get("調整事項備註", "")
             if f:
                 reason = f; break
@@ -547,8 +568,8 @@ def main():
     ahl, ab = _adj_summary(ent_up, adj)      # slide 15：表左 + 匯總敘述右
     render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 報告投資金額的潛在調整事項匯總",
                          ahl, adj.fillna(""), ab)
-    _prose_paginated(prs, f"{ent_up} 2025年度報告投資金額的潛在調整事項（詳述）",
-                     _adj_detail_bullets(ent_up, adj, sdf, narr), 4)   # slide 16-17 詳述
+    _prose_2col(prs, f"{ent_up} 2025年度報告投資金額的潛在調整事項（詳述）",
+                _adj_detail_bullets(ent_up, adj, sdf, narr), 6)   # slide 16-17 詳述（2 欄）
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
