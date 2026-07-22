@@ -30,6 +30,7 @@ import build_summary_tables as S
 import build_project_review_table as B
 import build_overview_tables as O
 import build_narrative as N
+import biao2 as B2
 from kpi.lib.workbench import Workbench
 
 SYS = ("你係畢馬威（KPMG）投資計劃執行情況審查報告嘅專業撰稿員。用【繁體中文】書面語，"
@@ -42,25 +43,30 @@ SYS = ("你係畢馬威（KPMG）投資計劃執行情況審查報告嘅專業�
 
 def _adj_prompt(adj_type, amt_wan, projects):
     lines = [f"潛在調整類型：{adj_type}", f"涉及潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元", "涉及項目及審查發現："]
-    for name, find, mgmt in projects[:6]:
+    for name, find, mgmt, b2 in projects[:6]:
         seg = f"- 項目「{name}」"
         if find:
             seg += f"；KPMG分析發現：{find[:320]}"
         if mgmt:
             seg += f"；管理層解釋：{mgmt[:220]}"
+        if b2:
+            seg += f"；審查底稿（表2）補充：{b2[:320]}"
         lines.append(seg)
     ctx = "\n".join(lines)
-    return (f"以下係一項『潛在調整事項』嘅底層資料。請寫一段報告摘要（約100-180字），"
-            f"說明該調整類型、金額、主要涉及嘅投資項目同調減原因（綜合 KPMG 分析與管理層解釋），"
-            f"並帶出審查建議（通常為建議剔除／調減）。\n\n{ctx}")
+    return (f"以下係一項『潛在調整事項』嘅底層資料（來自項目清單同審查底稿表2兩個來源）。"
+            f"請寫一段報告摘要（約100-180字），說明該調整類型、金額、主要涉及嘅投資項目同調減原因"
+            f"（綜合 KPMG 分析、管理層解釋與表2 補充），並帶出審查建議（通常為建議剔除／調減）。\n\n{ctx}")
 
 
-def _cat_prompt(sub, rate_pct, content, reason):
+def _cat_prompt(sub, rate_pct, content, reason, b2=""):
     ctx = (f"投資範疇：{sub}\n投資計劃金額完成率：{rate_pct}\n"
-           f"該範疇實際投資內容：{content[:450]}\n管理層解釋／變更原因：{reason[:320]}")
+           f"該範疇實際投資內容（項目清單）：{content[:450]}\n"
+           f"管理層解釋／變更原因：{reason[:320]}\n"
+           f"審查底稿（表2）補充：{b2[:480]}")
     return (f"請為投資執行概況寫一句『按範疇的項目概況』（約60-130字），"
             f"格式類似「{sub}：主要包括……。投資計劃金額完成率為{rate_pct}，主要由於……」，"
-            f"綜合實際投資內容同完成率原因。\n\n{ctx}")
+            f"綜合兩個來源（項目清單實際投資內容 + 表2 補充）同完成率原因；"
+            f"表2 補充如有具體投資內容／子項目，請善用。\n\n{ctx}")
 
 
 def _gen(wb, prompt, effort):
@@ -70,11 +76,12 @@ def _gen(wb, prompt, effort):
 def main():
     args = sys.argv[1:]
     entity = qingdan = model = None
+    biao2_dir = "data/表2"
     workers = 3
     cfg_only = "--config" in args
     if cfg_only:
         args.remove("--config")
-    for flag in ("--entity", "--qingdan", "--model", "--workers"):
+    for flag in ("--entity", "--qingdan", "--model", "--workers", "--biao2"):
         if flag in args:
             i = args.index(flag); val = args[i + 1]; del args[i:i + 2]
             if flag == "--entity":
@@ -85,6 +92,8 @@ def main():
                 model = val
             elif flag == "--workers":
                 workers = int(val)
+            elif flag == "--biao2":
+                biao2_dir = val
     wb = Workbench(model=model)
     print("Workbench config（key 遮蔽）:")
     for k, v in wb.config_masked().items():
@@ -96,6 +105,7 @@ def main():
 
     df = S._load(Path(args[0]), entity)
     narr = N.load_narrative(Path(qingdan)) if qingdan else {}
+    b2 = B2.load_biao2(biao2_dir, entity or "", log=print)
     plan = B.load_plan(Path(qingdan)) if qingdan else None
     ov = O.overview_by_bucket(df, "2025年度投資計劃", plan)
     adj = O.adjustment_bridge(df)
@@ -115,7 +125,8 @@ def main():
         projs = []
         for _, pp in sub.drop_duplicates("dicj code").iterrows():
             nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
-            projs.append((str(pp["project"]), nr.get("KPMG分析發現", ""), nr.get("管理層解釋", "")))
+            b2t = B2.b2look(b2, pp["ng_scope"], pp["dicj code"])
+            projs.append((str(pp["project"]), nr.get("KPMG分析發現", ""), nr.get("管理層解釋", ""), b2t))
         tasks.append(("adj", t, _adj_prompt(t, amt, projs), "medium"))
 
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
@@ -124,14 +135,16 @@ def main():
         if not isinstance(rate, (int, float)) or pd.isna(rate):
             continue
         scope = "gaming" if sub.startswith("博彩") else "non_gaming"
-        content = reason = ""
+        content = reason = b2t = ""
         for _, pp in proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False).iterrows():
             nr = N.nlook(narr, scope, pp["dicj code"])
             content = content or nr.get("實際投資內容", "")
             reason = reason or nr.get("管理層解釋", "") or nr.get("KPMG分析發現", "")
-            if content and reason:
+            if not b2t:
+                b2t = B2.b2look(b2, scope, pp["dicj code"])
+            if content and reason and b2t:
                 break
-        tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason), "low"))
+        tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low"))
 
     print(f"\n（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
     out = {"adj": {}, "cat": {}}
