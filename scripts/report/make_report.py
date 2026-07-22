@@ -60,6 +60,34 @@ def _load_llm(entity):
     return {}
 
 
+SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
+            "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
+
+
+def _furniture(prs, slide, section_idx=0):
+    """報告版面 furniture：頂 nav tabs（當前 section 加粗 navy）+ 底 KPMG copyright + 初稿 + 頁碼。"""
+    slide_w = prs.slide_width / 914400.0
+    slide_h = prs.slide_height / 914400.0
+    grey = RGBColor(0x8C, 0x8C, 0x8C)
+    x = 0.5
+    for i, s in enumerate(SECTIONS):
+        w = len(s) * 0.088 + 0.15
+        tb = slide.shapes.add_textbox(Inches(x), Inches(0.04), Inches(w), Inches(0.2))
+        r = tb.text_frame.paragraphs[0].add_run(); r.text = s
+        r.font.size = Pt(6.5); r.font.name = "Microsoft JhengHei"
+        r.font.bold = (i == section_idx)
+        r.font.color.rgb = HDR if i == section_idx else grey
+        x += w + 0.1
+    ft = slide.shapes.add_textbox(Inches(0.5), Inches(slide_h - 0.34), Inches(slide_w - 1.6), Inches(0.28))
+    fr = ft.text_frame.paragraphs[0].add_run()
+    fr.text = "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。"
+    fr.font.size = Pt(6); fr.font.color.rgb = grey; fr.font.name = "Microsoft JhengHei"
+    pg = slide.shapes.add_textbox(Inches(slide_w - 1.05), Inches(slide_h - 0.34), Inches(0.9), Inches(0.28))
+    pr = pg.text_frame.paragraphs[0].add_run()
+    pr.text = f"初稿　{len(prs.slides._sldIdLst)}"
+    pr.font.size = Pt(8); pr.font.bold = True; pr.font.color.rgb = HDR; pr.font.name = "Microsoft JhengHei"
+
+
 def divider(prs, text):
     """章節分隔頁（navy 底白字），俾 deck 有報告 section 結構。"""
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
@@ -169,11 +197,12 @@ def render_overview_page(prs, subtitle, headline, table_df, bullets):
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
     slide_w = prs.slide_width / 914400.0
     slide = prs.slides.add_slide(blank)
-    st = slide.shapes.add_textbox(Inches(0.4), Inches(0.14), Inches(slide_w - 0.8), Inches(0.24))
+    _furniture(prs, slide, 0)
+    st = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.24))
     sp = st.text_frame.paragraphs[0]; sr = sp.add_run(); sr.text = subtitle
     sr.font.size = Pt(9); sr.font.color.rgb = RGBColor(0x60, 0x60, 0x60); sr.font.name = "Microsoft JhengHei"
     if headline:
-        hb = slide.shapes.add_textbox(Inches(0.4), Inches(0.4), Inches(slide_w - 0.8), Inches(1.0))
+        hb = slide.shapes.add_textbox(Inches(0.4), Inches(0.56), Inches(slide_w - 0.8), Inches(1.0))
         htf = hb.text_frame; htf.word_wrap = True
         hr = htf.paragraphs[0].add_run(); hr.text = headline
         hr.font.bold = True; hr.font.size = Pt(11); hr.font.color.rgb = HDR; hr.font.name = "Microsoft JhengHei"
@@ -326,9 +355,10 @@ def _prose_slide(prs, title, bullets, headline=None):
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
     slide_w = prs.slide_width / 914400.0
     slide = prs.slides.add_slide(blank)
-    tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(slide_w - 0.8), Inches(0.4))
+    _furniture(prs, slide, 0)
+    tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.4))
     R._set_title(tb, title)
-    box = slide.shapes.add_textbox(Inches(0.5), Inches(0.9), Inches(slide_w - 1.0), Inches(5.7))
+    box = slide.shapes.add_textbox(Inches(0.5), Inches(0.95), Inches(slide_w - 1.0), Inches(5.6))
     tf = box.text_frame; tf.word_wrap = True
     started = False
     if headline:
@@ -424,13 +454,14 @@ def _prose_2col(prs, title, bullets, per=12):
     pages = [bullets[i:i + per] for i in range(0, len(bullets), per)]
     for pi, page in enumerate(pages):
         slide = prs.slides.add_slide(blank)
-        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
+        _furniture(prs, slide, 0)
+        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.4))
         R._set_title(tb, title + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
         half = (len(page) + 1) // 2
-        lb = slide.shapes.add_textbox(Inches(0.4), Inches(0.8), Inches(colw), Inches(6.0))
+        lb = slide.shapes.add_textbox(Inches(0.4), Inches(0.85), Inches(colw), Inches(5.9))
         _bullets_into(lb, page[:half], size=8)
         if page[half:]:
-            rb = slide.shapes.add_textbox(Inches(0.4 + colw + 0.2), Inches(0.8), Inches(colw), Inches(6.0))
+            rb = slide.shapes.add_textbox(Inches(0.4 + colw + 0.2), Inches(0.85), Inches(colw), Inches(5.9))
             _bullets_into(rb, page[half:], size=8)
 
 
