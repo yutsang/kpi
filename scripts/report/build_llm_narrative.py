@@ -33,12 +33,23 @@ import build_narrative as N
 import biao2 as B2
 from kpi.lib.workbench import Workbench
 
-SYS = ("你係畢馬威（KPMG）投資計劃執行情況審查報告嘅專業撰稿員。用【繁體中文】書面語，"
-       "審查報告語氣：精簡、客觀、專業、第三人稱（用『我們』，唔好口語）。"
-       "只可根據所提供嘅資料撰寫，嚴禁虛構、誇大或加入未提供嘅事實/數字。"
-       "★重要：直接寫有嘅內容，切勿寫『未獲提供』『資料不足』『未能說明』等 meta 或免責語句；"
-       "若某類資料缺，就只寫有嘅部分。輸出淨係一段連貫文字（唔好標題/項目符號/開場白/結語），"
-       "貼近正式審查報告書面語，忌冗長。")
+# 調整事項節（S16-17）：KPMG 審計角度，可講剔除/調減建議
+SYS_ADJ = ("你係畢馬威（KPMG）投資計劃執行情況審查報告嘅專業撰稿員。用【繁體中文】書面語，"
+           "審查報告語氣：精簡、客觀、專業、第三人稱（用『我們』）。"
+           "只可根據所提供嘅資料撰寫，嚴禁虛構、誇大或加入未提供嘅事實/數字。"
+           "直接寫有嘅內容，切勿寫『未獲提供』『資料不足』等 meta/免責語句。"
+           "輸出淨係一段連貫文字（唔好標題/項目符號/開場白/結語），忌冗長。")
+
+# 按範疇概況節（S13-15）：承批公司『2025年度投資執行報告』角度，唔好審計腔
+SYS_CAT = ("你係為承批公司『2025年度投資執行報告』撰寫『按範疇的項目概況』嘅撰稿員。用【繁體中文】書面語，"
+           "站喺投資執行角度：描述該範疇實際投資咗啲乜（可含具體項目、子項目、活動／賽事／音樂會場次），"
+           "再講完成率點解係咁。語氣自然、貼近企業投資執行報告，唔好似審計底稿、唔好似機器砌 list。"
+           "★嚴禁用審計／調整用語：『剔除』『調減』『申報口徑』『可計入範圍』『超出範圍』『再次申報』"
+           "『偏離』『不符合定義』『未在計劃中列示』等 —— 呢啲屬另一節（調整事項），概況絕不出現。"
+           "完成率原因只用管理層嘅業務解釋（例：施工進度較預期延遲、實際所需資金低於預算、"
+           "進度高於預期、活動如期舉辦、發現結構性問題增加成本），唔好用審計理由。"
+           "直接寫有嘅內容，切勿寫『未獲提供』『資料不足』等 meta 語。"
+           "輸出淨係一段連貫文字（唔好項目符號／開場白／結語），語句要順，忌逐點堆砌。")
 
 
 def _adj_prompt(adj_type, amt_wan, projects):
@@ -61,16 +72,17 @@ def _adj_prompt(adj_type, amt_wan, projects):
 def _cat_prompt(sub, rate_pct, content, reason, b2=""):
     ctx = (f"投資範疇：{sub}\n投資計劃金額完成率：{rate_pct}\n"
            f"該範疇實際投資內容（項目清單）：{content[:450]}\n"
-           f"管理層解釋／變更原因：{reason[:320]}\n"
-           f"審查底稿（表2）補充：{b2[:480]}")
-    return (f"請為投資執行概況寫一句『按範疇的項目概況』（約60-130字），"
-            f"格式類似「{sub}：主要包括……。投資計劃金額完成率為{rate_pct}，主要由於……」，"
-            f"綜合兩個來源（項目清單實際投資內容 + 表2 補充）同完成率原因；"
-            f"表2 補充如有具體投資內容／子項目，請善用。\n\n{ctx}")
+           f"管理層變更原因／業務解釋：{reason[:320]}\n"
+           f"表2 補充（只可攞嚟豐富『投資內容』，例如子項目／活動場次／金額明細；"
+           f"切勿抄佢嘅審計措辭或調整理由）：{b2[:480]}")
+    return (f"請為承批公司投資執行報告寫一句『按範疇的項目概況』（約70-140字），"
+            f"格式：「{sub}：主要包括……（實際投資咗啲乜，如有具體子項目／活動場次請寫）。"
+            f"投資計劃金額完成率為{rate_pct}，主要由於……（管理層業務原因）」。"
+            f"完成率原因只用管理層業務解釋，唔好用審計／調整措辭。\n\n{ctx}")
 
 
-def _gen(wb, prompt, effort):
-    return wb.chat(prompt, SYS, reasoning_effort=effort).strip()
+def _gen(wb, prompt, effort, sysp):
+    return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
 
 
 def main():
@@ -127,7 +139,7 @@ def main():
             nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
             b2t = B2.b2look(b2, pp["ng_scope"], pp["dicj code"])
             projs.append((str(pp["project"]), nr.get("KPMG分析發現", ""), nr.get("管理層解釋", ""), b2t))
-        tasks.append(("adj", t, _adj_prompt(t, amt, projs), "medium"))
+        tasks.append(("adj", t, _adj_prompt(t, amt, projs), "medium", SYS_ADJ))
 
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
     for _, r in ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))].iterrows():
@@ -139,17 +151,17 @@ def main():
         for _, pp in proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False).iterrows():
             nr = N.nlook(narr, scope, pp["dicj code"])
             content = content or nr.get("實際投資內容", "")
-            reason = reason or nr.get("管理層解釋", "") or nr.get("KPMG分析發現", "")
+            reason = reason or nr.get("管理層解釋", "")   # 業務原因；唔用 KPMG分析發現（審計腔）
             if not b2t:
                 b2t = B2.b2look(b2, scope, pp["dicj code"])
             if content and reason and b2t:
                 break
-        tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low"))
+        tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
 
     print(f"\n（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
     out = {"adj": {}, "cat": {}}
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        fut = {ex.submit(_gen, wb, p, eff): (kind, key) for kind, key, p, eff in tasks}
+        fut = {ex.submit(_gen, wb, p, eff, sysp): (kind, key) for kind, key, p, eff, sysp in tasks}
         for f in as_completed(fut):
             kind, key = fut[f]
             try:
