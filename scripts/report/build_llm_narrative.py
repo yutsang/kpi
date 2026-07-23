@@ -122,7 +122,8 @@ def main():
     narr = N.load_narrative(Path(qingdan)) if qingdan else {}
     b2 = B2.load_biao2(biao2_dir, entity or "", log=print)
     plan = B.load_plan(Path(qingdan)) if qingdan else None
-    ov = O.overview_by_bucket(df, "2025年度投資計劃", plan)
+    cat = B.load_category(Path(qingdan)) if qingdan else None
+    ov = O.overview_by_bucket(df, "2025年度投資計劃", plan, cat)
     adj = O.adjustment_bridge(df)
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
