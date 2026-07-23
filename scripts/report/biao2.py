@@ -54,9 +54,13 @@ def load_biao2(folder, entity, log=lambda *a: None):
     d = Path(folder)
     if not d.exists():
         log(f"（冇 {folder}）"); return out
-    files = [p for p in sorted(d.rglob("*.xls*"))
-             if _match_entity(p.name, entity.lower()) and not p.name.startswith("~$")
-             and "提供附件" not in p.name]
+    allx = [p for p in sorted(d.rglob("*.xls*")) if not p.name.startswith("~$")]
+    files = [p for p in allx if _match_entity(p.name, entity.lower()) and "提供附件" not in p.name]
+    log(f"表2 folder {folder}：共 {len(allx)} 個 xls*，match「{entity}」{len(files)} 檔")
+    for p in files:
+        log(f"  ✓ {p.name}")
+    if not files and allx:
+        log(f"  ⚠ 一個都 match 唔到！全部檔名：" + " | ".join(p.name for p in allx[:20]))
     for p in files:
         gaming = ("博監局" in p.name)     # 博監局檔 = 博彩項目；其餘範疇 = 非博彩
         try:
@@ -83,6 +87,7 @@ def load_biao2(folder, entity, log=lambda *a: None):
                         bestn, best = n, ci
                 if best is None or bestn < 2:
                     continue
+                log(f"  · {p.name}｜{sn}：code欄 col{best}（{bestn}個碼，{'博彩' if gaming else '非博彩'}）")
                 for r in rows:
                     if best < len(r) and r[best] is not None \
                             and _CODE_RE.match(re.sub(r"\s+", "", str(r[best]))):
@@ -119,11 +124,13 @@ def main():
     if "--entity" in args:
         i = args.index("--entity"); entity = args[i + 1].lower(); del args[i:i + 2]
     folder = args[0] if args else "data/表2"
+    print(f"=== biao2 診斷（entity={entity or 'mgm'}）===")
     b2 = load_biao2(folder, entity or "mgm", log=print)
-    for (g, c), snips in list(b2.items())[:12]:
+    print(f"\n>>> 抽到 {len(b2)} 個 (博彩?,碼) 有內容。逐個 sample（睇下係咪『投資內容』定 junk/審計）：")
+    for (g, c), snips in sorted(b2.items()):
         print(f"\n[{'博彩' if g else '非博彩'} 項目{c}] {len(snips)} 段")
-        for s in snips[:2]:
-            print("  ", s[:110])
+        for s in snips:
+            print("   ·", s[:150])
 
 
 if __name__ == "__main__":
