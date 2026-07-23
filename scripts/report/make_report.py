@@ -530,14 +530,18 @@ def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
         if sub.empty:
             continue
         names = "、".join(str(x) for x in sub.groupby("dicj code")["project"].first().tolist()[:3])
-        reason = ""
+        reason = ruling = ""
         for _, pp in sub.drop_duplicates("dicj code").iterrows():
             nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
-            f = nr.get("KPMG分析發現", "") or nr.get("調整事項備註", "")
-            if f:
-                reason = f; break
-        r2 = (reason[:160] + "…") if len(reason) > 160 else reason
-        body = f"主要涉及{names}等項目。{r2}" if r2 else f"主要涉及{names}等項目。"
+            if not reason:
+                reason = nr.get("KPMG分析發現", "") or nr.get("調整事項備註", "")
+            if not ruling:
+                ruling = nr.get("跨司回覆", "") or nr.get("KPMG回覆", "")
+            if reason and ruling:
+                break
+        r2 = (reason[:150] + "…") if len(reason) > 150 else reason
+        rl = ("跨司工作組／KPMG意見：" + (ruling[:90] + "…" if len(ruling) > 90 else ruling)) if ruling else ""
+        body = f"主要涉及{names}等項目。{r2}{rl}" if (r2 or rl) else f"主要涉及{names}等項目。"
         bullets.append((f"{t}（約{abs(amt):,.0f}萬澳門元）：", body))
     return bullets
 
