@@ -128,16 +128,17 @@ def main():
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
 
-    # 併裝 tasks（(kind, key, prompt, effort)）
+    # 併裝 tasks（(kind, key, prompt, effort, sys)）
+    pb = S.BUCKET_ORDER[0]      # 2025計劃 bucket：調整詳述只計 2025年度計劃（期後另計，對返報告）
     tasks = []
     for _, r in adj.iterrows():
         t = r["潛在調整事項"]
         if t in ("合計", "跨年及其他調整"):
             continue
-        amt = r.get("合計", 0)
+        amt = r.get(pb, 0)
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
-        sub = d[(d["_adj"] == t) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
+        sub = d[(d["_adj"] == t) & (d["_bucket"] == pb) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         projs = []
         for _, pp in sub.drop_duplicates("dicj code").iterrows():
             nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
