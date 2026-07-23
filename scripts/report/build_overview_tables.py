@@ -147,6 +147,61 @@ def adjustment_bridge(df):
     return pd.DataFrame(rows, columns=["潛在調整事項"] + S.BUCKET_ORDER + ["合計"])
 
 
+def zero_investment_summary(df, plan, cat, narr, ent_up="MGM"):
+    """報告概述尾段：2025計劃申報投資為零嘅非博彩項目（原計劃有金額、2025 實際=0）分類。
+    → (n, 總計劃_萬, groups)；groups={跨年/內部研究/取消: [範疇…]}。分類靠 期後有支出=跨年、
+    項目狀況含取消=取消、其餘=內部研究（best-effort，項目組口徑為準）。"""
+    if not plan or not plan.get(25):
+        return None
+    from collections import Counter
+
+    def _key(r):
+        return (str(r["ng_scope"]) == "gaming", B._norm(r["dicj code"]))
+
+    def _has(sub):
+        return {_key(r) for _, r in sub.iterrows()
+                if abs(pd.to_numeric(r.get("調整前_萬", 0), errors="coerce") or 0) > 0.05}
+
+    spent25 = _has(df[df["_bucket"] == "2025年度投資計劃"])
+    post = _has(df[df["_bucket"].isin(["2024年度計劃期後投資", "2023年度計劃期後投資"])])
+    groups = {"跨年": [], "內部研究": [], "取消": []}
+    tot = 0.0
+    for (gm, code), ev in (plan.get(25) or {}).items():
+        if gm or (ev or 0) <= 0.05 or (gm, code) in spent25:
+            continue        # 只計非博彩、原計劃>0、2025計劃無實際支出
+        rec = (narr or {}).get((gm, code)) or (narr or {}).get((not gm, code)) or {}
+        status = str(rec.get("項目狀況", ""))
+        sub = (cat or {}).get((gm, code), "") or "其他"
+        kind = "跨年" if (gm, code) in post else ("取消" if "取消" in status else "內部研究")
+        groups[kind].append(sub)
+        tot += ev
+    n = sum(len(v) for v in groups.values())
+    if n == 0:
+        return None
+    return n, round(tot, 1), groups
+
+
+def zero_investment_text(zi, ent_up="MGM"):
+    """zero_investment_summary → 報告式段落文字。"""
+    if not zi:
+        return None
+    from collections import Counter
+    n, tot, groups = zi
+    lines = [f"{ent_up}有{n}個非博彩項目，原計劃項目於2025年度投資執行報告中申報的投資支出為零"
+             f"（原計劃金額約{tot:,.0f}萬澳門元），主要包括："]
+    lab = {"跨年": "個項目的2025年支出被申報為2023／2024年度計劃在2025年的期後投資金額（跨年項目）",
+           "內部研究": "個項目仍處於內部研究、重新規劃或選址階段，未發生實際支出",
+           "取消": "個項目已取消"}
+    for kind in ("跨年", "內部研究", "取消"):
+        g = groups.get(kind) or []
+        if not g:
+            continue
+        c = Counter(g)
+        detail = "、".join(f"{k}{v}個" for k, v in c.items())
+        lines.append(f"{len(g)}{lab[kind]}（涉及{detail}）")
+    return lines
+
+
 def finding_summary(df):
     """S28-40：每個 canonical 調整類型 → 調整額合計 / 涉及項目數 / 主要涉及項目(top3)。"""
     d = df.copy()
