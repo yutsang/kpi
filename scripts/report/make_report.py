@@ -228,22 +228,27 @@ def render_generic(prs, title, df):
         _draw_table(slide, df.iloc[a:b], 0.4, 0.72, slide_w - 0.8, font=7)
 
 
-def _finding_body(box, find, mgmt, grey):
-    """body 文字框：KPMG分析發現 / 管理層解釋 兩段，label 加粗。"""
+def _finding_body(box, find, mgmt, grey, ruling="", kpmg=""):
+    """body 文字框：KPMG分析發現 / 管理層解釋 / 跨司工作組意見 / KPMG最終立場，label 加粗。
+    跨司裁決＝報告主要發現最核心（政府逐司立場），來自清單（清單抄自審查底稿表2）。"""
     tf = box.text_frame; tf.word_wrap = True
     tf.margin_left = tf.margin_right = Emu(45000)
-    tf.margin_top = tf.margin_bottom = Emu(27000)
+    tf.margin_top = tf.margin_bottom = Emu(18000)
+    navy2 = RGBColor(0x1F, 0x49, 0x7D)
     first = True
-    for label, text, col in [("KPMG分析發現", find, None), ("管理層解釋", mgmt, grey)]:
+    for label, text, col, cap in [("KPMG分析發現", find, None, 240),
+                                  ("管理層解釋", mgmt, grey, 180),
+                                  ("跨司工作組意見", ruling, navy2, 220),
+                                  ("KPMG最終立場", kpmg, HDR, 180)]:
         if not text:
             continue
         p = tf.paragraphs[0] if first else tf.add_paragraph()
         first = False
         rl = p.add_run(); rl.text = label + "："
-        rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "Microsoft JhengHei"
+        rl.font.bold = True; rl.font.size = Pt(7.5); rl.font.name = "Microsoft JhengHei"
         rl.font.color.rgb = HDR if col is None else col
-        rt = p.add_run(); rt.text = str(text)[:300]
-        rt.font.size = Pt(8); rt.font.name = "Microsoft JhengHei"
+        rt = p.add_run(); rt.text = str(text)[:cap]
+        rt.font.size = Pt(7.5); rt.font.name = "Microsoft JhengHei"
         if col is not None:
             rt.font.color.rgb = col
 
@@ -267,7 +272,8 @@ def render_findings(prs, ent_up, df, narr):
         for _, p in projs.iterrows():
             nr = N.nlook(narr, p["ng_scope"], p["dicj code"])
             recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"], p["調整"],
-                         nr.get("KPMG分析發現", ""), nr.get("管理層解釋", "")))
+                         nr.get("KPMG分析發現", ""), nr.get("管理層解釋", ""),
+                         nr.get("跨司回覆", ""), nr.get("KPMG回覆", "")))
         pages = [recs[i:i + 2] for i in range(0, len(recs), 2)]
         for pi, page in enumerate(pages):
             slide = prs.slides.add_slide(blank)
@@ -275,7 +281,7 @@ def render_findings(prs, ent_up, df, narr):
             R._set_title(tb, f"{ent_up} 本年度主要發現 — {adj}"
                          + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
             y = 0.8
-            for code, name, rep, adjv, find, mgmt in page:
+            for code, name, rep, adjv, find, mgmt, ruling, kpmg in page:
                 # navy 標題條（項目 + 金額）
                 bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(y),
                                              Inches(slide_w - 0.8), Inches(0.3))
@@ -289,7 +295,7 @@ def render_findings(prs, ent_up, df, narr):
                 # body
                 body = slide.shapes.add_textbox(Inches(0.4), Inches(y + 0.32),
                                                 Inches(slide_w - 0.8), Inches(2.5))
-                _finding_body(body, find, mgmt, grey)
+                _finding_body(body, find, mgmt, grey, ruling, kpmg)
                 y += 3.0
 
 
