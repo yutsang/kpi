@@ -54,19 +54,22 @@ SYS_CAT = ("你係為承批公司『2025年度投資執行報告』撰寫『按�
 
 def _adj_prompt(adj_type, amt_wan, projects):
     lines = [f"潛在調整類型：{adj_type}", f"涉及潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元", "涉及項目及審查發現："]
-    for name, find, mgmt, b2 in projects[:6]:
+    for name, find, mgmt, b2, ruling in projects[:6]:
         seg = f"- 項目「{name}」"
         if find:
-            seg += f"；KPMG分析發現：{find[:320]}"
+            seg += f"；KPMG分析發現：{find[:300]}"
         if mgmt:
-            seg += f"；管理層解釋：{mgmt[:220]}"
+            seg += f"；管理層解釋：{mgmt[:200]}"
+        if ruling:
+            seg += f"；跨司工作組／KPMG裁決：{ruling[:240]}"
         if b2:
-            seg += f"；審查底稿（表2）補充：{b2[:320]}"
+            seg += f"；審查底稿（表2）補充：{b2[:260]}"
         lines.append(seg)
     ctx = "\n".join(lines)
-    return (f"以下係一項『潛在調整事項』嘅底層資料（來自項目清單同審查底稿表2兩個來源）。"
-            f"請寫一段報告摘要（約100-180字），說明該調整類型、金額、主要涉及嘅投資項目同調減原因"
-            f"（綜合 KPMG 分析、管理層解釋與表2 補充），並帶出審查建議（通常為建議剔除／調減）。\n\n{ctx}")
+    return (f"以下係一項『潛在調整事項』嘅底層資料（來自項目清單、跨司工作組往來同審查底稿表2）。"
+            f"請寫一段報告摘要（約110-190字），說明該調整類型、金額、主要涉及嘅投資項目同調減原因"
+            f"（綜合 KPMG 分析與管理層解釋）；如有跨司工作組意見或 KPMG 回覆，帶出最終處理立場"
+            f"（例：跨司工作組認可／不認可、KPMG 維持調整），最後點出審查建議（通常為建議剔除／調減）。\n\n{ctx}")
 
 
 def _cat_prompt(sub, rate_pct, content, reason, b2=""):
@@ -138,7 +141,9 @@ def main():
         for _, pp in sub.drop_duplicates("dicj code").iterrows():
             nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
             b2t = B2.b2look(b2, pp["ng_scope"], pp["dicj code"])
-            projs.append((str(pp["project"]), nr.get("KPMG分析發現", ""), nr.get("管理層解釋", ""), b2t))
+            ruling = "；".join(x for x in (nr.get("跨司回覆", ""), nr.get("KPMG回覆", "")) if x)
+            projs.append((str(pp["project"]), nr.get("KPMG分析發現", ""),
+                          nr.get("管理層解釋", ""), b2t, ruling))
         tasks.append(("adj", t, _adj_prompt(t, amt, projs), "medium", SYS_ADJ))
 
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
