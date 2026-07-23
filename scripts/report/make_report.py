@@ -634,6 +634,10 @@ def main():
         render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 2025年度計劃的整體投資支出及執行概況",
                              hl, ov.fillna(""), hlb + exb)
         render_category_overview(prs, ent_up, ov, sdf, narr, llm)   # slide 13-14 逐範疇概況（LLM 優先）
+        zit = O.zero_investment_text(O.zero_investment_summary(sdf, plan, cat, narr, ent_up), ent_up)
+        if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
+            _prose_slide(prs, f"{ent_up} 2025年度計劃申報投資支出為零的項目",
+                         [("", zit[0])] + [("• ", x) for x in zit[1:]])
     ahl, ab = _adj_summary(ent_up, adj)      # slide 15：表左 + 匯總敘述右
     render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 報告投資金額的潛在調整事項匯總",
                          ahl, adj.fillna(""), ab)
