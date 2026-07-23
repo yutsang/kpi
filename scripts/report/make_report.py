@@ -514,6 +514,7 @@ def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
     if not narr:
         return []
     llm_adj = (llm or {}).get("adj", {})
+    pb = S.BUCKET_ORDER[0]      # 2025計劃 bucket（唔用合計；期後另計）
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
     bullets = []
@@ -521,12 +522,12 @@ def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
         t = str(r["潛在調整事項"])
         if t in ("合計", "跨年及其他調整"):
             continue
-        amt = r.get("合計", 0)
+        amt = r.get(pb, 0)
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
         if t in llm_adj and llm_adj[t]:                   # LLM 寫嘅摘要優先
             bullets.append((f"{t}（約{abs(amt):,.0f}萬澳門元）：", llm_adj[t])); continue
-        sub = d[(d["_adj"] == t) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
+        sub = d[(d["_adj"] == t) & (d["_bucket"] == pb) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
             continue
         names = "、".join(str(x) for x in sub.groupby("dicj code")["project"].first().tolist()[:3])
@@ -571,17 +572,19 @@ def _exec_bullets(ent_up, ov):
 
 
 def _adj_summary(ent_up, adj):
-    """潛在調整事項匯總（報告 slide 15）→ 回 (headline, bullets)。逐類型金額。"""
+    """潛在調整事項匯總（報告 slide 15）→ 回 (headline, bullets)。逐類型金額。
+    ⚠ 用 2025計劃 bucket（唔係合計）：報告調整詳述只計 2025年度計劃，期後另有匯總。"""
+    pb = S.BUCKET_ORDER[0]      # "2025年度投資計劃"
     tot_row = adj[adj["潛在調整事項"] == "合計"]
-    total = tot_row.iloc[0]["合計"] if len(tot_row) else 0
+    total = tot_row.iloc[0][pb] if len(tot_row) else 0
     headline = (f"基於各項審查程序，我們認為{ent_up}報告的2025年度投資金額中存在多類潛在調整事項，"
                 f"潛在調減投資金額約{abs(total):,.0f}萬澳門元，主要涉及以下類型：")
     bullets = []
     for _, r in adj.iterrows():
         name = r["潛在調整事項"]
-        if name == "合計":
+        if name in ("合計", "跨年及其他調整"):
             continue
-        amt = r["合計"] if "合計" in adj.columns else 0
+        amt = r[pb] if pb in adj.columns else 0
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
         bullets.append((f"{name}：", f"約{abs(amt):,.0f}萬澳門元。"))
