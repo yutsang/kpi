@@ -137,6 +137,51 @@ def load_plan(path: Path, log=print) -> dict:
     return out
 
 
+def load_category(path: Path, log=lambda *a: None) -> dict:
+    """{(is_gaming, 正規化項目編號): 項目性質(D)}（清單；用嚟將零投資項目計劃 attribute 返範疇）。
+    含 feed 冇嘅零投資項目（清單有齊全部項目）。"""
+    import openpyxl
+    out = {}
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception as e:
+        log(f"  ⚠ 清單開唔到 {path}: {e}"); return out
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        rows = []
+        for i, r in enumerate(ws.iter_rows(values_only=True)):
+            rows.append(r)
+            if i > 2500:
+                break
+        hdr_r = code_c = type_c = sub_c = None
+        for ri in range(min(14, len(rows))):
+            for ci, v in enumerate(rows[ri] or []):
+                sv = "" if v is None else str(v)
+                if "承批公司項目序號" in sv:
+                    hdr_r, code_c = ri, ci
+                if type_c is None and "項目類型" in sv:
+                    type_c = ci
+                if sub_c is None and sv.strip() == "項目性質":
+                    sub_c = ci
+            if hdr_r is not None:
+                break
+        if hdr_r is None or sub_c is None:
+            continue
+        for ri in range(hdr_r + 1, len(rows)):
+            row = rows[ri]
+            code = _norm(row[code_c]) if code_c < len(row) else ""
+            if not code:
+                continue
+            gaming = (type_c is not None and type_c < len(row) and row[type_c] is not None
+                      and str(row[type_c]).strip().startswith("博彩"))
+            sub = row[sub_c] if sub_c < len(row) else None
+            if sub is not None and str(sub).strip():
+                out.setdefault((gaming, code), str(sub).strip())
+        log(f"  清單 項目性質(D)：{len(out)} 個項目")
+        break
+    return out
+
+
 def _rate(rep, plan):
     try:
         return round(rep / plan, 4) if plan else None

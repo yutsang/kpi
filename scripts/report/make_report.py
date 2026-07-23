@@ -604,6 +604,7 @@ def main():
     df["報告年"] = pd.to_numeric(df["報告年"], errors="coerce")
     df["_plan_year"] = df["year_bucket"].map(B._plan_year)
     plan = B.load_plan(qingdan) if qingdan else None
+    cat = B.load_category(qingdan) if qingdan else None     # 項目性質(D)→派零投資項目計劃返範疇
     narr = N.load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
@@ -622,7 +623,7 @@ def main():
 
     # ① 2025年度投資計劃執行情況概述（報告 slide 8-18）
     divider(prs, "一、2025年度投資計劃執行情況概述")
-    ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan)
+    ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan, cat)
     adj = O.adjustment_bridge(sdf)
     if not ov.empty:      # slide 10-11：表左 + headline/執行敘述右（報告 2 欄式）
         hl, hlb = _headline(ent_up, ov, sdf, plan)
@@ -639,7 +640,7 @@ def main():
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
     for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
-        ov = O.overview_by_bucket(sdf, bk, plan)
+        ov = O.overview_by_bucket(sdf, bk, plan, cat)
         if not ov.empty:
             render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""))
 

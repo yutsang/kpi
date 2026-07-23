@@ -43,7 +43,7 @@ def _rate(a, b):
         return None
 
 
-def overview_by_bucket(df, bucket, plan):
+def overview_by_bucket(df, bucket, plan, category=None):
     """整體投資概況（S10-14 = 2025計劃有計劃/完成率；S19-26 = 期後冇計劃、多潛在調整金額欄）。
     逐範疇 + 博彩/非博彩小計 + 總計。欄跟報告 IMG_0104/0105：
       2025計劃：項目數量 | 獲批的計劃投資金額 | 報告投資金額 | 完成率 | 潛在調整後投資金額 | 完成率 | 設施建設 | 活動舉辦
@@ -66,13 +66,27 @@ def overview_by_bucket(df, bucket, plan):
 
     plan_by_sub = {}
     if is_py and plan:
+        cat = category or {}
         sub_of = {}       # (gaming,碼)→範疇；博彩/非博彩共用項目N 都要留（唔可以 drop 淨 code）
+        d2sub = {}        # 項目性質(D)→set(範疇)：由 feed 有嘅項目學，用嚟派零投資項目計劃
         for _, r in d.drop_duplicates(["ng_scope", "dicj code"]).iterrows():
-            sub_of[(r["ng_scope"] == "gaming", B._norm(r["dicj code"]))] = r["_sub"]
+            key = (r["ng_scope"] == "gaming", B._norm(r["dicj code"]))
+            sub_of[key] = r["_sub"]
+            dv = cat.get(key)
+            if dv:
+                d2sub.setdefault(str(dv), set()).add(r["_sub"])
+        d2sub1 = {k: next(iter(v)) for k, v in d2sub.items() if len(v) == 1}  # 唯一對應先用
+        miss = 0
         for (gm, code), v in (plan.get(yr, {}) or {}).items():
             sub = sub_of.get((gm, code))
+            if sub is None:      # 零投資項目：feed 冇行 → 用 D→範疇 學到嘅 map 派返
+                sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
+            elif v:
+                miss += 1
+        if miss:
+            print(f"    ⚠ overview {bucket}：{miss} 個有計劃項目派唔到範疇（缺項目性質對應）")
 
     def mk(name, cnt, pl, rep, adj, aft, fac, act):
         r = {"範疇": name, "項目數量": int(cnt), "報告投資金額": round(rep, 1),
