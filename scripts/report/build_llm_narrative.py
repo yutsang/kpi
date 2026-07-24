@@ -91,39 +91,14 @@ def _gen(wb, prompt, effort, sysp):
     return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
 
 
-def main():
-    args = sys.argv[1:]
-    entity = qingdan = model = None
-    biao2_dir = "data/表2"
-    workers = 3
-    cfg_only = "--config" in args
-    if cfg_only:
-        args.remove("--config")
-    for flag in ("--entity", "--qingdan", "--model", "--workers", "--biao2"):
-        if flag in args:
-            i = args.index(flag); val = args[i + 1]; del args[i:i + 2]
-            if flag == "--entity":
-                entity = val.lower()
-            elif flag == "--qingdan":
-                qingdan = val
-            elif flag == "--model":
-                model = val
-            elif flag == "--workers":
-                workers = int(val)
-            elif flag == "--biao2":
-                biao2_dir = val
+def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
+                           model=None, workers=3, out_path=None, log=print):
+    """由 feed + 清單 + 表2 用 Workbench 生成 {adj,cat} 敘述；寫 {entity}_llm_narrative.json，回 dict。
+    可被 build_report.py --llm 直接調用（唔使另跑 command）。"""
     wb = Workbench(model=model)
-    print("Workbench config（key 遮蔽）:")
-    for k, v in wb.config_masked().items():
-        print(f"  {k}: {v}")
-    if cfg_only:
-        print("\n（--config：只驗 config，唔出網）"); return
-    if not args:
-        print("俾 tableau feed csv 路徑（--qingdan 清單）"); return
-
-    df = S._load(Path(args[0]), entity)
+    df = S._load(Path(feed_path), entity)
     narr = N.load_narrative(Path(qingdan)) if qingdan else {}
-    b2 = B2.load_biao2(biao2_dir, entity or "", log=print)
+    b2 = B2.load_biao2(biao2_dir, entity or "", log=log)
     plan = B.load_plan(Path(qingdan)) if qingdan else None
     cat = B.load_category(Path(qingdan)) if qingdan else None
     ov = O.overview_by_bucket(df, "2025年度投資計劃", plan, cat)
@@ -168,7 +143,7 @@ def main():
                 break
         tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
 
-    print(f"\n（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
+    log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
     out = {"adj": {}, "cat": {}}
     with ThreadPoolExecutor(max_workers=workers) as ex:
         fut = {ex.submit(_gen, wb, p, eff, sysp): (kind, key) for kind, key, p, eff, sysp in tasks}
@@ -176,13 +151,46 @@ def main():
             kind, key = fut[f]
             try:
                 out[kind][key] = f.result()
-                print(f"  ✓ {kind}｜{key[:22]}")
+                log(f"  ✓ {kind}｜{key[:22]}")
             except Exception as e:
-                print(f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {e}")
+                log(f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {e}")
 
-    outp = Path(f"{entity or 'all'}_llm_narrative.json")
+    outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"\n✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])} 段）→ make_report 會自動用")
+    log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])} 段）")
+    return out
+
+
+def main():
+    args = sys.argv[1:]
+    entity = qingdan = model = None
+    biao2_dir = "data/表2"
+    workers = 3
+    cfg_only = "--config" in args
+    if cfg_only:
+        args.remove("--config")
+    for flag in ("--entity", "--qingdan", "--model", "--workers", "--biao2"):
+        if flag in args:
+            i = args.index(flag); val = args[i + 1]; del args[i:i + 2]
+            if flag == "--entity":
+                entity = val.lower()
+            elif flag == "--qingdan":
+                qingdan = val
+            elif flag == "--model":
+                model = val
+            elif flag == "--workers":
+                workers = int(val)
+            elif flag == "--biao2":
+                biao2_dir = val
+    wb = Workbench(model=model)
+    print("Workbench config（key 遮蔽）:")
+    for k, v in wb.config_masked().items():
+        print(f"  {k}: {v}")
+    if cfg_only:
+        print("\n（--config：只驗 config，唔出網）"); return
+    if not args:
+        print("俾 tableau feed csv 路徑（--qingdan 清單）"); return
+    generate_llm_narrative(args[0], entity, qingdan, biao2_dir, model, workers)
 
 
 if __name__ == "__main__":
