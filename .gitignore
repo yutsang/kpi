@@ -85,6 +85,12 @@ v_override_patches/
 IMG_*.JPG
 IMG_*.jpg
 IMG_*.JPEG
+
+# Confidential report PDFs (scan/reference) + extracted OCR/text content — never commit
+*_report.pdf
+mgm_2025_report.pdf
+report_content/
+*_report_content/
 IMG_*.jpeg
 *.JPG
 *.jpg
