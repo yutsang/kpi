@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
 build_report.py — 單一自足檔：由底層數據（feed + 清單）生成表二審查報告 pptx。
-唔需要任何 prerequisite / 其他模組 / 前置 command，直接：
-    python build_report.py [entity]        # 預設 mgm
-LLM 敘述（可選）：若同目錄有 {entity}_llm_narrative.json 就自動採用，否則用清單原文 fallback。
-（此檔由 5 個 build 模組 + make_report 自動合併而成；報告只作 ref，全部由底層數據生成。）
+毋須任何 prerequisite / 其他模組 / 前置 command：
+    python build_report.py [entity]            # 預設 mgm；用現有 {entity}_llm_narrative.json 或清單 fallback
+    python build_report.py [entity] --llm      # 即場生成 LLM 敘述（需 KPMG 網 + workbench creds）再出報告
+（此檔由各 build/LLM 模組自動合併；LLM 相關 heavy import [openai/msoffcrypto] 全 lazy；報告只作 ref。）
 """
 import sys
 from pathlib import Path
 import re
+import json
+import os
+from typing import Any
+import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+# ── from render_review_table_pptx ──
 try:
     import pandas as pd
     from pptx import Presentation
@@ -226,6 +233,7 @@ def _set_title(tb, text):
     r.font.color.rgb = BLUE; r.font.name = "Microsoft JhengHei"
 
 
+# ── from build_narrative ──
 try:
     import openpyxl
     from openpyxl.utils import get_column_letter
@@ -339,15 +347,18 @@ def load_narrative(path, log=lambda *a: None) -> dict:
     return out
 
 
+# ── from build_project_review_table ──
 try:
     import pandas as pd
 except ImportError:
     print("✗ 未裝 pandas → pip install pandas openpyxl"); sys.exit(1)
 
 
+# ── from build_project_review_table ──
 pd.set_option("display.max_columns", 40)
 
 
+# ── from build_project_review_table ──
 pd.set_option("display.width", 260)
 
 
@@ -617,15 +628,18 @@ def build_year(df: pd.DataFrame, year: int, plan: dict | None = None):
     return out_df, other
 
 
+# ── from build_summary_tables ──
 try:
     import pandas as pd
 except ImportError:
     print("✗ pip install pandas openpyxl"); sys.exit(1)
 
 
+# ── from build_summary_tables ──
 pd.set_option("display.max_columns", 30)
 
 
+# ── from build_summary_tables ──
 pd.set_option("display.width", 200)
 
 
@@ -734,6 +748,7 @@ def facility_activity(df, bucket_label) -> pd.DataFrame:
     return _emit(out, ["設施建設/資本性支出", "活動舉辦/營運性支出", "合計"])
 
 
+# ── from build_overview_tables ──
 try:
     import pandas as pd
 except ImportError:
@@ -930,6 +945,570 @@ def finding_summary(df):
     return pd.DataFrame(rows, columns=["潛在調整事項", "調整額合計", "涉及項目數", "主要涉及項目"])
 
 
+# ── from workbench ──
+DEFAULT_PROVIDER = "azure"
+
+
+# ── from workbench ──
+DEFAULT_BASE_URL = "https://api.workbench.kpmg/genai/azure/openai"
+
+
+# ── from workbench ──
+DEFAULT_API_VERSION = "2024-12-01-preview"
+
+
+# ── from workbench ──
+DEFAULT_MODEL = "5.5"
+
+
+# ── from workbench ──
+DEFAULT_MODELS = {
+    "5.5": "gpt-5-5-2026-04-24-gs-sdc",
+    "5.4": "gpt-5-4-2026-03-05-gs-sdc",
+}
+
+
+# ── from workbench ──
+_CRED = Path("conf/local/credentials.yml")
+
+
+# ── from workbench ──
+def _cred_section() -> dict:
+    if not _CRED.exists():
+        return {}
+    try:
+        import yaml
+        d = yaml.safe_load(_CRED.read_text(encoding="utf-8")) or {}
+        return dict(d.get("workbench") or {})
+    except Exception:
+        return {}
+
+
+# ── from workbench ──
+def _resolve(name: str, env: str, default: str = "") -> str:
+    """env > config > default（字串）。"""
+    v = os.environ.get(env, "").strip()
+    if v:
+        return v
+    v = str(_cred_section().get(name, "") or "").strip()
+    return v or default
+
+
+# ── from workbench ──
+def _parse_json_lenient(text: str) -> dict:
+    s = (text or "").strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = re.sub(r"\s*```$", "", s).strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        m = re.search(r"\{[\s\S]*\}", s)
+        if not m:
+            raise
+        return json.loads(m.group(0))
+
+
+# ── from workbench ──
+class Workbench:
+    def __init__(self, model: str | None = None, *, provider: str | None = None,
+                 charge_code: str | None = None, region: str | None = None,
+                 base_url: str | None = None, api_version: str | None = None,
+                 api_key: str | None = None, models: dict | None = None):
+        sec = _cred_section()
+        # alias → 實際名 對照表：內置 ← config.models 覆蓋 ← 呼叫者覆蓋
+        self.models = {**DEFAULT_MODELS, **(sec.get("models") or {}), **(models or {})}
+        self.provider = (provider or _resolve("provider", "WB_PROVIDER", DEFAULT_PROVIDER)).lower()
+        self.model_alias = model or _resolve("model", "WB_MODEL", DEFAULT_MODEL)
+        self.base_url = base_url or _resolve("base_url", "WB_BASE_URL", DEFAULT_BASE_URL)
+        self.api_version = api_version or _resolve("api_version", "WB_API_VERSION", DEFAULT_API_VERSION)
+        self.charge_code = charge_code or _resolve("charge_code", "WB_CHARGE_CODE", "0000")
+        self.region = region or _resolve("region", "WB_REGION", "westeurope")
+        self._api_key = (api_key or "").strip() or None
+        self._client = None
+
+    def resolve_model(self, model: str | None = None) -> str:
+        """alias → 實際 deployment/model 名（唔喺對照表就當已經係實名）。"""
+        m = model or self.model_alias
+        return self.models.get(m, m)
+
+    @property
+    def model(self) -> str:
+        return self.resolve_model()
+
+    # ── key / headers ────────────────────────────────────────────────
+    @property
+    def api_key(self) -> str:
+        if not self._api_key:
+            k = _resolve("api_key", "WB_API_KEY")
+            if not k:
+                raise RuntimeError(
+                    "冇 API key：set env WB_API_KEY，"
+                    "或 conf/local/credentials.yml 加 workbench.api_key（gitignored）")
+            self._api_key = k
+        return self._api_key
+
+    def _headers(self) -> dict:
+        # KPMG Workbench(azure) 專用 header；openai-compatible（qwen）唔加，SDK 自己用 api_key。
+        if self.provider == "azure":
+            return {
+                "Ocp-Apim-Subscription-Key": self.api_key,
+                "x-kpmg-charge-code": self.charge_code,
+                "x-kpmg-region-override": self.region,
+            }
+        return {}
+
+    def _client_obj(self):
+        if self._client is None:
+            if self.provider == "azure":
+                from openai import AzureOpenAI
+                self._client = AzureOpenAI(
+                    api_key=self.api_key, base_url=self.base_url,
+                    api_version=self.api_version, default_headers=self._headers() or None)
+            else:  # openai-compatible（qwen 等）
+                from openai import OpenAI
+                self._client = OpenAI(
+                    api_key=self.api_key, base_url=self.base_url,
+                    default_headers=self._headers() or None)
+        return self._client
+
+    # ── chat ─────────────────────────────────────────────────────────
+    def chat(self, user: str, system: str = "You are a helpful assistant.", *,
+             model: str | None = None, reasoning_effort: str | None = "high",
+             temperature: float | None = 1, max_tokens: int | None = None,
+             json_mode: bool = False) -> str:
+        """一問一答，回 content。對唔支持嘅參數自動 drop 再試，唔會因 model/provider 差異炒。"""
+        cli = self._client_obj()
+        kw: dict[str, Any] = {
+            "model": self.resolve_model(model),
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        hdr = self._headers()
+        if hdr:
+            kw["extra_headers"] = {"Content-Type": "application/json", **hdr}
+        if temperature is not None:
+            kw["temperature"] = temperature
+        if reasoning_effort:
+            kw["reasoning_effort"] = reasoning_effort
+        if max_tokens:
+            kw["max_tokens"] = max_tokens
+        if json_mode:
+            kw["response_format"] = {"type": "json_object"}
+
+        droppable = ["reasoning_effort", "temperature", "response_format", "max_tokens"]
+        for _ in range(len(droppable) + 1):
+            try:
+                resp = cli.chat.completions.create(**kw)
+                return resp.choices[0].message.content or ""
+            except Exception as e:
+                msg = str(e).lower().replace("_", "")
+                hit = next((p for p in droppable if p in kw and p.replace("_", "") in msg), None)
+                if hit is None:
+                    raise
+                kw.pop(hit, None)
+        raise RuntimeError("chat 失敗：所有可 drop 參數都試過")
+
+    def chat_json(self, user: str, system: str = "You are a helpful assistant. Reply with JSON only.",
+                  **kw) -> dict:
+        kw.setdefault("json_mode", True)
+        return _parse_json_lenient(self.chat(user, system, **kw))
+
+    def ping(self, model: str | None = None) -> str:
+        return self.chat("hi", model=model)
+
+    # ── config 檢視（key 遮蔽）────────────────────────────────────────
+    def config_masked(self) -> dict:
+        try:
+            k = self.api_key
+            km = f"{k[:4]}…({len(k)} chars)" if k else "(缺)"
+            key_ok = True
+        except Exception as e:
+            km, key_ok = f"⚠ {e}", False
+        return {
+            "provider": self.provider,
+            "model_alias": self.model_alias, "model(resolved)": self.model,
+            "models_map": self.models,
+            "base_url": self.base_url, "api_version": self.api_version,
+            "charge_code": self.charge_code, "region": self.region,
+            "api_key": km, "key_ok": key_ok,
+        }
+
+
+# ── from workbench ──
+def _cli() -> None:
+    import argparse
+    ap = argparse.ArgumentParser(description="LLM client（databook 用，config-driven）")
+    ap.add_argument("--model", default=None, help="alias（5.5/5.4/qwen…）或完整名；預設由 config")
+    ap.add_argument("--provider", default=None, help="azure / openai（覆蓋 config）")
+    ap.add_argument("--ping", action="store_true", help="送 'hi' 驗連線（要喺 KPMG 網內跑）")
+    ap.add_argument("--config", action="store_true", help="offline：只印解析到嘅 config（key 遮蔽）")
+    ap.add_argument("--ask", help="送一句 user prompt 睇回覆")
+    a = ap.parse_args()
+    wb = Workbench(model=a.model, provider=a.provider)
+    if a.config or not (a.ping or a.ask):
+        print("LLM config（offline，唔出網）:")
+        for k, v in wb.config_masked().items():
+            print(f"  {k}: {v}")
+        if not (a.ping or a.ask):
+            print("\n→ 連線測試喺 KPMG 網內跑： python -m kpi.lib.workbench --ping")
+            return
+    if a.ping:
+        print("\n--ping →", wb.ping())
+    if a.ask:
+        print("\n--ask →", wb.chat(a.ask))
+
+
+# ── from inspect_biao2 ──
+try:
+    import openpyxl
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    print("✗ pip install openpyxl"); sys.exit(1)
+
+
+# ── from inspect_biao2 ──
+PASSWORD = "dicj_kpmg"
+
+
+# ── from inspect_biao2 ──
+def load_wb(path, password=PASSWORD):
+    """開 xlsx；『not a zip file』＝加密 → msoffcrypto 用密碼解。回 openpyxl workbook。"""
+    try:
+        return openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception:
+        pass
+    import msoffcrypto
+    buf = io.BytesIO()
+    with open(path, "rb") as f:
+        off = msoffcrypto.OfficeFile(f)
+        off.load_key(password=password)
+        off.decrypt(buf)
+    buf.seek(0)
+    return openpyxl.load_workbook(buf, data_only=True, read_only=True)
+
+
+# ── from inspect_biao2 ──
+KEY_HINT = ["投資項目序號", "項目序號及名稱", "項目序號"]
+
+
+# ── from inspect_biao2 ──
+NARR_HINT = ["KPMG分析", "關注事項", "管理層解釋", "調整金額", "調整原因", "分析意見",
+             "反饋意見", "調整後金額", "項目分類", "備註", "狀態"]
+
+
+# ── from inspect_biao2 ──
+def _find_header(rows):
+    """揾 detail header row（含投資項目序號）；上一行＝group header。回 (grp_r, det_r)。"""
+    for ri in range(min(12, len(rows))):
+        joined = "".join(str(v) for v in (rows[ri] or []) if v)
+        if any(h in joined for h in KEY_HINT):
+            return (ri - 1 if ri > 0 else ri), ri
+    return None, None
+
+
+# ── from inspect_biao2 ──
+def _ffill(seq):
+    out, last = [], ""
+    for v in seq:
+        s = "" if v is None else str(v).replace("\n", "").strip()
+        if s:
+            last = s
+        out.append(last)
+    return out
+
+
+# ── from inspect_biao2 ──
+def inspect_one(path: Path):
+    print(f"\n{'#'*84}\n# {path.name}")
+    try:
+        wb = load_wb(path)
+    except ImportError:
+        print("  ✗ 加密檔要 msoffcrypto → pip install msoffcrypto-tool"); return
+    except Exception as e:
+        print(f"  ✗ 開唔到: {type(e).__name__}: {e}"); return
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        rows = []
+        for i, r in enumerate(ws.iter_rows(values_only=True)):
+            rows.append(r)
+            if i > 800:
+                break
+        grp_r, det_r = _find_header(rows)
+        print(f"\n{'='*72}\n## sheet {sn!r}  約 {len(rows)} 行"
+              + (f"  header：組 r{grp_r+1} / 欄 r{det_r+1}" if det_r is not None else "  ⚠揾唔到表頭"))
+        if det_r is None:
+            for ri in range(min(6, len(rows))):
+                cells = [("" if v is None else str(v).replace("\n", " ")[:20]) for v in (rows[ri] or [])]
+                print(f"  r{ri}:", " | ".join(c for c in cells if c)[:200])
+            continue
+        grp = _ffill(rows[grp_r]) if grp_r is not None and grp_r >= 0 else [""] * len(rows[det_r])
+        det = [("" if v is None else str(v).replace("\n", "").strip()) for v in rows[det_r]]
+        ncol = max(len(grp), len(det))
+        ndata = sum(1 for ri in range(det_r + 1, len(rows))
+                    if rows[ri] and any(v not in (None, "") for v in rows[ri]))
+        print(f"  資料行約 {ndata}；共 {ncol} 欄：")
+        for ci in range(ncol):
+            g = grp[ci] if ci < len(grp) else ""
+            dcol = det[ci] if ci < len(det) else ""
+            sample = ""
+            for ri in range(det_r + 1, min(det_r + 60, len(rows))):
+                row = rows[ri]
+                if row and ci < len(row) and row[ci] not in (None, ""):
+                    sample = str(row[ci]).replace("\n", " ").strip()[:50]; break
+            if not (g or dcol or sample):
+                continue
+            mark = ""
+            if any(h in (dcol) for h in KEY_HINT):
+                mark = "  ⟸ KEY(項目)"
+            elif any(h in (g + dcol) for h in NARR_HINT):
+                mark = "  ⟸ finding/調整"
+            print(f"    {get_column_letter(ci+1):>3} | {g[:16]:<16} | {dcol[:24]:<24} | {sample}{mark}")
+
+
+# ── from biao2 ──
+_CODE_RE = re.compile(r"^(項目\s*\d+|[A-Za-z]{1,5}\d+(?:\.\d+)?)$")
+
+
+# ── from biao2 ──
+_JUNK_RE = re.compile(r"^(無新增問題|無|是|否|已回覆|未回覆|不適用|n/?a|請參閱附件)")
+
+
+# ── from biao2 ──
+_ENT_ALIASES = {
+    "mgm": ["mgm", "美高梅"],
+    "galaxy": ["galaxy", "銀河"],
+    "sjm": ["sjm", "澳博", "新葡京"],
+    "wynn": ["wynn", "永利"],
+    "vml": ["vml", "威尼斯", "金沙"],
+    "melco": ["melco", "新濠"],
+}
+
+
+# ── from biao2 ──
+def _match_entity(fname, entity):
+    fl = fname.lower()
+    for a in _ENT_ALIASES.get(entity, [entity]):
+        if a.lower() in fl:
+            return True
+    return False
+
+
+# ── from biao2 ──
+def load_biao2(folder, entity, log=lambda *a: None):
+    """{(gaming, 正規化碼): [finding 文字…]}。best-effort，逐檔逐 sheet try。"""
+    out = {}
+    d = Path(folder)
+    if not d.exists():
+        log(f"（冇 {folder}）"); return out
+    allx = [p for p in sorted(d.rglob("*.xls*")) if not p.name.startswith("~$")]
+    files = [p for p in allx if _match_entity(p.name, entity.lower()) and "提供附件" not in p.name]
+    log(f"表2 folder {folder}：共 {len(allx)} 個 xls*，match「{entity}」{len(files)} 檔")
+    for p in files:
+        log(f"  ✓ {p.name}")
+    if not files and allx:
+        log(f"  ⚠ 一個都 match 唔到！全部檔名：" + " | ".join(p.name for p in allx[:20]))
+    for p in files:
+        gaming = ("博監局" in p.name)     # 博監局檔 = 博彩項目；其餘範疇 = 非博彩
+        try:
+            wb = load_wb(p)
+        except Exception as e:
+            log(f"  ⚠ 開唔到 {p.name}: {e}"); continue
+        for sn in wb.sheetnames:
+            try:
+                ws = wb[sn]
+                rows = []
+                for i, r in enumerate(ws.iter_rows(values_only=True)):
+                    rows.append(r)
+                    if i > 700:
+                        break
+                ncol = max((len(r) for r in rows if r), default=0)
+                if ncol == 0:
+                    continue
+                # code 欄 = 匹配 _CODE_RE 最多嘅欄
+                best, bestn = None, 0
+                for ci in range(ncol):
+                    n = sum(1 for r in rows if ci < len(r) and r[ci] is not None
+                            and _CODE_RE.match(re.sub(r"\s+", "", str(r[ci]))))
+                    if n > bestn:
+                        bestn, best = n, ci
+                if best is None or bestn < 2:
+                    continue
+                log(f"  · {p.name}｜{sn}：code欄 col{best}（{bestn}個碼，{'博彩' if gaming else '非博彩'}）")
+                for r in rows:
+                    if best < len(r) and r[best] is not None \
+                            and _CODE_RE.match(re.sub(r"\s+", "", str(r[best]))):
+                        code = _norm(r[best])
+                        snips = []
+                        for c in r:
+                            if c is None:
+                                continue
+                            s = str(c).replace("\n", " ").strip()
+                            if len(s) >= 30 and not _JUNK_RE.match(s):
+                                snips.append(s[:400])
+                        if snips:
+                            out.setdefault((gaming, code), [])
+                            for s in snips[:4]:
+                                if s not in out[(gaming, code)]:
+                                    out[(gaming, code)].append(s)
+            except Exception as e:
+                log(f"  ⚠ {p.name}｜{sn}: {e}")
+    log(f"表2：{len(files)} 檔 → {len(out)} 個 (gaming,碼) 有 finding")
+    return out
+
+
+# ── from biao2 ──
+def b2look(b2, ng_scope, code, joiner="　"):
+    """由 (ng_scope, code) 攞表2 finding 文字（合併），撞號用 exact 先。"""
+    g = (ng_scope == "gaming")
+    c = _norm(code)
+    snips = b2.get((g, c)) or b2.get((not g, c)) or []
+    return joiner.join(snips)
+
+
+# ── from build_llm_narrative ──
+try:
+    import pandas as pd
+except ImportError:
+    print("✗ pip install pandas openpyxl"); sys.exit(1)
+
+
+# ── from build_llm_narrative ──
+SYS_ADJ = ("你係畢馬威（KPMG）投資計劃執行情況審查報告嘅專業撰稿員。用【繁體中文】書面語，"
+           "審查報告語氣：精簡、客觀、專業、第三人稱（用『我們』）。"
+           "只可根據所提供嘅資料撰寫，嚴禁虛構、誇大或加入未提供嘅事實/數字。"
+           "直接寫有嘅內容，切勿寫『未獲提供』『資料不足』等 meta/免責語句。"
+           "輸出淨係一段連貫文字（唔好標題/項目符號/開場白/結語），忌冗長。")
+
+
+# ── from build_llm_narrative ──
+SYS_CAT = ("你係為承批公司『2025年度投資執行報告』撰寫『按範疇的項目概況』嘅撰稿員。用【繁體中文】書面語，"
+           "站喺投資執行角度：描述該範疇實際投資咗啲乜（可含具體項目、子項目、活動／賽事／音樂會場次），"
+           "再講完成率點解係咁。語氣自然、貼近企業投資執行報告，唔好似審計底稿、唔好似機器砌 list。"
+           "★嚴禁用審計／調整用語：『剔除』『調減』『申報口徑』『可計入範圍』『超出範圍』『再次申報』"
+           "『偏離』『不符合定義』『未在計劃中列示』等 —— 呢啲屬另一節（調整事項），概況絕不出現。"
+           "完成率原因只用管理層嘅業務解釋（例：施工進度較預期延遲、實際所需資金低於預算、"
+           "進度高於預期、活動如期舉辦、發現結構性問題增加成本），唔好用審計理由。"
+           "直接寫有嘅內容，切勿寫『未獲提供』『資料不足』等 meta 語。"
+           "輸出淨係一段連貫文字（唔好項目符號／開場白／結語），語句要順，忌逐點堆砌。")
+
+
+# ── from build_llm_narrative ──
+def _adj_prompt(adj_type, amt_wan, projects):
+    lines = [f"潛在調整類型：{adj_type}", f"涉及潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元",
+             "涉及項目及審查發現（審查底稿表2 為最權威來源，優先採用其跨司裁決及具體內容）："]
+    for name, find, mgmt, b2, ruling in projects[:6]:
+        seg = f"- 項目「{name}」"
+        if b2:      # 表2＝審查底稿，最可信，放最前、俾最多
+            seg += f"；【審查底稿表2】{b2[:900]}"
+        if find:
+            seg += f"；KPMG分析發現：{find[:260]}"
+        if mgmt:
+            seg += f"；管理層解釋：{mgmt[:200]}"
+        if ruling:
+            seg += f"；跨司工作組／KPMG裁決（清單）：{ruling[:220]}"
+        lines.append(seg)
+    ctx = "\n".join(lines)
+    return (f"以下係一項『潛在調整事項』嘅底層資料（審查底稿表2 內容最詳盡，可用作事實依據）。"
+            f"請寫一段報告摘要（約120-200字），說明該調整類型、金額、主要涉及嘅投資項目同調減原因。"
+            f"★用字須跟原報告：如有向跨司工作組諮詢得到嘅回覆，用『跨司工作組』集體稱呼帶出其立場"
+            f"（例如『根據我們向跨司工作組諮詢得到的回覆，跨司工作組認為／未同意…』），"
+            f"【切勿】逐個司局點名（如社會文化司、旅遊局、文化局），亦【切勿】自創『KPMG最終立場』等標籤。"
+            f"最後點出審查建議（通常為建議剔除／調減）。\n\n{ctx}")
+
+
+# ── from build_llm_narrative ──
+def _cat_prompt(sub, rate_pct, content, reason, b2=""):
+    ctx = (f"投資範疇：{sub}\n投資計劃金額完成率：{rate_pct}\n"
+           f"該範疇實際投資內容（項目清單）：{content[:500]}\n"
+           f"管理層變更原因／業務解釋：{reason[:340]}\n"
+           f"表2 補充（只可攞嚟豐富『投資內容』，例如子項目／活動場次／金額明細；"
+           f"切勿抄佢嘅審計措辭或調整理由）：{b2[:700]}")
+    return (f"請為承批公司投資執行報告寫一句『按範疇的項目概況』（約70-140字），"
+            f"格式：「{sub}：主要包括……（實際投資咗啲乜，如有具體子項目／活動場次請寫）。"
+            f"投資計劃金額完成率為{rate_pct}，主要由於……（管理層業務原因）」。"
+            f"完成率原因只用管理層業務解釋，唔好用審計／調整措辭。\n\n{ctx}")
+
+
+# ── from build_llm_narrative ──
+def _gen(wb, prompt, effort, sysp):
+    return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
+
+
+# ── from build_llm_narrative ──
+def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
+                           model=None, workers=3, out_path=None, log=print):
+    """由 feed + 清單 + 表2 用 Workbench 生成 {adj,cat} 敘述；寫 {entity}_llm_narrative.json，回 dict。
+    可被 build_report.py --llm 直接調用（唔使另跑 command）。"""
+    wb = Workbench(model=model)
+    df = _load(Path(feed_path), entity)
+    narr = load_narrative(Path(qingdan)) if qingdan else {}
+    b2 = load_biao2(biao2_dir, entity or "", log=log)
+    plan = load_plan(Path(qingdan)) if qingdan else None
+    cat = load_category(Path(qingdan)) if qingdan else None
+    ov = overview_by_bucket(df, "2025年度投資計劃", plan, cat)
+    adj = adjustment_bridge(df)
+    d = df.copy()
+    d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
+
+    # 併裝 tasks（(kind, key, prompt, effort, sys)）
+    pb = BUCKET_ORDER[0]      # 2025計劃 bucket：調整詳述只計 2025年度計劃（期後另計，對返報告）
+    tasks = []
+    for _, r in adj.iterrows():
+        t = r["潛在調整事項"]
+        if t in ("合計", "跨年及其他調整"):
+            continue
+        amt = r.get(pb, 0)
+        if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
+            continue
+        sub = d[(d["_adj"] == t) & (d["_bucket"] == pb) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
+        projs = []
+        for _, pp in sub.drop_duplicates("dicj code").iterrows():
+            nr = nlook(narr, pp["ng_scope"], pp["dicj code"])
+            b2t = b2look(b2, pp["ng_scope"], pp["dicj code"])
+            ruling = "；".join(x for x in (nr.get("跨司回覆", ""), nr.get("KPMG回覆", "")) if x)
+            projs.append((str(pp["project"]), nr.get("KPMG分析發現", ""),
+                          nr.get("管理層解釋", ""), b2t, ruling))
+        tasks.append(("adj", t, _adj_prompt(t, amt, projs), "medium", SYS_ADJ))
+
+    proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
+    for _, r in ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))].iterrows():
+        sub = str(r["範疇"]); rate = r.get("投資計劃完成率")
+        if not isinstance(rate, (int, float)) or pd.isna(rate):
+            continue
+        scope = "gaming" if sub.startswith("博彩") else "non_gaming"
+        content = reason = b2t = ""
+        for _, pp in proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False).iterrows():
+            nr = nlook(narr, scope, pp["dicj code"])
+            content = content or nr.get("實際投資內容", "")
+            reason = reason or nr.get("管理層解釋", "")   # 業務原因；唔用 KPMG分析發現（審計腔）
+            if not b2t:
+                b2t = b2look(b2, scope, pp["dicj code"])
+            if content and reason and b2t:
+                break
+        tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
+
+    log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
+    out = {"adj": {}, "cat": {}}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut = {ex.submit(_gen, wb, p, eff, sysp): (kind, key) for kind, key, p, eff, sysp in tasks}
+        for f in as_completed(fut):
+            kind, key = fut[f]
+            try:
+                out[kind][key] = f.result()
+                log(f"  ✓ {kind}｜{key[:22]}")
+            except Exception as e:
+                log(f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {e}")
+
+    outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
+    outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])} 段）")
+    return out
+
+
+# ── from make_report ──
 try:
     import pandas as pd
     from pptx import Presentation
@@ -1554,7 +2133,18 @@ def main():
     narr = load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
-    llm = _load_llm(entity)     # {entity}_llm_narrative.json（build_llm_narrative.py 出）有就用 LLM 文字
+    if "--llm" in sys.argv:     # 一站式：即場生成 LLM 敘述（需 KPMG 網 + workbench creds），毋須另跑 command
+        av = sys.argv
+        workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 3
+        model = av[av.index("--model") + 1] if "--model" in av else None
+        biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
+        print("  --llm：由 feed+清單+表2 即場生成 LLM 敘述…")
+        try:
+            generate_llm_narrative(str(feed), entity, str(qingdan) if qingdan else None,
+                                   biao2_dir=biao2_dir, model=model, workers=workers)
+        except Exception as e:
+            print(f"  ⚠ LLM 生成失敗（{type(e).__name__}: {e}）→ 改用清單 fallback")
+    llm = _load_llm(entity)     # {entity}_llm_narrative.json 有就用 LLM 文字，否則清單 fallback
     if llm:
         print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
 

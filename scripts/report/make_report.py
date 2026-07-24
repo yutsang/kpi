@@ -37,6 +37,7 @@ import build_summary_tables as S
 import build_overview_tables as O
 import build_narrative as N
 import render_review_table_pptx as R
+from build_llm_narrative import generate_llm_narrative   # bundler 會 inline；--llm 用
 
 FEED = "tableau_combined_25.csv"
 
@@ -611,7 +612,18 @@ def main():
     narr = N.load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
-    llm = _load_llm(entity)     # {entity}_llm_narrative.json（build_llm_narrative.py 出）有就用 LLM 文字
+    if "--llm" in sys.argv:     # 一站式：即場生成 LLM 敘述（需 KPMG 網 + workbench creds），毋須另跑 command
+        av = sys.argv
+        workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 3
+        model = av[av.index("--model") + 1] if "--model" in av else None
+        biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
+        print("  --llm：由 feed+清單+表2 即場生成 LLM 敘述…")
+        try:
+            generate_llm_narrative(str(feed), entity, str(qingdan) if qingdan else None,
+                                   biao2_dir=biao2_dir, model=model, workers=workers)
+        except Exception as e:
+            print(f"  ⚠ LLM 生成失敗（{type(e).__name__}: {e}）→ 改用清單 fallback")
+    llm = _load_llm(entity)     # {entity}_llm_narrative.json 有就用 LLM 文字，否則清單 fallback
     if llm:
         print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
 
