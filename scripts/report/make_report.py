@@ -31,6 +31,19 @@ HDR = RGBColor(0x00, 0x33, 0x8D)
 SEC = RGBColor(0xD9, 0xE1, 0xF2)
 SUB = RGBColor(0xE7, 0xE6, 0xE6)
 TOT = RGBColor(0xBD, 0xD7, 0xEE)
+DARK = RGBColor(0x17, 0x17, 0x1C)      # 封面 / 章節分隔深底（近黑帶少少 navy）
+LIGHT = RGBColor(0xFF, 0xFF, 0xFF)
+CYAN = RGBColor(0x00, 0xB0, 0xD8)      # KPMG 輔助青（分隔頁大數字/線）
+
+# entity → 承批公司全名（封面用；公開上市公司法定名，非機密）
+ENTITY_FULL = {
+    "mgm": "美高梅金殿超濠股份有限公司",
+    "galaxy": "銀河娛樂場股份有限公司",
+    "sjm": "澳門博彩股份有限公司",
+    "wynn": "永利渡假村（澳門）股份有限公司",
+    "vml": "威尼斯人澳門股份有限公司",
+    "melco": "新濠博亞博彩（澳門）股份有限公司",
+}
 
 import build_project_review_table as B
 import build_summary_tables as S
@@ -89,19 +102,67 @@ def _furniture(prs, slide, section_idx=0):
     pr.font.size = Pt(8); pr.font.bold = True; pr.font.color.rgb = HDR; pr.font.name = "Microsoft JhengHei"
 
 
-def divider(prs, text):
-    """章節分隔頁（navy 底白字），俾 deck 有報告 section 結構。"""
+def _dark_slide(prs):
+    """新增一版深黑底（封面/分隔共用），回 (slide, w, h)。"""
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
     slide = prs.slides.add_slide(blank)
     rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
-    rect.fill.solid(); rect.fill.fore_color.rgb = HDR
-    rect.line.fill.background()
-    tf = rect.text_frame; tf.word_wrap = True
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
-    r = p.add_run(); r.text = text
-    r.font.size = Pt(26); r.font.bold = True
-    r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); r.font.name = "Microsoft JhengHei"
+    rect.fill.solid(); rect.fill.fore_color.rgb = DARK; rect.line.fill.background()
+    kb = slide.shapes.add_textbox(Inches(0.55), Inches(0.35), Inches(2.2), Inches(0.4))
+    kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
+    kr.font.size = Pt(20); kr.font.bold = True; kr.font.italic = True
+    kr.font.color.rgb = LIGHT; kr.font.name = "Arial"
+    return slide, prs.slide_width / 914400.0, prs.slide_height / 914400.0
+
+
+def render_cover(prs, entity, date="2026年6月30日"):
+    """封面（報告 p1）：深底、KPMG 左上、承批公司全名 + 報告標題 + 初稿 + 事務所/日期。"""
+    slide, w, h = _dark_slide(prs)
+    full = ENTITY_FULL.get(entity, entity.upper())
+    tb = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(7.2), Inches(2.6))
+    tf = tb.text_frame; tf.word_wrap = True
+    for i, line in enumerate([full, "2025年年度投資計劃執行情況審查", "專項工作報告"]):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        r = p.add_run(); r.text = line
+        r.font.size = Pt(25); r.font.bold = True; r.font.color.rgb = LIGHT
+        r.font.name = "Microsoft JhengHei"
+    db = slide.shapes.add_textbox(Inches(0.6), Inches(4.7), Inches(4), Inches(0.5))
+    dr = db.text_frame.paragraphs[0].add_run(); dr.text = "初稿"
+    dr.font.size = Pt(16); dr.font.bold = True; dr.font.color.rgb = LIGHT; dr.font.name = "Microsoft JhengHei"
+    fb = slide.shapes.add_textbox(Inches(0.6), Inches(5.5), Inches(5), Inches(0.8))
+    ftf = fb.text_frame
+    for i, line in enumerate(["畢馬威會計師事務所", date]):
+        p = ftf.paragraphs[0] if i == 0 else ftf.add_paragraph()
+        r = p.add_run(); r.text = line
+        r.font.size = Pt(11); r.font.color.rgb = LIGHT; r.font.name = "Microsoft JhengHei"
+
+
+def divider(prs, title, number="", subitems=None):
+    """章節分隔頁（深黑底、大數字+章節標題、子項列表），跟報告 p8/p18 等。"""
+    slide, w, h = _dark_slide(prs)
+    ny = h * 0.30
+    tx = 0.7
+    if number:
+        nb = slide.shapes.add_textbox(Inches(0.65), Inches(ny - 0.15), Inches(1.3), Inches(1.3))
+        nr = nb.text_frame.paragraphs[0].add_run(); nr.text = f"{number}."
+        nr.font.size = Pt(44); nr.font.bold = True; nr.font.color.rgb = LIGHT; nr.font.name = "Arial"
+        tx = 2.05
+    tb = slide.shapes.add_textbox(Inches(tx), Inches(ny), Inches(w - tx - 0.7), Inches(1.5))
+    ttf = tb.text_frame; ttf.word_wrap = True
+    tr = ttf.paragraphs[0].add_run(); tr.text = title
+    tr.font.size = Pt(26); tr.font.bold = True; tr.font.color.rgb = LIGHT; tr.font.name = "Microsoft JhengHei"
+    if subitems:
+        y = ny + 1.7
+        for it in subitems:
+            label, page = (it if isinstance(it, (tuple, list)) else (it, ""))
+            rb = slide.shapes.add_textbox(Inches(tx), Inches(y), Inches(w - tx - 1.4), Inches(0.32))
+            rr = rb.text_frame.paragraphs[0].add_run(); rr.text = label
+            rr.font.size = Pt(12); rr.font.color.rgb = RGBColor(0xC8, 0xC8, 0xD0); rr.font.name = "Microsoft JhengHei"
+            if page != "":
+                pb = slide.shapes.add_textbox(Inches(w - 1.3), Inches(y), Inches(0.8), Inches(0.32))
+                pr = pb.text_frame.paragraphs[0].add_run(); pr.text = str(page)
+                pr.font.size = Pt(12); pr.font.color.rgb = RGBColor(0xC8, 0xC8, 0xD0); pr.font.name = "Microsoft JhengHei"
+            y += 0.42
 
 
 def _find(dirp, entity, ext, prefer=None):
@@ -636,8 +697,15 @@ def main():
 
     sdf = S._load(feed, entity)     # 於2025發生 slice（概述 + 金額匯總 共用）
 
+    render_cover(prs, entity)       # 封面（報告 p1）
+
     # ① 2025年度投資計劃執行情況概述（報告 slide 8-18）
-    divider(prs, "一、2025年度投資計劃執行情況概述")
+    divider(prs, "2025年度投資計劃執行情況概述", "1", [
+        ("1.1  股權架構簡圖及發生投資支出的主體公司", ""),
+        ("1.2  2025年度計劃的整體投資支出概況", ""),
+        ("1.3  2025年度投資項目的整體執行概況", ""),
+        ("1.4  2025年度投資計劃報告投資金額的潛在調整事項匯總", ""),
+    ])
     ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan, cat)
     adj = O.adjustment_bridge(sdf)
     if not ov.empty:      # slide 10-11：表左 + headline/執行敘述右（報告 2 欄式）
@@ -657,14 +725,19 @@ def main():
                 _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6)   # slide 16-17 詳述（LLM 優先）
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
-    divider(prs, "二、過往年度投資計劃在2025年繼續執行的審查跟進")
+    divider(prs, "過往年度投資計劃在2025年繼續執行的審查跟進", "2", [
+        ("2.1  2024年度投資計劃期後投資金額概覽", ""),
+        ("2.2  2024年度投資計劃報告投資金額的潛在調整事項匯總", ""),
+        ("2.3  2023年度投資計劃期後投資金額概覽", ""),
+        ("2.4  2023年度投資計劃報告投資金額的潛在調整事項匯總", ""),
+    ])
     for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
         ov = O.overview_by_bucket(sdf, bk, plan, cat)
         if not ov.empty:
             render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""))
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
-    divider(prs, "三、本年度審查工作的主要發現")
+    divider(prs, "本年度審查工作的主要發現", "3")
     fs = O.finding_summary(sdf)
     if not fs.empty:
         render_generic(prs, f"{ent_up} 主要發現摘要", fs.fillna(""))
@@ -672,7 +745,7 @@ def main():
         render_findings(prs, ent_up, sdf, narr)
 
     # ④ 其他信息（報告 slide 42-63）
-    divider(prs, "四、其他信息")
+    divider(prs, "其他信息", "4")
     render_generic(prs, f"{ent_up} 2025年度投資計劃及過往年度期後投資於2025年發生的投資金額匯總",
                    S.summary_amount(sdf).fillna(""))
     for bk in S.BUCKET_ORDER:
@@ -686,7 +759,7 @@ def main():
 
     # ⑥ 附件二 現場走訪（slide 93-100）
     if narr:
-        divider(prs, "六、附件")
+        divider(prs, "附件", "6")
         render_site_visits(prs, ent_up, sdf, narr)
 
     out = Path(f"{entity}_報告數字表.pptx")
