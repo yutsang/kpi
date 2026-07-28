@@ -83,6 +83,18 @@ def _layout(prs, key):
     return None
 
 
+def _strip_slides(prs):
+    """正確刪走 template 原有 content slides（drop rel + sldId）→ 避免 duplicate part 名 corruption。"""
+    sldIdLst = prs.slides._sldIdLst
+    for sldId in list(sldIdLst):
+        rId = sldId.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+        sldIdLst.remove(sldId)
+        try:
+            prs.part.drop_rel(rId)
+        except Exception:
+            pass
+
+
 def _blank_layout(prs):
     """乾淨 layout（手砌 data 版用）：template 揀 'Title Only'/'Blank'（有 master title bar/footer），否則 index。"""
     for master in prs.slide_masters:
@@ -825,8 +837,7 @@ def main():
     tmpl = _find_template()     # 空 KPMG template（durable）→ 開佢做 base，layout/master 提供 formatting
     if tmpl:
         prs = Presentation(str(tmpl))
-        while len(prs.slides._sldIdLst):      # 空 template 應該 0 版；若有殘留 content slide 清走
-            prs.slides._sldIdLst.remove(prs.slides._sldIdLst[0])
+        _strip_slides(prs)      # drop_rel 正確清走原有 content slides（唔會 duplicate 名 corrupt）
         print(f"    template（master-driven）：{tmpl}  layouts={sum(len(m.slide_layouts) for m in prs.slide_masters)}")
     else:
         prs = Presentation()
