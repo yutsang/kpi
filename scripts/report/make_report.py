@@ -45,6 +45,61 @@ ENTITY_FULL = {
     "melco": "新濠博亞博彩（澳門）股份有限公司",
 }
 
+# 公司 KPMG template（空 pptx，得 master + layouts）→ 開佢做 base，formatting 全部嚟自 master。
+# 放 repo root / data/ 任一（gitignored，confidential）。搵唔到就 fallback 手砌（fresh Presentation）。
+TEMPLATE_NAMES = ["template.pptx", "report_template.pptx", "kpmg_template.pptx"]
+TEMPLATE_DIRS = [".", "data", "data/template", "conf/local"]
+# 報告版 → template layout 名（跨 master 搵第一個 match；搵唔到就 fallback）
+LAYOUTS = {
+    "cover": ["TITLE SLIDE - Right vertical dark image", "TITLE SLIDE", "Title Slide"],
+    "section": ["Section Divider"],
+    "subsection": ["Subsection Divider"],
+    "appendix": ["Appendix Divider"],
+    "table_text": ["1_ANALYSIS narrow table", "ANALYSIS narrow table"],
+    "two_col": ["Two Column Text", "ANALYSIS 2 col text"],
+    "one_col": ["One Column Text", "RPOE One Column Text"],
+    "title_only": ["Title Only"],
+    "findings2": ["KEY FINDINGS 2_text only"],
+    "toc": ["Table of content Storage Layout", "Table of content"],
+}
+
+
+def _find_template():
+    for d in TEMPLATE_DIRS:
+        for n in TEMPLATE_NAMES:
+            p = Path(d) / n
+            if p.exists():
+                return p
+    return None
+
+
+def _layout(prs, key):
+    """跨所有 master 搵第一個名 match LAYOUTS[key] 嘅 slide layout；搵唔到回 None。"""
+    wanted = LAYOUTS.get(key, [key])
+    for master in prs.slide_masters:
+        for lay in master.slide_layouts:
+            if lay.name in wanted:
+                return lay
+    return None
+
+
+def _blank_layout(prs):
+    """乾淨 layout（手砌 data 版用）：template 揀 'Title Only'/'Blank'（有 master title bar/footer），否則 index。"""
+    for master in prs.slide_masters:
+        for lay in master.slide_layouts:
+            if lay.name in ("Blank", "Title Only"):
+                return lay
+    return prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+
+
+def _ph(slide, idx):
+    """由 placeholder idx 攞 placeholder；冇就 None。"""
+    for ph in slide.placeholders:
+        if ph.placeholder_format.idx == idx:
+            return ph
+    return None
+
+
 import build_project_review_table as B
 import build_summary_tables as S
 import build_overview_tables as O
@@ -156,9 +211,19 @@ def _dark_slide(prs):
 
 
 def render_cover(prs, entity, date="2026年6月30日"):
-    """封面（報告 p1）：深底、KPMG 左上、承批公司全名 + 報告標題 + 初稿 + 事務所/日期。"""
-    slide, w, h = _dark_slide(prs)
+    """封面（報告 p1）。template：用 TITLE SLIDE layout 填 placeholder（顏色/圖嚟自 master）；否則手砌深底。"""
     full = ENTITY_FULL.get(entity, entity.upper())
+    lay = _layout(prs, "cover")
+    if lay is not None:
+        slide = prs.slides.add_slide(lay)
+        t = _ph(slide, 0)
+        if t is not None:
+            t.text = f"{full}\n2025年年度投資計劃執行情況審查\n專項工作報告"
+        b = _ph(slide, 11)
+        if b is not None:
+            b.text = f"初稿\n畢馬威會計師事務所\n{date}"
+        return
+    slide, w, h = _dark_slide(prs)
     tb = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(7.2), Inches(2.6))
     tf = tb.text_frame; tf.word_wrap = True
     for i, line in enumerate([full, "2025年年度投資計劃執行情況審查", "專項工作報告"]):
@@ -178,7 +243,29 @@ def render_cover(prs, entity, date="2026年6月30日"):
 
 
 def divider(prs, title, number="", subitems=None):
-    """章節分隔頁（深黑底、大數字+章節標題、子項列表），跟報告 p8/p18 等。"""
+    """章節分隔。template：用 Section/Appendix Divider layout（深底嚟自 master）+ 加標題 textbox；否則手砌。"""
+    lay = _layout(prs, "appendix" if number == "6" else "section")
+    if lay is not None:
+        slide = prs.slides.add_slide(lay)
+        w = prs.slide_width / 914400.0; h = prs.slide_height / 914400.0
+        ny = h * 0.34; tx = 0.9
+        if number:
+            nb = slide.shapes.add_textbox(Inches(0.9), Inches(ny - 0.2), Inches(1.5), Inches(1.2))
+            nr = nb.text_frame.paragraphs[0].add_run(); nr.text = f"{number}."
+            nr.font.size = Pt(40); nr.font.bold = True; nr.font.color.rgb = LIGHT; nr.font.name = "Arial"
+            tx = 2.2
+        tb = slide.shapes.add_textbox(Inches(tx), Inches(ny), Inches(w - tx - 0.9), Inches(1.2))
+        tr = tb.text_frame.paragraphs[0].add_run(); tr.text = title
+        tr.font.size = Pt(24); tr.font.bold = True; tr.font.color.rgb = LIGHT; tr.font.name = "Microsoft JhengHei"
+        if subitems:
+            y = ny + 1.5
+            for it in subitems:
+                label, _pg = (it if isinstance(it, (tuple, list)) else (it, ""))
+                rb = slide.shapes.add_textbox(Inches(tx), Inches(y), Inches(w - tx - 1.2), Inches(0.3))
+                rr = rb.text_frame.paragraphs[0].add_run(); rr.text = label
+                rr.font.size = Pt(12); rr.font.color.rgb = LIGHT; rr.font.name = "Microsoft JhengHei"
+                y += 0.4
+        return
     slide, w, h = _dark_slide(prs)
     ny = h * 0.30
     tx = 0.7
@@ -735,12 +822,19 @@ def main():
     if llm:
         print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
 
-    prs = Presentation()
-    if template:
-        ref = Presentation(str(template))
-        prs.slide_width, prs.slide_height = ref.slide_width, ref.slide_height
+    tmpl = _find_template()     # 空 KPMG template（durable）→ 開佢做 base，layout/master 提供 formatting
+    if tmpl:
+        prs = Presentation(str(tmpl))
+        while len(prs.slides._sldIdLst):      # 空 template 應該 0 版；若有殘留 content slide 清走
+            prs.slides._sldIdLst.remove(prs.slides._sldIdLst[0])
+        print(f"    template（master-driven）：{tmpl}  layouts={sum(len(m.slide_layouts) for m in prs.slide_masters)}")
     else:
-        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+        prs = Presentation()
+        if template:
+            prs.slide_width, prs.slide_height = Presentation(str(template)).slide_width, Presentation(str(template)).slide_height
+        else:
+            prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+        print("    無 template → fallback 手砌 formatting")
 
     sdf = S._load(feed, entity)     # 於2025發生 slice（概述 + 金額匯總 共用）
 
