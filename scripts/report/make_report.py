@@ -74,6 +74,46 @@ def _load_llm(entity):
     return {}
 
 
+def _coverage_probe(df, qingdan):
+    """一次性 coverage 探測（❓頁：主體/KPI/藝術品欄喺唔喺 inputs）→ print 俾 Claude 定 coverage。"""
+    def pr(cols, *kw):
+        return [c for c in cols if any(k in str(c) for k in kw)] or "無"
+    print("  [coverage] feed 主體/執行公司欄:", pr(df.columns, "主體", "執行公司", "控股", "子公司"),
+          "｜KPI欄:", pr(df.columns, "KPI", "收入", "留宿", "晚數", "毛收入", "國際"))
+    if qingdan:
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(qingdan, data_only=True, read_only=True)
+            ws = next((wb[s] for s in wb.sheetnames if s.lower().startswith("database")), wb[wb.sheetnames[0]])
+            rows = [r for i, r in enumerate(ws.iter_rows(values_only=True)) if i < 6]
+            hr = next((i for i, r in enumerate(rows) if r and any("項目類型" in str(c or "") for c in r)), 2)
+            hdr = [str(c or "").replace("\n", "") for c in rows[hr]]
+            print("  [coverage] 清單 股權/主體欄:", pr(hdr, "股權", "主體", "執行公司", "控股", "子公司"))
+            print("  [coverage] 清單 KPI欄:", pr(hdr, "KPI", "留宿", "晚數", "毛收入", "增長率", "國際住客"))
+            print("  [coverage] 清單 藝術品欄:", pr(hdr, "藝術品", "展出", "館藏", "拍賣"))
+        except Exception as e:
+            print("  [coverage] 清單 probe skip:", e)
+
+
+def _dump_pptx_text(prs, entity):
+    """把生成嘅 pptx 逐版文字（含表格 cell）dump 做 txt → user paste 返，Claude cross-check vs scan（唔使影相）。"""
+    lines = []
+    for i, s in enumerate(prs.slides, 1):
+        parts = []
+        for sh in s.shapes:
+            if sh.has_text_frame and sh.text_frame.text.strip():
+                parts.append(sh.text_frame.text.strip())
+            if sh.has_table:
+                for row in sh.table.rows:
+                    cells = [c.text.strip() for c in row.cells]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+        lines.append(f"\n===== slide {i} =====\n" + "\n".join(parts))
+    out = Path(f"{entity}_報告_dump.txt")
+    out.write_text("\n".join(lines), encoding="utf-8")
+    return out
+
+
 SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
             "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
 
@@ -673,6 +713,7 @@ def main():
     narr = N.load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
+    _coverage_probe(df, str(qingdan) if qingdan else None)   # 探 ❓頁（主體/KPI/藝術品）coverage
     if "--no-llm" not in sys.argv:     # 預設即場生成 LLM 敘述（需 KPMG 網+creds）；--no-llm 跳過用現有 json/清單
         av = sys.argv
         workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 3
@@ -771,6 +812,8 @@ def main():
         prs.save(out)
         print(f"⚠ 原檔開住(鎖住)，改存 → {out.name}（開之前記得閂舊 pptx）")
     print(f"✓ {out.resolve()}  共 {len(list(prs.slides))} 頁（概述 + 主要發現 + 金額匯總 + 設施 + 單項審查）")
+    dump = _dump_pptx_text(prs, entity)      # text dump → paste 返 cross-check vs scan（唔使影相）
+    print(f"✓ text dump → {dump.name}（paste 返俾 Claude 對住 scan cross-check）")
 
 
 if __name__ == "__main__":
