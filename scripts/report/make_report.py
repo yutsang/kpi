@@ -50,7 +50,7 @@ import build_summary_tables as S
 import build_overview_tables as O
 import build_narrative as N
 import render_review_table_pptx as R
-from build_llm_narrative import generate_llm_narrative   # bundler 會 inline；--llm 用
+from build_llm_narrative import generate_llm_narrative, Workbench   # bundler 會 inline
 
 FEED = "tableau_combined_25.csv"
 
@@ -75,7 +75,7 @@ def _load_llm(entity):
 
 
 def _coverage_probe(df, qingdan):
-    """一次性 coverage 探測（❓頁：主體/KPI/藝術品欄喺唔喺 inputs）→ print 俾 Claude 定 coverage。"""
+    """一次性 coverage 探測（❓頁：主體/KPI/藝術品欄喺唔喺 inputs）→ print 供定 coverage。"""
     def pr(cols, *kw):
         return [c for c in cols if any(k in str(c) for k in kw)] or "無"
     print("  [coverage] feed 主體/執行公司欄:", pr(df.columns, "主體", "執行公司", "控股", "子公司"),
@@ -96,7 +96,7 @@ def _coverage_probe(df, qingdan):
 
 
 def _dump_pptx_text(prs, entity):
-    """把生成嘅 pptx 逐版文字（含表格 cell）dump 做 txt → user paste 返，Claude cross-check vs scan（唔使影相）。"""
+    """把生成嘅 pptx 逐版文字（含表格 cell）dump 做 txt → user paste 返做 cross-check vs scan（唔使影相）。"""
     lines = []
     for i, s in enumerate(prs.slides, 1):
         parts = []
@@ -714,17 +714,23 @@ def main():
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
     _coverage_probe(df, str(qingdan) if qingdan else None)   # 探 ❓頁（主體/KPI/藝術品）coverage
-    if "--no-llm" not in sys.argv:     # 預設即場生成 LLM 敘述（需 KPMG 網+creds）；--no-llm 跳過用現有 json/清單
-        av = sys.argv
-        workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 3
+    # 有 workbench creds 就自動即場生成 LLM 敘述（毋須任何 flag）；冇 creds 靜靜跳過用清單 fallback；--no-llm 強制跳過
+    av = sys.argv
+    if "--no-llm" not in av:
         model = av[av.index("--model") + 1] if "--model" in av else None
-        biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
-        print("  由 feed+清單+表2 即場生成 LLM 敘述（--no-llm 可跳過）…")
         try:
-            generate_llm_narrative(str(feed), entity, str(qingdan) if qingdan else None,
-                                   biao2_dir=biao2_dir, model=model, workers=workers)
-        except Exception as e:
-            print(f"  ⚠ LLM 生成失敗（{type(e).__name__}: {e}）→ 改用現有 json / 清單 fallback")
+            has_creds = bool(Workbench(model=model).config_masked().get("key_ok"))
+        except Exception:
+            has_creds = False
+        if has_creds:
+            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 3
+            biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
+            print("  由 feed+清單+表2 即場生成 LLM 敘述…")
+            try:
+                generate_llm_narrative(str(feed), entity, str(qingdan) if qingdan else None,
+                                       biao2_dir=biao2_dir, model=model, workers=workers)
+            except Exception as e:
+                print(f"  ⚠ LLM 生成失敗（{type(e).__name__}: {e}）→ 用現有 json / 清單 fallback")
     llm = _load_llm(entity)     # {entity}_llm_narrative.json 有就用 LLM 文字，否則清單 fallback
     if llm:
         print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
@@ -812,8 +818,9 @@ def main():
         prs.save(out)
         print(f"⚠ 原檔開住(鎖住)，改存 → {out.name}（開之前記得閂舊 pptx）")
     print(f"✓ {out.resolve()}  共 {len(list(prs.slides))} 頁（概述 + 主要發現 + 金額匯總 + 設施 + 單項審查）")
-    dump = _dump_pptx_text(prs, entity)      # text dump → paste 返 cross-check vs scan（唔使影相）
-    print(f"✓ text dump → {dump.name}（paste 返俾 Claude 對住 scan cross-check）")
+    if "--dump" in sys.argv:      # 要 cross-check 先加 --dump（慳空間；ok 咗嘅唔使 dump）
+        dump = _dump_pptx_text(prs, entity)
+        print(f"✓ text dump → {dump.name}（逐版文字，cross-check 用）")
 
 
 if __name__ == "__main__":
