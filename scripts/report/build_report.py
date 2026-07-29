@@ -138,7 +138,7 @@ def _set(cell, text, *, size=7, bold=False, align=PP_ALIGN.RIGHT, color=None, fi
     r = p.add_run(); r.text = "" if text is None else str(text)
     f = r.font
     f.size = Pt(size); f.bold = bold
-    f.name = "Microsoft JhengHei"
+    f.name = "微软雅黑"
     if color is not None:
         f.color.rgb = color
 
@@ -230,7 +230,7 @@ def _set_title(tb, text):
     p = tf.paragraphs[0]
     r = p.add_run(); r.text = text
     r.font.size = Pt(13); r.font.bold = True
-    r.font.color.rgb = BLUE; r.font.name = "Microsoft JhengHei"
+    r.font.color.rgb = BLUE; r.font.name = "微软雅黑"
 
 
 # ── from build_narrative ──
@@ -1733,18 +1733,18 @@ def _furniture(prs, slide, section_idx=0):
         w = len(s) * 0.088 + 0.15
         tb = slide.shapes.add_textbox(Inches(x), Inches(0.04), Inches(w), Inches(0.2))
         r = tb.text_frame.paragraphs[0].add_run(); r.text = s
-        r.font.size = Pt(6.5); r.font.name = "Microsoft JhengHei"
+        r.font.size = Pt(6.5); r.font.name = "微软雅黑"
         r.font.bold = (i == section_idx)
         r.font.color.rgb = HDR if i == section_idx else grey
         x += w + 0.1
     ft = slide.shapes.add_textbox(Inches(0.5), Inches(slide_h - 0.34), Inches(slide_w - 1.6), Inches(0.28))
     fr = ft.text_frame.paragraphs[0].add_run()
     fr.text = "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。"
-    fr.font.size = Pt(6); fr.font.color.rgb = grey; fr.font.name = "Microsoft JhengHei"
+    fr.font.size = Pt(6); fr.font.color.rgb = grey; fr.font.name = "微软雅黑"
     pg = slide.shapes.add_textbox(Inches(slide_w - 1.05), Inches(slide_h - 0.34), Inches(0.9), Inches(0.28))
     pr = pg.text_frame.paragraphs[0].add_run()
     pr.text = f"初稿　{len(prs.slides._sldIdLst)}"
-    pr.font.size = Pt(8); pr.font.bold = True; pr.font.color.rgb = HDR; pr.font.name = "Microsoft JhengHei"
+    pr.font.size = Pt(8); pr.font.bold = True; pr.font.color.rgb = HDR; pr.font.name = "微软雅黑"
 
 
 # ── from make_report ──
@@ -1782,16 +1782,16 @@ def render_cover(prs, entity, date="2026年6月30日"):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         r = p.add_run(); r.text = line
         r.font.size = Pt(25); r.font.bold = True; r.font.color.rgb = LIGHT
-        r.font.name = "Microsoft JhengHei"
+        r.font.name = "微软雅黑"
     db = slide.shapes.add_textbox(Inches(0.6), Inches(4.7), Inches(4), Inches(0.5))
     dr = db.text_frame.paragraphs[0].add_run(); dr.text = "初稿"
-    dr.font.size = Pt(16); dr.font.bold = True; dr.font.color.rgb = LIGHT; dr.font.name = "Microsoft JhengHei"
+    dr.font.size = Pt(16); dr.font.bold = True; dr.font.color.rgb = LIGHT; dr.font.name = "微软雅黑"
     fb = slide.shapes.add_textbox(Inches(0.6), Inches(5.5), Inches(5), Inches(0.8))
     ftf = fb.text_frame
     for i, line in enumerate(["畢馬威會計師事務所", date]):
         p = ftf.paragraphs[0] if i == 0 else ftf.add_paragraph()
         r = p.add_run(); r.text = line
-        r.font.size = Pt(11); r.font.color.rgb = LIGHT; r.font.name = "Microsoft JhengHei"
+        r.font.size = Pt(11); r.font.color.rgb = LIGHT; r.font.name = "微软雅黑"
 
 
 # ── from make_report ──
@@ -1809,14 +1809,14 @@ def divider(prs, title, number="", subitems=None):
             tx = 2.2
         tb = slide.shapes.add_textbox(Inches(tx), Inches(ny), Inches(w - tx - 0.9), Inches(1.2))
         tr = tb.text_frame.paragraphs[0].add_run(); tr.text = title
-        tr.font.size = Pt(24); tr.font.bold = True; tr.font.color.rgb = LIGHT; tr.font.name = "Microsoft JhengHei"
+        tr.font.size = Pt(24); tr.font.bold = True; tr.font.color.rgb = LIGHT; tr.font.name = "微软雅黑"
         if subitems:
             y = ny + 1.5
             for it in subitems:
                 label, _pg = (it if isinstance(it, (tuple, list)) else (it, ""))
                 rb = slide.shapes.add_textbox(Inches(tx), Inches(y), Inches(w - tx - 1.2), Inches(0.3))
                 rr = rb.text_frame.paragraphs[0].add_run(); rr.text = label
-                rr.font.size = Pt(12); rr.font.color.rgb = LIGHT; rr.font.name = "Microsoft JhengHei"
+                rr.font.size = Pt(12); rr.font.color.rgb = LIGHT; rr.font.name = "微软雅黑"
                 y += 0.4
         return
     slide, w, h = _dark_slide(prs)
@@ -1830,18 +1830,18 @@ def divider(prs, title, number="", subitems=None):
     tb = slide.shapes.add_textbox(Inches(tx), Inches(ny), Inches(w - tx - 0.7), Inches(1.5))
     ttf = tb.text_frame; ttf.word_wrap = True
     tr = ttf.paragraphs[0].add_run(); tr.text = title
-    tr.font.size = Pt(26); tr.font.bold = True; tr.font.color.rgb = LIGHT; tr.font.name = "Microsoft JhengHei"
+    tr.font.size = Pt(26); tr.font.bold = True; tr.font.color.rgb = LIGHT; tr.font.name = "微软雅黑"
     if subitems:
         y = ny + 1.7
         for it in subitems:
             label, page = (it if isinstance(it, (tuple, list)) else (it, ""))
             rb = slide.shapes.add_textbox(Inches(tx), Inches(y), Inches(w - tx - 1.4), Inches(0.32))
             rr = rb.text_frame.paragraphs[0].add_run(); rr.text = label
-            rr.font.size = Pt(12); rr.font.color.rgb = RGBColor(0xC8, 0xC8, 0xD0); rr.font.name = "Microsoft JhengHei"
+            rr.font.size = Pt(12); rr.font.color.rgb = RGBColor(0xC8, 0xC8, 0xD0); rr.font.name = "微软雅黑"
             if page != "":
                 pb = slide.shapes.add_textbox(Inches(w - 1.3), Inches(y), Inches(0.8), Inches(0.32))
                 pr = pb.text_frame.paragraphs[0].add_run(); pr.text = str(page)
-                pr.font.size = Pt(12); pr.font.color.rgb = RGBColor(0xC8, 0xC8, 0xD0); pr.font.name = "Microsoft JhengHei"
+                pr.font.size = Pt(12); pr.font.color.rgb = RGBColor(0xC8, 0xC8, 0xD0); pr.font.name = "微软雅黑"
             y += 0.42
 
 
@@ -1932,9 +1932,9 @@ def _bullets_into(box, bullets, size=8):
         if head:
             rh = p.add_run(); rh.text = head
             rh.font.bold = True; rh.font.size = Pt(size); rh.font.color.rgb = HDR
-            rh.font.name = "Microsoft JhengHei"
+            rh.font.name = "微软雅黑"
         rt = p.add_run(); rt.text = body
-        rt.font.size = Pt(size); rt.font.name = "Microsoft JhengHei"
+        rt.font.size = Pt(size); rt.font.name = "微软雅黑"
 
 
 # ── from make_report ──
@@ -1946,12 +1946,12 @@ def render_overview_page(prs, subtitle, headline, table_df, bullets):
     _furniture(prs, slide, 0)
     st = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.24))
     sp = st.text_frame.paragraphs[0]; sr = sp.add_run(); sr.text = subtitle
-    sr.font.size = Pt(9); sr.font.color.rgb = RGBColor(0x60, 0x60, 0x60); sr.font.name = "Microsoft JhengHei"
+    sr.font.size = Pt(9); sr.font.color.rgb = RGBColor(0x60, 0x60, 0x60); sr.font.name = "微软雅黑"
     if headline:
         hb = slide.shapes.add_textbox(Inches(0.4), Inches(0.56), Inches(slide_w - 0.8), Inches(1.0))
         htf = hb.text_frame; htf.word_wrap = True
         hr = htf.paragraphs[0].add_run(); hr.text = headline
-        hr.font.bold = True; hr.font.size = Pt(11); hr.font.color.rgb = HDR; hr.font.name = "Microsoft JhengHei"
+        hr.font.bold = True; hr.font.size = Pt(11); hr.font.color.rgb = HDR; hr.font.name = "微软雅黑"
     top = 1.5 if headline else 0.6
     left_w = 5.5
     if table_df is not None and not table_df.empty:
@@ -1988,10 +1988,10 @@ def _finding_body(box, find, mgmt, grey):
         p = tf.paragraphs[0] if first else tf.add_paragraph()
         first = False
         rl = p.add_run(); rl.text = label + "："
-        rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "Microsoft JhengHei"
+        rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "微软雅黑"
         rl.font.color.rgb = HDR if col is None else col
         rt = p.add_run(); rt.text = str(text)[:300]
-        rt.font.size = Pt(8); rt.font.name = "Microsoft JhengHei"
+        rt.font.size = Pt(8); rt.font.name = "微软雅黑"
         if col is not None:
             rt.font.color.rgb = col
 
@@ -2034,7 +2034,7 @@ def render_findings(prs, ent_up, df, narr):
                 br = btf.paragraphs[0].add_run()
                 br.text = f"{code}　{name[:32]}　│　報告 {fmt_money(rep)}／潛在調整 {fmt_money(adjv)} 萬澳門元"
                 br.font.bold = True; br.font.size = Pt(9)
-                br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "Microsoft JhengHei"
+                br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "微软雅黑"
                 # body
                 body = slide.shapes.add_textbox(Inches(0.4), Inches(y + 0.32),
                                                 Inches(slide_w - 0.8), Inches(2.5))
@@ -2079,7 +2079,7 @@ def render_site_visits(prs, ent_up, df, narr, threshold=2000):
             br = btf.paragraphs[0].add_run()
             br.text = f"{code}　{name[:30]}　│　設施建設（資本性支出）{fmt_money(amt)} 萬澳門元"
             br.font.bold = True; br.font.size = Pt(9)
-            br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "Microsoft JhengHei"
+            br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "微软雅黑"
             body = slide.shapes.add_textbox(Inches(0.4), Inches(y + 0.32), Inches(slide_w - 0.8), Inches(2.5))
             tf = body.text_frame; tf.word_wrap = True
             tf.margin_left = tf.margin_right = Emu(45000)
@@ -2091,10 +2091,10 @@ def render_site_visits(prs, ent_up, df, narr, threshold=2000):
                 p0 = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
                 rl = p0.add_run(); rl.text = label + "："
-                rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "Microsoft JhengHei"
+                rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "微软雅黑"
                 rl.font.color.rgb = HDR if col is None else col
                 rt = p0.add_run(); rt.text = str(text)[:300]
-                rt.font.size = Pt(8); rt.font.name = "Microsoft JhengHei"
+                rt.font.size = Pt(8); rt.font.name = "微软雅黑"
                 if col is not None and label != "地點":
                     rt.font.color.rgb = col
             y += 3.0
@@ -2116,7 +2116,7 @@ def _prose_slide(prs, title, bullets, headline=None):
         p = tf.paragraphs[0]; p.space_after = Pt(10)
         r = p.add_run(); r.text = headline
         r.font.bold = True; r.font.size = Pt(11); r.font.color.rgb = HDR
-        r.font.name = "Microsoft JhengHei"
+        r.font.name = "微软雅黑"
         started = True
     for head, body in bullets:
         p = tf.add_paragraph() if started else tf.paragraphs[0]
@@ -2126,9 +2126,9 @@ def _prose_slide(prs, title, bullets, headline=None):
         if head:
             rh = p.add_run(); rh.text = head
             rh.font.bold = True; rh.font.size = Pt(10); rh.font.color.rgb = HDR
-            rh.font.name = "Microsoft JhengHei"
+            rh.font.name = "微软雅黑"
         rt = p.add_run(); rt.text = body
-        rt.font.size = Pt(10); rt.font.name = "Microsoft JhengHei"
+        rt.font.size = Pt(10); rt.font.name = "微软雅黑"
 
 
 # ── from make_report ──
@@ -2218,7 +2218,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None):
             sb = slide.shapes.add_textbox(Inches(0.4), Inches(0.68), Inches(slide_w - 0.8), Inches(0.24))
             sr = sb.text_frame.paragraphs[0].add_run(); sr.text = subtitle
             sr.font.size = Pt(8); sr.font.italic = True
-            sr.font.color.rgb = RGBColor(0x70, 0x70, 0x70); sr.font.name = "Microsoft JhengHei"
+            sr.font.color.rgb = RGBColor(0x70, 0x70, 0x70); sr.font.name = "微软雅黑"
         half = (len(page) + 1) // 2
         lb = slide.shapes.add_textbox(Inches(0.4), Inches(top), Inches(colw), Inches(6.0 - top + 0.85))
         _bullets_into(lb, page[:half], size=8)
@@ -2393,7 +2393,7 @@ def main():
     if llm:
         print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
 
-    tmpl = None if "--no-template" in sys.argv else _find_template()   # --no-template 逃生門：用 fresh 手砌
+    tmpl = _find_template() if "--use-template" in sys.argv else None   # 預設 fresh 手砌（template 樣式已 hardcode）；--use-template 先開 template
     if tmpl:
         prs = Presentation(str(tmpl))
         _strip_slides(prs)      # drop_rel 正確清走原有 content slides（唔會 duplicate 名 corrupt）
