@@ -1617,6 +1617,21 @@ def _strip_slides(prs):
 
 
 # ── from make_report ──
+def _renumber_slides(prs, base=9000):
+    """save 前把生成嘅 slide part 重編做高號（9000+）→ 就算 template 有殘留 orphan part（清唔切）
+    都唔會撞名 → 徹底避開 duplicate-name corruption / 要 repair。"""
+    try:
+        from pptx.opc.packuri import PackURI
+    except Exception:
+        return
+    for i, slide in enumerate(prs.slides, base):
+        try:
+            slide.part.partname = PackURI(f"/ppt/slides/slide{i}.xml")
+        except Exception:
+            pass
+
+
+# ── from make_report ──
 def _blank_layout(prs):
     """乾淨 layout（手砌 data 版用）：template 揀 'Title Only'/'Blank'（有 master title bar/footer），否則 index。"""
     for master in prs.slide_masters:
@@ -2378,7 +2393,7 @@ def main():
     if llm:
         print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
 
-    tmpl = _find_template()     # 空 KPMG template（durable）→ 開佢做 base，layout/master 提供 formatting
+    tmpl = None if "--no-template" in sys.argv else _find_template()   # --no-template 逃生門：用 fresh 手砌
     if tmpl:
         prs = Presentation(str(tmpl))
         _strip_slides(prs)      # drop_rel 正確清走原有 content slides（唔會 duplicate 名 corrupt）
@@ -2457,6 +2472,9 @@ def main():
     if narr:
         divider(prs, "附件", "6")
         render_site_visits(prs, ent_up, sdf, narr)
+
+    if tmpl:      # template mode：重編 slide 高號，徹底避開 template 殘留 orphan part 撞名 corruption
+        _renumber_slides(prs)
 
     out = Path(f"{entity}_報告數字表.pptx")
     try:
