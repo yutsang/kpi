@@ -94,7 +94,7 @@ def _set(cell, text, *, size=7, bold=False, align=PP_ALIGN.RIGHT, color=None, fi
     r = p.add_run(); r.text = "" if text is None else str(text)
     f = r.font
     f.size = Pt(size); f.bold = bold
-    f.name = "Microsoft JhengHei"
+    f.name = "微软雅黑"
     if color is not None:
         f.color.rgb = color
 
@@ -183,7 +183,7 @@ def _set_title(tb, text):
     p = tf.paragraphs[0]
     r = p.add_run(); r.text = text
     r.font.size = Pt(13); r.font.bold = True
-    r.font.color.rgb = BLUE; r.font.name = "Microsoft JhengHei"
+    r.font.color.rgb = BLUE; r.font.name = "微软雅黑"
 
 
 def main():
