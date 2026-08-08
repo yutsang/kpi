@@ -68,8 +68,82 @@ def main():
                 print(f"       [idx {ph.placeholder_format.idx}] {_ph_type(ph):<10} "
                       f"name='{ph.name}'  pos=({_in(ph.left)},{_in(ph.top)},{_in(ph.width)},{_in(ph.height)})"
                       f"  font：{_font_of(ph)}")
+    _dump_theme(prs)
+    _dump_bg(prs)
     print("\n" + "=" * 90)
-    print("→ paste 返：我睇 layout 名 + placeholder 佈局，決定可唔可以直接用 master 填內容")
+    print("→ paste 返（尤其【THEME 色盤/字體】+【背景色】兩段）：我 hardcode 精確 spec 入 code")
+
+
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def _clr_hex(el):
+    """a:*Clr（srgbClr/sysClr）→ #hex。"""
+    for ch in el:
+        tag = ch.tag
+        if tag == A + "srgbClr":
+            return "#" + (ch.get("val") or "")
+        if tag == A + "sysClr":
+            return "#" + (ch.get("lastClr") or ch.get("val") or "")
+        if tag == A + "schemeClr":
+            return "scheme:" + (ch.get("val") or "")
+    return "?"
+
+
+def _dump_theme(prs):
+    """由每個 master 嘅 theme part 抽 色盤(clrScheme) + 字體(fontScheme)。"""
+    try:
+        from lxml import etree
+    except ImportError:
+        print("（冇 lxml，跳過 theme）"); return
+    print("\n" + "=" * 90)
+    for mi, master in enumerate(prs.slide_masters):
+        theme = None
+        for rel in master.part.rels.values():
+            if "theme" in getattr(rel, "reltype", ""):
+                theme = rel.target_part
+                break
+        if theme is None:
+            continue
+        root = etree.fromstring(theme.blob)
+        print(f"\n■ MASTER {mi} — THEME 色盤：")
+        clr = root.find(f".//{A}clrScheme")
+        if clr is not None:
+            for c in clr:
+                print(f"    {etree.QName(c).localname:<10}: {_clr_hex(c)}")
+        print(f"■ MASTER {mi} — THEME 字體：")
+        fs = root.find(f".//{A}fontScheme")
+        if fs is not None:
+            for grp in fs:
+                nm = etree.QName(grp).localname
+                if nm not in ("majorFont", "minorFont"):
+                    continue
+                lat = grp.find(f"{A}latin"); ea = grp.find(f"{A}ea"); cs = grp.find(f"{A}cs")
+                print(f"    {nm}: latin={lat.get('typeface') if lat is not None else ''}"
+                      f"  ea={ea.get('typeface') if ea is not None else ''}"
+                      f"  cs={cs.get('typeface') if cs is not None else ''}")
+
+
+def _dump_bg(prs):
+    """master + 關鍵 layout（封面/分隔）背景填色。"""
+    print("\n" + "=" * 90 + "\n■ 背景色（master + 封面/分隔 layout）：")
+    def _fillinfo(obj, label):
+        try:
+            f = obj.background.fill
+            t = str(f.type)
+            hexv = ""
+            try:
+                hexv = f"#{f.fore_color.rgb}"
+            except Exception:
+                pass
+            print(f"    {label}: type={t} {hexv}")
+        except Exception as e:
+            print(f"    {label}: (讀唔到 {e})")
+    for mi, master in enumerate(prs.slide_masters):
+        _fillinfo(master, f"master{mi}")
+        for lay in master.slide_layouts:
+            if any(k in lay.name for k in ("TITLE SLIDE", "Section Divider", "Divider", "Back Cover")):
+                _fillinfo(lay, f"  layout '{lay.name}'")
 
 
 if __name__ == "__main__":
