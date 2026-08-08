@@ -285,7 +285,7 @@ def _review_pages(prs, year, page_start):
 
     # 分頁：盡量 by NG，但填得滿就填 —— 範疇放得落整個放；唔夠位但仲有位(≥6行)就拆範疇填滿當前頁
     # (續頁重覆 section header 加「（續）」)；冇乜位就整個範疇落下頁；範疇本身大過一頁先切。
-    CAP = 27
+    CAP = 25
 
     def _cont(blk, start):
         sec = blk[0]
@@ -307,18 +307,35 @@ def _review_pages(prs, year, page_start):
         chunks.append(cur)
     if not chunks:
         chunks = [[]]
+    tbl_name = f"MGM {year}年度投資計劃單個項目截至2025年末的審查結果匯總表"
     page = page_start
     for ci, chunk in enumerate(chunks):
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         _breadcrumb(slide, 3)
-        st = slide.shapes.add_textbox(Inches(0.3), Inches(0.36), Inches(W - 0.6), Inches(0.24))
-        sr = st.text_frame.paragraphs[0].add_run()
-        sr.text = f"其他信息  |  MGM {year}年度投資計劃單個項目審查結果匯總表（{ci + 1}/{len(chunks)}）"
-        sr.font.size = Pt(11); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT_HEAD
+        # ① 小 subtitle（灰）② 大 navy 標題 —— 對 scan slide 51 頂部
+        sub = slide.shapes.add_textbox(Inches(0.3), Inches(0.30), Inches(W - 0.6), Inches(0.18))
+        subr = sub.text_frame.paragraphs[0].add_run()
+        subr.text = "其他信息  |  單個項目審查結果匯總"
+        subr.font.size = Pt(8.5); subr.font.color.rgb = RGBColor(0x59, 0x59, 0x59); subr.font.name = FONT_CN
+        tt = slide.shapes.add_textbox(Inches(0.3), Inches(0.46), Inches(W - 0.6), Inches(0.30))
+        ttr = tt.text_frame.paragraphs[0].add_run()
+        ttr.text = f"{tbl_name}（{ci + 1}/{len(chunks)}）"
+        ttr.font.size = Pt(13); ttr.font.bold = True; ttr.font.color.rgb = NAVY; ttr.font.name = FONT_HEAD
+        # ③ 表頂 navy caption bar（重覆表名，貼 scan）
+        from pptx.enum.shapes import MSO_SHAPE
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.2), Inches(0.82),
+                                     Inches(W - 0.4), Inches(0.17))
+        bar.fill.solid(); bar.fill.fore_color.rgb = NAVY; bar.line.fill.background()
+        bar.shadow.inherit = False
+        btf = bar.text_frame; btf.margin_top = btf.margin_bottom = Emu(0)
+        btf.margin_left = Emu(36000); btf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        bpr = btf.paragraphs[0]; bpr.alignment = PP_ALIGN.LEFT
+        brun = bpr.add_run(); brun.text = tbl_name
+        brun.font.size = Pt(6); brun.font.bold = True; brun.font.color.rgb = WHITE; brun.font.name = FONT_CN
         ncol = 18
         nr = 2 + len(chunk)
-        gt = slide.shapes.add_table(nr, ncol, Inches(0.2), Inches(0.68),
-                                    Inches(W - 0.4), Inches(min(6.3, nr * 0.175))).table
+        gt = slide.shapes.add_table(nr, ncol, Inches(0.2), Inches(0.99),
+                                    Inches(W - 0.4), Inches(min(5.3, nr * 0.175))).table
         gt.first_row = False; gt.horz_banding = False
         tw = sum(RV_W)
         for i, wd in enumerate(RV_W):
@@ -348,6 +365,18 @@ def _review_pages(prs, year, page_start):
         _thin_borders(gt)
         for rr in gt.rows:
             rr.height = Emu(150000)      # ~0.164in compact 行高（貼 scan 密度）
+        # ④ 表下：資料來源（左）+（下頁待續）（右，最後一頁除外）—— 對 scan
+        # note 固定放頁底（footer 7.15 之上）—— 唔跟表估算高度（項目名 wrap 會令表比 requested 高）
+        ty = 6.92
+        src = slide.shapes.add_textbox(Inches(0.2), Inches(ty), Inches(W - 2.0), Inches(0.16))
+        srcr = src.text_frame.paragraphs[0].add_run()
+        srcr.text = "資料來源：管理層提供之項目投資計劃及執行報告資料，畢馬威分析"
+        srcr.font.size = Pt(6.5); srcr.font.color.rgb = RGBColor(0x59, 0x59, 0x59); srcr.font.name = FONT_CN
+        if ci < len(chunks) - 1:
+            con = slide.shapes.add_textbox(Inches(W - 1.7), Inches(ty), Inches(1.5), Inches(0.16))
+            conp = con.text_frame.paragraphs[0]; conp.alignment = PP_ALIGN.RIGHT
+            conr = conp.add_run(); conr.text = "（下頁待續）"
+            conr.font.size = Pt(6.5); conr.font.color.rgb = RGBColor(0x59, 0x59, 0x59); conr.font.name = FONT_CN
         _footer(slide, page); page += 1
     return page
 
