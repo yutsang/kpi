@@ -55,24 +55,45 @@ def _rate(rep, pl):
     return f"{rep / pl * 100:.1f}%" if pl else "-"
 
 
+import re as _re
+_NUMRE = _re.compile(r"^\(?-?[\d,]+(\.\d+)?\)?%?$")
+
+
+def _tonum(s):
+    s = str(s).replace(",", "").replace("%", "")
+    neg = s.startswith("(") and s.endswith(")")
+    s = s.strip("()")
+    try:
+        v = float(s)
+        return -v if neg else v
+    except ValueError:
+        return 0.0
+
+
 def load_agg():
-    """讀 results/project_dump.tsv（報告年25）aggregate 到 (scope,範疇)；冇就用假數。回 dict。"""
+    """讀 results/project_dump.tsv（報告年25）aggregate 到 (scope,範疇)；冇就用假數。回 dict。
+    ⚠ tab 常被 copy/paste 變 space + 項目名含空格 → 唔逐 column split，改『由尾認數字』：
+    前 3 token = 報告年/scope/範疇；尾段連續數字 = [計劃,調整前,調整,調整後,(完成率?),設施,活動]。"""
     p = Path("results/project_dump.tsv")
     recs = []
     if p.exists():
-        lines = p.read_text(encoding="utf-8").splitlines()
-        hdr = lines[0].split("\t")
-        ix = {h: i for i, h in enumerate(hdr)}
-        for ln in lines[1:]:
-            f = ln.split("\t")
-            if not f or len(f) < len(hdr):
+        lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        for ln in lines[1:]:      # skip header
+            tok = ln.split()
+            if len(tok) < 9:
                 continue
-            if f[ix["報告年"]] != "25":
+            nums = []
+            while tok and _NUMRE.match(tok[-1]):
+                nums.insert(0, tok.pop())
+            if len(nums) < 6 or len(tok) < 3:
                 continue
-            recs.append((f[ix["scope"]], f[ix["範疇"]], 1,
-                         float(f[ix["計劃"]] or 0), float(f[ix["調整前"]] or 0),
-                         float(f[ix["調整後"]] or 0), float(f[ix["設施"]] or 0), float(f[ix["活動"]] or 0)))
-        src = "results/project_dump.tsv（真數）"
+            yr, scope, sub = tok[0], tok[1], tok[2]
+            if yr != "25":
+                continue
+            計劃, 調整前, 調整後 = _tonum(nums[0]), _tonum(nums[1]), _tonum(nums[3])
+            設施, 活動 = _tonum(nums[-2]), _tonum(nums[-1])
+            recs.append((scope, sub, 1, 計劃, 調整前, 調整後, 設施, 活動))
+        src = f"results/project_dump.tsv（真數，{len(recs)} 個 25年項目）"
     else:
         recs = FAKE
         src = "假數（fallback；run inspect_project.py 出真數）"
