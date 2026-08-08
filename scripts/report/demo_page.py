@@ -15,13 +15,19 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.oxml.ns import qn
 
-NAVY = RGBColor(0x00, 0x33, 0x8D)
+# 由 template theme hardcode（精確 spec，唔再估）
+NAVY = RGBColor(0x00, 0x33, 0x8D)      # dk2/accent2 主色
+DARK = RGBColor(0x0C, 0x23, 0x3C)      # accent3 封面/分隔深底
+LT2 = RGBColor(0xE5, 0xE5, 0xE5)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 SUBTOT = RGBColor(0xD9, 0xE1, 0xF2)
 TOT = RGBColor(0xBD, 0xD7, 0xEE)
 SECHDR = RGBColor(0xEE, 0xF1, 0xF8)
 GREY = RGBColor(0x7F, 0x7F, 0x7F)
-FONT = "微软雅黑"
+FONT_CN = "微软雅黑"      # 中文 body（theme minorFont ea）
+FONT_NUM = "Arial"        # 數字/英文（theme minorFont latin）★表格數字用呢個
+FONT_HEAD = "KPMG Bold"   # 標題（theme majorFont；Win 有裝，Mac render 會 fallback）
+FONT = FONT_CN            # 舊 alias
 
 SUB = ["（萬澳門元）", "項目\n數量", "獲批的計劃\n投資金額", "報告\n投資金額", "投資計劃\n完成率",
        "潛在調整後\n投資金額", "潛在調整後\n完成率", "設施建設/\n資本性支出", "活動舉辦/\n營運性支出"]
@@ -261,7 +267,8 @@ def _set_cell(cell, text, *, size=5.5, bold=False, fill=None, align=PP_ALIGN.RIG
     tf = cell.text_frame; tf.word_wrap = True
     p = tf.paragraphs[0]; p.alignment = align
     r = p.add_run(); r.text = str(text)
-    r.font.size = Pt(size); r.font.bold = bold; r.font.name = FONT
+    r.font.size = Pt(size); r.font.bold = bold
+    r.font.name = FONT_CN if any("一" <= c <= "鿿" for c in str(text)) else FONT_NUM
     r.font.color.rgb = WHITE if white else RGBColor(0x22, 0x22, 0x22)
 
 
@@ -299,29 +306,45 @@ def build():
     mr = mg.text_frame.paragraphs[0].add_run(); mr.text = "MGM  ◀ ⌂ ▶"
     mr.font.size = Pt(6); mr.font.color.rgb = GREY; mr.font.name = FONT
 
-    st = slide.shapes.add_textbox(Inches(0.3), Inches(0.36), Inches(W - 0.6), Inches(0.24))
+    # 真敘述（gitignored results/demo_narrative.txt）
+    headline_txt, bullets_real = None, BULLETS
+    _np = Path("results/demo_narrative.txt")
+    if _np.exists():
+        _nl = [x for x in _np.read_text(encoding="utf-8").splitlines() if x.strip()]
+        if _nl:
+            headline_txt = _nl[0]
+            bullets_real = [(x.split("|||", 1) if "|||" in x else ("", x)) for x in _nl[1:]]
+    if headline_txt is None:
+        headline_txt = "MGM 2025年度計劃投資項目涵蓋博彩及非博彩範疇（示範；真 headline 由 build 填）。"
+
+    # title（subtitle line）0.53,0.48 —— KPMG Bold navy
+    st = slide.shapes.add_textbox(Inches(0.53), Inches(0.44), Inches(9.76), Inches(0.4))
     sr = st.text_frame.paragraphs[0].add_run()
     sr.text = "2025年度投資計劃執行情況概述  |  2025年度投資項目的整體執行概況"
-    sr.font.size = Pt(10); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT
+    sr.font.size = Pt(12); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT_HEAD
 
-    hl = slide.shapes.add_textbox(Inches(0.3), Inches(0.64), Inches(W - 0.6), Inches(0.8))
-    hr = hl.text_frame.paragraphs[0].add_run()
+    # headline（strapline）navy 段
+    hl = slide.shapes.add_textbox(Inches(0.53), Inches(1.02), Inches(9.76), Inches(1.0))
     hl.text_frame.word_wrap = True
-    hr.text = ("MGM的2025年度計劃投資項目涵蓋博彩及非博彩範疇。下表列示各範疇的獲批計劃投資金額、報告投資金額、"
-               "投資計劃完成率，以及考慮潛在調整後的投資金額及完成率。（示範版式；數字視乎所讀數據）")
-    hr.font.size = Pt(7.5); hr.font.color.rgb = NAVY; hr.font.name = FONT
+    hr = hl.text_frame.paragraphs[0].add_run(); hr.text = headline_txt
+    hr.font.size = Pt(7.5); hr.font.color.rgb = NAVY; hr.font.name = FONT_CN
 
-    tt = slide.shapes.add_textbox(Inches(0.3), Inches(1.55), Inches(6.4), Inches(0.2))
+    # 左 table title + 右 narrative subtitle（收緊：貼近 headline 下）
+    tt = slide.shapes.add_textbox(Inches(0.53), Inches(1.72), Inches(6.46), Inches(0.2))
     ttr = tt.text_frame.paragraphs[0].add_run(); ttr.text = "MGM 2025年度計劃的整體投資執行概況"
-    ttr.font.size = Pt(7); ttr.font.bold = True; ttr.font.color.rgb = NAVY; ttr.font.name = FONT
+    ttr.font.size = Pt(7.5); ttr.font.bold = True; ttr.font.color.rgb = NAVY; ttr.font.name = FONT_CN
+    ns = slide.shapes.add_textbox(Inches(7.1), Inches(1.72), Inches(3.19), Inches(0.2))
+    nsr = ns.text_frame.paragraphs[0].add_run(); nsr.text = "2025年度投資項目的整體執行概況"
+    nsr.font.size = Pt(7.5); nsr.font.bold = True; nsr.font.color.rgb = NAVY; nsr.font.name = FONT_CN
 
+    # 表（收緊 y=1.94）
     ncol = 9
-    gt = slide.shapes.add_table(2 + len(ROWS), ncol, Inches(0.3), Inches(1.78), Inches(6.45), Inches(4.9)).table
+    gt = slide.shapes.add_table(2 + len(ROWS), ncol, Inches(0.53), Inches(1.94), Inches(6.46), Inches(4.5)).table
     gt.first_row = False; gt.horz_banding = False
     widths = [1.35, 0.5, 0.72, 0.7, 0.62, 0.72, 0.62, 0.6, 0.6]
     tot_w = sum(widths)
     for i, wd in enumerate(widths):
-        gt.columns[i].width = Inches(wd * 6.45 / tot_w)
+        gt.columns[i].width = Inches(wd * 6.46 / tot_w)
     super_hdr = ["", "", "", "報告投資金額", "", "潛在調整後投資金額", "", "", ""]
     for c in range(ncol):
         _set_cell(gt.cell(0, c), super_hdr[c], size=5.5, bold=True, fill=NAVY, white=True, align=PP_ALIGN.CENTER)
@@ -338,23 +361,24 @@ def build():
             _set_cell(gt.cell(ri, c), (vals[c - 1] if vals else ""), size=5.5, bold=bold, fill=fill)
     _thin_borders(gt)
 
-    ny = 1.78 + 4.9 + 0.03
-    nb2 = slide.shapes.add_textbox(Inches(0.3), Inches(ny), Inches(6.45), Inches(0.4))
+    nb2 = slide.shapes.add_textbox(Inches(0.53), Inches(6.62), Inches(6.46), Inches(0.35))
     b = nb2.text_frame.paragraphs[0].add_run()
     b.text = "註：投資計劃完成率 ＝ 報告投資金額 ／ 獲批的計劃投資金額；潛在調整後完成率 ＝ 潛在調整後投資金額 ／ 獲批的計劃投資金額。"
-    b.font.size = Pt(5); b.font.italic = True; b.font.color.rgb = GREY; b.font.name = FONT
+    b.font.size = Pt(5); b.font.italic = True; b.font.color.rgb = GREY; b.font.name = FONT_CN
 
-    nb = slide.shapes.add_textbox(Inches(7.0), Inches(1.78), Inches(3.5), Inches(4.9))
+    # 右敘述（精確位 7.1,3.19）密實
+    nb = slide.shapes.add_textbox(Inches(7.1), Inches(1.94), Inches(3.19), Inches(4.9))
     ntf = nb.text_frame; ntf.word_wrap = True
-    for j, (lead, body) in enumerate(BULLETS):
+    for j, (lead, body) in enumerate(bullets_real):
         p = ntf.paragraphs[0] if j == 0 else ntf.add_paragraph()
-        p.space_after = Pt(4)
+        p.space_after = Pt(3)
         rb = p.add_run(); rb.text = "■ "
-        rb.font.size = Pt(7.5); rb.font.color.rgb = NAVY; rb.font.name = FONT
-        rl = p.add_run(); rl.text = lead
-        rl.font.size = Pt(7.5); rl.font.bold = True; rl.font.color.rgb = NAVY; rl.font.name = FONT
+        rb.font.size = Pt(6.5); rb.font.color.rgb = NAVY; rb.font.name = FONT_CN
+        if lead:
+            rl = p.add_run(); rl.text = lead
+            rl.font.size = Pt(6.5); rl.font.bold = True; rl.font.color.rgb = NAVY; rl.font.name = FONT_CN
         rt = p.add_run(); rt.text = body
-        rt.font.size = Pt(7.5); rt.font.color.rgb = RGBColor(0x33, 0x33, 0x33); rt.font.name = FONT
+        rt.font.size = Pt(6.5); rt.font.color.rgb = RGBColor(0x33, 0x33, 0x33); rt.font.name = FONT_CN
 
     ft = slide.shapes.add_textbox(Inches(0.3), Inches(7.15), Inches(7), Inches(0.25))
     fr = ft.text_frame.paragraphs[0].add_run()
