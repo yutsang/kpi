@@ -95,3 +95,9 @@ IMG_*.jpeg
 *.JPG
 *.jpg
 *.jpeg
+
+# demo/inspect outputs (may contain real numbers) — never commit
+demo_overview.pptx
+demo_*.pdf
+demo_*.png
+project_dump.tsv
