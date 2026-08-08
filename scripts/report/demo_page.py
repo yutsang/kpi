@@ -147,6 +147,112 @@ def _rows(agg):
     return rows, bullets
 
 
+def load_projects(year="25"):
+    """讀 project_dump 逐項目（year）：(scope,範疇,序號,名稱,計劃,報告,調整,調整後,設施,活動)。"""
+    p = Path("results/project_dump.tsv")
+    if not p.exists():
+        return []
+    out = []
+    for ln in p.read_text(encoding="utf-8").splitlines()[1:]:
+        tok = ln.split()
+        if len(tok) < 9:
+            continue
+        nums = []
+        while tok and _NUMRE.match(tok[-1]):
+            nums.insert(0, tok.pop())
+        if len(nums) < 6 or len(tok) < 4 or tok[0] != year:
+            continue
+        out.append((tok[1], tok[2], tok[3], " ".join(tok[4:]),
+                    _tonum(nums[0]), _tonum(nums[1]), _tonum(nums[2]), _tonum(nums[3]),
+                    _tonum(nums[-2]), _tonum(nums[-1])))
+    return out
+
+
+# 單項審查 18 欄
+RV_SUPER = [("項目基本信息", 0, 5), ("投資金額的潛在調整事項", 5, 14), ("潛在調整後投資金額", 14, 18)]
+RV_SUB = ["項目\n序號", "項目名稱", "計劃\n投資金額", "報告\n投資金額", "投資計劃\n完成率",
+          "一般支持\n人工成本", "其他日常\n營運調整", "超出可計入\n內部資源", "酒店客房\n改造", "不符吸引\n外國客源",
+          "未完全\n實現目的", "獲批前\n未認可", "〔跨年〕", "潛在調整\n合計", "調整後\n投資金額",
+          "潛在調整後\n完成率", "設施建設/\n資本性", "活動舉辦/\n營運性"]
+RV_W = [0.42, 2.0, 0.6, 0.55, 0.5] + [0.5] * 9 + [0.55, 0.5, 0.55, 0.55]
+
+
+def _render_review(prs):
+    """單項審查 18 欄大表 demo（第 1 頁：博彩 + 吸引外國客源，模仿 scan slide 35）。"""
+    projs = load_projects("25")
+    W = 10.83
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    # breadcrumb + subtitle
+    st = slide.shapes.add_textbox(Inches(0.3), Inches(0.3), Inches(W - 0.6), Inches(0.24))
+    sr = st.text_frame.paragraphs[0].add_run()
+    sr.text = "其他信息  |  MGM 2025年度投資計劃單個項目審查結果匯總表（1/5）"
+    sr.font.size = Pt(10); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT
+
+    # 組行：博彩2範疇 + 吸引外國客源（約一頁）
+    show = [("gaming", "博彩娛樂場優化"), ("gaming", "博彩設施設備優化"), ("non_gaming", "吸引外國客源")]
+    body = []
+    for scope, sub in show:
+        ps = [p for p in projs if p[0] == scope and p[1] == sub]
+        if not ps:
+            continue
+        secname = ("博彩項目" if scope == "gaming" else "非博彩項目") + "—" + sub
+        body.append(("sec", secname, None))
+        st_ = [0.0] * 6
+        for p in sorted(ps, key=lambda x: x[2]):
+            _, _, code, name, pl, rep, adj, aft, fac, act = p
+            rate = _rate(rep, pl); arate = _rate(aft, pl)
+            vals = [_fmt(pl), _fmt(rep), rate, "-", "-", "-", "-", "-", "-", "-", "-",
+                    _fmt(adj), _fmt(aft), arate, _fmt(fac), _fmt(act)]
+            body.append(("data", (code, name), vals))
+            for i, x in enumerate([pl, rep, adj, aft, fac, act]):
+                st_[[0, 1, 2, 3, 4, 5][i]] += x
+        pl, rep, adj, aft, fac, act = st_
+        body.append(("subtot", sub + " 小計", [_fmt(pl), _fmt(rep), _rate(rep, pl), "-", "-", "-", "-",
+                     "-", "-", "-", "-", _fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
+
+    ncol = 18
+    gt = slide.shapes.add_table(2 + len(body), ncol, Inches(0.2), Inches(0.62),
+                                Inches(W - 0.4), Inches(6.4)).table
+    gt.first_row = False; gt.horz_banding = False
+    tw = sum(RV_W)
+    for i, wd in enumerate(RV_W):
+        gt.columns[i].width = Inches(wd * (W - 0.4) / tw)
+    # super row
+    for c in range(ncol):
+        _set_cell(gt.cell(0, c), "", size=4.5, fill=NAVY, white=True)
+    for name, a, b in RV_SUPER:
+        gt.cell(0, a).merge(gt.cell(0, b - 1))
+        _set_cell(gt.cell(0, a), name, size=5, bold=True, fill=NAVY, white=True, align=PP_ALIGN.CENTER)
+    # sub row
+    for c in range(ncol):
+        _set_cell(gt.cell(1, c), RV_SUB[c], size=4.3, bold=True, fill=NAVY, white=True,
+                  align=PP_ALIGN.LEFT if c == 1 else PP_ALIGN.CENTER)
+    # body
+    for ri, (kind, label, vals) in enumerate(body, start=2):
+        fill = {"sec": SECHDR, "subtot": SUBTOT}.get(kind)
+        bold = kind in ("sec", "subtot")
+        if kind == "data":
+            code, name = label
+            _set_cell(gt.cell(ri, 0), code, size=4.3, align=PP_ALIGN.LEFT)
+            _set_cell(gt.cell(ri, 1), name, size=4.3, align=PP_ALIGN.LEFT)
+            for c, v in enumerate(vals, start=2):
+                _set_cell(gt.cell(ri, c), v, size=4.3)
+        else:
+            _set_cell(gt.cell(ri, 0), "", fill=fill)
+            _set_cell(gt.cell(ri, 1), label, size=4.5, bold=bold, fill=fill, align=PP_ALIGN.LEFT)
+            for c in range(2, ncol):
+                _set_cell(gt.cell(ri, c), (vals[c - 2] if vals else ""), size=4.3, bold=bold, fill=fill)
+    _thin_borders(gt)
+    # footer
+    ft = slide.shapes.add_textbox(Inches(0.3), Inches(7.15), Inches(7), Inches(0.25))
+    fr = ft.text_frame.paragraphs[0].add_run()
+    fr.text = "KPMG　© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。（示範：逐項目調整分類欄由真 build 填）"
+    fr.font.size = Pt(6); fr.font.color.rgb = GREY; fr.font.name = FONT
+    pg = slide.shapes.add_textbox(Inches(W - 1.1), Inches(7.15), Inches(0.9), Inches(0.25))
+    pr = pg.text_frame.paragraphs[0].add_run(); pr.text = "初稿　35"
+    pr.font.size = Pt(7); pr.font.bold = True; pr.font.color.rgb = NAVY; pr.font.name = FONT
+
+
 def _set_cell(cell, text, *, size=5.5, bold=False, fill=None, align=PP_ALIGN.RIGHT, white=False):
     cell.margin_left = cell.margin_right = Emu(18000)
     cell.margin_top = cell.margin_bottom = Emu(2500)
@@ -258,8 +364,9 @@ def build():
     pr = pg.text_frame.paragraphs[0].add_run(); pr.text = "初稿　11"
     pr.font.size = Pt(7); pr.font.bold = True; pr.font.color.rgb = NAVY; pr.font.name = FONT
 
+    _render_review(prs)      # 第 2 版：單項 18 欄大表 demo
     prs.save("demo_overview.pptx")
-    print("✓ demo_overview.pptx（PowerPoint 開睇）")
+    print("✓ demo_overview.pptx（2 版：概述 + 單項18欄大表；PowerPoint 開睇）")
 
 
 if __name__ == "__main__":
