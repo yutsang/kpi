@@ -183,80 +183,145 @@ RV_SUB = ["項目\n序號", "項目名稱", "計劃\n投資金額", "報告\n投
 RV_W = [0.42, 2.0, 0.6, 0.55, 0.5] + [0.5] * 9 + [0.55, 0.5, 0.55, 0.55]
 
 
-def _render_review(prs):
-    """單項審查 18 欄大表 demo（第 1 頁：博彩 + 吸引外國客源，模仿 scan slide 35）。"""
-    projs = load_projects("25")
+def _footer(slide, page):
     W = 10.83
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    # breadcrumb + subtitle
-    st = slide.shapes.add_textbox(Inches(0.3), Inches(0.3), Inches(W - 0.6), Inches(0.24))
-    sr = st.text_frame.paragraphs[0].add_run()
-    sr.text = "其他信息  |  MGM 2025年度投資計劃單個項目審查結果匯總表（1/5）"
-    sr.font.size = Pt(10); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT
+    ft = slide.shapes.add_textbox(Inches(0.3), Inches(7.15), Inches(7), Inches(0.25))
+    fr = ft.text_frame.paragraphs[0].add_run()
+    fr.text = "KPMG　© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。"
+    fr.font.size = Pt(6); fr.font.color.rgb = GREY; fr.font.name = FONT_CN
+    pg = slide.shapes.add_textbox(Inches(W - 1.1), Inches(7.15), Inches(0.9), Inches(0.25))
+    pr = pg.text_frame.paragraphs[0].add_run(); pr.text = f"初稿　{page}"
+    pr.font.size = Pt(7); pr.font.bold = True; pr.font.color.rgb = NAVY; pr.font.name = FONT_CN
 
-    # 組行：博彩2範疇 + 吸引外國客源（約一頁）
-    show = [("gaming", "博彩娛樂場優化"), ("gaming", "博彩設施設備優化"), ("non_gaming", "吸引外國客源")]
-    body = []
-    for scope, sub in show:
+
+def _breadcrumb(slide, active=0):
+    W = 10.83
+    tabs = ["2025年度投資計劃執行情況概述", "過往年度…", "主要發現", "其他信息", "六項KPI分析", "附件"]
+    bc = slide.shapes.add_textbox(Inches(0.3), Inches(0.12), Inches(W - 1.5), Inches(0.2))
+    bp = bc.text_frame.paragraphs[0]
+    for i, t in enumerate(tabs):
+        if i:
+            sep = bp.add_run(); sep.text = "   |   "
+            sep.font.size = Pt(6); sep.font.color.rgb = RGBColor(0xC8, 0xC8, 0xC8); sep.font.name = FONT_CN
+        r = bp.add_run(); r.text = t
+        r.font.size = Pt(6); r.font.name = FONT_CN
+        r.font.bold = (i == active); r.font.color.rgb = NAVY if i == active else GREY
+    mg = slide.shapes.add_textbox(Inches(W - 1.0), Inches(0.12), Inches(0.8), Inches(0.2))
+    mr = mg.text_frame.paragraphs[0].add_run(); mr.text = "MGM  ◀ ⌂ ▶"
+    mr.font.size = Pt(6); mr.font.color.rgb = GREY; mr.font.name = FONT_CN
+
+
+def _dark(prs):
+    from pptx.enum.shapes import MSO_SHAPE
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
+    rect.fill.solid(); rect.fill.fore_color.rgb = DARK; rect.line.fill.background()
+    kb = slide.shapes.add_textbox(Inches(0.55), Inches(0.35), Inches(2.2), Inches(0.4))
+    kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
+    kr.font.size = Pt(20); kr.font.bold = True; kr.font.color.rgb = WHITE; kr.font.name = FONT_HEAD
+    return slide
+
+
+def _cover(prs):
+    slide = _dark(prs)
+    tb = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(7.2), Inches(2.6))
+    tf = tb.text_frame; tf.word_wrap = True
+    for i, line in enumerate(["美高梅金殿超濠股份有限公司", "2025年年度投資計劃執行情況審查", "專項工作報告"]):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        r = p.add_run(); r.text = line
+        r.font.size = Pt(25); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = FONT_HEAD
+    for y, txt, sz, bd in [(4.7, "初稿", 16, True), (5.5, "畢馬威會計師事務所", 11, False), (5.85, "2026年6月30日", 11, False)]:
+        db = slide.shapes.add_textbox(Inches(0.6), Inches(y), Inches(5), Inches(0.4))
+        dr = db.text_frame.paragraphs[0].add_run(); dr.text = txt
+        dr.font.size = Pt(sz); dr.font.bold = bd; dr.font.color.rgb = WHITE; dr.font.name = FONT_CN
+
+
+def _divider(prs, num, title, subs):
+    slide = _dark(prs)
+    W, H, ny = 10.83, 7.5, 7.5 * 0.30
+    nb = slide.shapes.add_textbox(Inches(0.7), Inches(ny - 0.15), Inches(1.3), Inches(1.3))
+    nr = nb.text_frame.paragraphs[0].add_run(); nr.text = f"{num}."
+    nr.font.size = Pt(44); nr.font.bold = True; nr.font.color.rgb = WHITE; nr.font.name = FONT_HEAD
+    tb = slide.shapes.add_textbox(Inches(2.05), Inches(ny), Inches(W - 2.75), Inches(1.4))
+    tb.text_frame.word_wrap = True
+    tr = tb.text_frame.paragraphs[0].add_run(); tr.text = title
+    tr.font.size = Pt(26); tr.font.bold = True; tr.font.color.rgb = WHITE; tr.font.name = FONT_HEAD
+    y = ny + 1.7
+    for s in subs:
+        rb = slide.shapes.add_textbox(Inches(2.05), Inches(y), Inches(W - 3.0), Inches(0.32))
+        rr = rb.text_frame.paragraphs[0].add_run(); rr.text = s
+        rr.font.size = Pt(12); rr.font.color.rgb = RGBColor(0xC8, 0xC8, 0xD0); rr.font.name = FONT_CN
+        y += 0.42
+
+
+def _review_pages(prs, year, page_start):
+    """單項審查 18 欄，全部範疇，自動分頁（每頁 ~26 行），模仿 scan slide 35-39。回 next page。"""
+    projs = load_projects(year)
+    W = 10.83
+    order = [("gaming", s) for s in GAMING_SUBS] + [("non_gaming", s) for s in NONG_ORDER]
+    allrows, gtot = [], [0.0] * 6
+    for scope, sub in order:
         ps = [p for p in projs if p[0] == scope and p[1] == sub]
         if not ps:
             continue
-        secname = ("博彩項目" if scope == "gaming" else "非博彩項目") + "—" + sub
-        body.append(("sec", secname, None))
+        allrows.append(("sec", ("博彩項目" if scope == "gaming" else "非博彩項目") + "—" + sub, None))
         st_ = [0.0] * 6
         for p in sorted(ps, key=lambda x: x[2]):
             _, _, code, name, pl, rep, adj, aft, fac, act = p
-            rate = _rate(rep, pl); arate = _rate(aft, pl)
-            vals = [_fmt(pl), _fmt(rep), rate, "-", "-", "-", "-", "-", "-", "-", "-",
-                    _fmt(adj), _fmt(aft), arate, _fmt(fac), _fmt(act)]
-            body.append(("data", (code, name), vals))
+            allrows.append(("data", (code, name), [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
+                            [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
             for i, x in enumerate([pl, rep, adj, aft, fac, act]):
-                st_[[0, 1, 2, 3, 4, 5][i]] += x
+                st_[i] += x
         pl, rep, adj, aft, fac, act = st_
-        body.append(("subtot", sub + " 小計", [_fmt(pl), _fmt(rep), _rate(rep, pl), "-", "-", "-", "-",
-                     "-", "-", "-", "-", _fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
-
-    ncol = 18
-    gt = slide.shapes.add_table(2 + len(body), ncol, Inches(0.2), Inches(0.62),
-                                Inches(W - 0.4), Inches(6.4)).table
-    gt.first_row = False; gt.horz_banding = False
-    tw = sum(RV_W)
-    for i, wd in enumerate(RV_W):
-        gt.columns[i].width = Inches(wd * (W - 0.4) / tw)
-    # super row
-    for c in range(ncol):
-        _set_cell(gt.cell(0, c), "", size=4.5, fill=NAVY, white=True)
-    for name, a, b in RV_SUPER:
-        gt.cell(0, a).merge(gt.cell(0, b - 1))
-        _set_cell(gt.cell(0, a), name, size=5, bold=True, fill=NAVY, white=True, align=PP_ALIGN.CENTER)
-    # sub row
-    for c in range(ncol):
-        _set_cell(gt.cell(1, c), RV_SUB[c], size=4.3, bold=True, fill=NAVY, white=True,
-                  align=PP_ALIGN.LEFT if c == 1 else PP_ALIGN.CENTER)
-    # body
-    for ri, (kind, label, vals) in enumerate(body, start=2):
-        fill = {"sec": SECHDR, "subtot": SUBTOT}.get(kind)
-        bold = kind in ("sec", "subtot")
-        if kind == "data":
-            code, name = label
-            _set_cell(gt.cell(ri, 0), code, size=4.3, align=PP_ALIGN.LEFT)
-            _set_cell(gt.cell(ri, 1), name, size=4.3, align=PP_ALIGN.LEFT)
-            for c, v in enumerate(vals, start=2):
-                _set_cell(gt.cell(ri, c), v, size=4.3)
-        else:
-            _set_cell(gt.cell(ri, 0), "", fill=fill)
-            _set_cell(gt.cell(ri, 1), label, size=4.5, bold=bold, fill=fill, align=PP_ALIGN.LEFT)
-            for c in range(2, ncol):
-                _set_cell(gt.cell(ri, c), (vals[c - 2] if vals else ""), size=4.3, bold=bold, fill=fill)
-    _thin_borders(gt)
-    # footer
-    ft = slide.shapes.add_textbox(Inches(0.3), Inches(7.15), Inches(7), Inches(0.25))
-    fr = ft.text_frame.paragraphs[0].add_run()
-    fr.text = "KPMG　© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。（示範：逐項目調整分類欄由真 build 填）"
-    fr.font.size = Pt(6); fr.font.color.rgb = GREY; fr.font.name = FONT
-    pg = slide.shapes.add_textbox(Inches(W - 1.1), Inches(7.15), Inches(0.9), Inches(0.25))
-    pr = pg.text_frame.paragraphs[0].add_run(); pr.text = "初稿　35"
-    pr.font.size = Pt(7); pr.font.bold = True; pr.font.color.rgb = NAVY; pr.font.name = FONT
+        allrows.append(("subtot", sub + " 小計", [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
+                        [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
+        for i in range(6):
+            gtot[i] += st_[i]
+    pl, rep, adj, aft, fac, act = gtot
+    allrows.append(("tot", "總計", [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
+                    [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
+    PER = 26
+    chunks = [allrows[i:i + PER] for i in range(0, len(allrows), PER)] or [[]]
+    page = page_start
+    for ci, chunk in enumerate(chunks):
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        _breadcrumb(slide, 3)
+        st = slide.shapes.add_textbox(Inches(0.3), Inches(0.36), Inches(W - 0.6), Inches(0.24))
+        sr = st.text_frame.paragraphs[0].add_run()
+        sr.text = f"其他信息  |  MGM {year}年度投資計劃單個項目審查結果匯總表（{ci + 1}/{len(chunks)}）"
+        sr.font.size = Pt(11); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT_HEAD
+        ncol = 18
+        gt = slide.shapes.add_table(2 + len(chunk), ncol, Inches(0.2), Inches(0.68),
+                                    Inches(W - 0.4), Inches(6.3)).table
+        gt.first_row = False; gt.horz_banding = False
+        tw = sum(RV_W)
+        for i, wd in enumerate(RV_W):
+            gt.columns[i].width = Inches(wd * (W - 0.4) / tw)
+        for c in range(ncol):
+            _set_cell(gt.cell(0, c), "", size=4.5, fill=NAVY, white=True)
+        for name, a, b in RV_SUPER:
+            gt.cell(0, a).merge(gt.cell(0, b - 1))
+            _set_cell(gt.cell(0, a), name, size=5, bold=True, fill=NAVY, white=True, align=PP_ALIGN.CENTER)
+        for c in range(ncol):
+            _set_cell(gt.cell(1, c), RV_SUB[c], size=4.3, bold=True, fill=NAVY, white=True,
+                      align=PP_ALIGN.LEFT if c == 1 else PP_ALIGN.CENTER)
+        for ri, (kind, label, vals) in enumerate(chunk, start=2):
+            fill = {"sec": SECHDR, "subtot": SUBTOT, "tot": TOT}.get(kind)
+            bold = kind in ("sec", "subtot", "tot")
+            if kind == "data":
+                code, name = label
+                _set_cell(gt.cell(ri, 0), code, size=4.3, align=PP_ALIGN.LEFT)
+                _set_cell(gt.cell(ri, 1), name, size=4.3, align=PP_ALIGN.LEFT)
+                for c, v in enumerate(vals, start=2):
+                    _set_cell(gt.cell(ri, c), v, size=4.3)
+            else:
+                _set_cell(gt.cell(ri, 0), "", fill=fill)
+                _set_cell(gt.cell(ri, 1), label, size=4.5, bold=bold, fill=fill, align=PP_ALIGN.LEFT)
+                for c in range(2, ncol):
+                    _set_cell(gt.cell(ri, c), (vals[c - 2] if vals else ""), size=4.3, bold=bold, fill=fill)
+        _thin_borders(gt)
+        _footer(slide, page); page += 1
+    return page
 
 
 def _set_cell(cell, text, *, size=5.5, bold=False, fill=None, align=PP_ALIGN.RIGHT, white=False):
@@ -283,28 +348,12 @@ def _thin_borders(table):
                 fl.append(cl); ln.append(fl); tcPr.append(ln)
 
 
-def build():
+def _overview_slide(prs, page):
     agg, src = load_agg()
     ROWS, BULLETS = _rows(agg)
-    print(f"  數據來源：{src}")
-    prs = Presentation()
-    prs.slide_width = Inches(10.83); prs.slide_height = Inches(7.5)
     W = 10.83
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-
-    tabs = ["2025年度投資計劃執行情況概述", "過往年度…", "主要發現", "其他信息", "六項KPI分析", "附件"]
-    bc = slide.shapes.add_textbox(Inches(0.3), Inches(0.12), Inches(W - 1.5), Inches(0.2))
-    bp = bc.text_frame.paragraphs[0]
-    for i, t in enumerate(tabs):
-        if i:
-            sep = bp.add_run(); sep.text = "   |   "
-            sep.font.size = Pt(6); sep.font.color.rgb = RGBColor(0xC8, 0xC8, 0xC8); sep.font.name = FONT
-        r = bp.add_run(); r.text = t
-        r.font.size = Pt(6); r.font.name = FONT
-        r.font.bold = (i == 0); r.font.color.rgb = NAVY if i == 0 else GREY
-    mg = slide.shapes.add_textbox(Inches(W - 1.0), Inches(0.12), Inches(0.8), Inches(0.2))
-    mr = mg.text_frame.paragraphs[0].add_run(); mr.text = "MGM  ◀ ⌂ ▶"
-    mr.font.size = Pt(6); mr.font.color.rgb = GREY; mr.font.name = FONT
+    _breadcrumb(slide, 0)
 
     # 真敘述（gitignored results/demo_narrative.txt）
     headline_txt, bullets_real = None, BULLETS
@@ -380,17 +429,28 @@ def build():
         rt = p.add_run(); rt.text = body
         rt.font.size = Pt(6.5); rt.font.color.rgb = RGBColor(0x33, 0x33, 0x33); rt.font.name = FONT_CN
 
-    ft = slide.shapes.add_textbox(Inches(0.3), Inches(7.15), Inches(7), Inches(0.25))
-    fr = ft.text_frame.paragraphs[0].add_run()
-    fr.text = "KPMG　© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。"
-    fr.font.size = Pt(6); fr.font.color.rgb = GREY; fr.font.name = FONT
-    pg = slide.shapes.add_textbox(Inches(W - 1.1), Inches(7.15), Inches(0.9), Inches(0.25))
-    pr = pg.text_frame.paragraphs[0].add_run(); pr.text = "初稿　11"
-    pr.font.size = Pt(7); pr.font.bold = True; pr.font.color.rgb = NAVY; pr.font.name = FONT
+    _footer(slide, page)
 
-    _render_review(prs)      # 第 2 版：單項 18 欄大表 demo
+
+def build():
+    print(f"  數據來源：{load_agg()[1]}")
+    prs = Presentation()
+    prs.slide_width = Inches(10.83); prs.slide_height = Inches(7.5)
+    p = 1
+    _cover(prs); p += 1                                          # 封面
+    _divider(prs, 1, "2025年度投資計劃執行情況概述", [           # 章節分隔
+        "1.1  股權架構簡圖及發生投資支出的主體公司",
+        "1.2  2025年度計劃的整體投資支出概況",
+        "1.3  2025年度投資項目的整體執行概況",
+        "1.4  2025年度投資計劃報告投資金額的潛在調整事項匯總"]); p += 1
+    _overview_slide(prs, p); p += 1                             # 概述 整體執行概況
+    _divider(prs, 4, "其他信息", [
+        "4.1  2025年度投資計劃及過往年度期後投資於2025年發生的投資金額匯總",
+        "4.2  單個項目審查結果匯總"]); p += 1
+    for yr in ("25", "24", "23"):                               # 單項審查 25/24/23（多頁）
+        p = _review_pages(prs, yr, p)
     prs.save("demo_overview.pptx")
-    print("✓ demo_overview.pptx（2 版：概述 + 單項18欄大表；PowerPoint 開睇）")
+    print(f"✓ demo_overview.pptx（{len(list(prs.slides))} 版：封面 + 分隔 + 概述 + 單項審查25/24/23；PowerPoint 開睇）")
 
 
 if __name__ == "__main__":
