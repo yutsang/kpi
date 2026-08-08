@@ -41,6 +41,15 @@ def main():
     df["_planyr"] = df["year_bucket"].map(B._plan_year)
     df["_sub"] = df.apply(lambda r: r["vertical_label"] if str(r["ng_scope"]) == "gaming" else r["ng_label"], axis=1)
     plan = B.load_plan(Path(qingdan)) if qingdan else {}
+    # ★清單診斷 —— 計劃/完成率 全靠呢個；載唔到就全空。re-run 時睇實呢兩行。
+    if not qingdan:
+        print("  ⚠⚠ 冇俾 --qingdan → 計劃/完成率 會全空！加返 --qingdan \"清單.xlsx\" 路徑")
+    else:
+        n25, n24, n23 = (len(plan.get(y, {})) for y in (25, 24, 23))
+        print(f"  ✓ 清單：計劃年25={n25} / 24={n24} / 23={n23} 個項目有計劃金額（來源 {qingdan}）")
+        if n25 + n24 + n23 == 0:
+            print("  ⚠⚠ 清單 0 個計劃金額 → 計劃/完成率 全空！檢查路徑 + 表頭（要有『承批公司項目序號』同"
+                  "『2025年度…預計投資金額』欄）")
 
     for c in ("調整前_萬", "調整_萬", "調整後_萬"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
