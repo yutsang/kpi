@@ -259,29 +259,54 @@ def _review_pages(prs, year, page_start):
     projs = load_projects(year)
     W = 10.83
     order = [("gaming", s) for s in GAMING_SUBS] + [("non_gaming", s) for s in NONG_ORDER]
-    allrows, gtot = [], [0.0] * 6
+    # 逐 NG（範疇）砌 block（sec header + data 行 + 小計）
+    blocks, gtot = [], [0.0] * 6
     for scope, sub in order:
         ps = [p for p in projs if p[0] == scope and p[1] == sub]
         if not ps:
             continue
-        allrows.append(("sec", ("博彩項目" if scope == "gaming" else "非博彩項目") + "—" + sub, None))
+        blk = [("sec", ("博彩項目" if scope == "gaming" else "非博彩項目") + "—" + sub, None)]
         st_ = [0.0] * 6
         for p in sorted(ps, key=lambda x: x[2]):
             _, _, code, name, pl, rep, adj, aft, fac, act = p
-            allrows.append(("data", (code, name), [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
-                            [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
+            blk.append(("data", (code, name), [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
+                        [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
             for i, x in enumerate([pl, rep, adj, aft, fac, act]):
                 st_[i] += x
         pl, rep, adj, aft, fac, act = st_
-        allrows.append(("subtot", sub + " 小計", [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
-                        [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
+        blk.append(("subtot", sub + " 小計", [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
+                    [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
+        blocks.append(blk)
         for i in range(6):
             gtot[i] += st_[i]
     pl, rep, adj, aft, fac, act = gtot
-    allrows.append(("tot", "總計", [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
-                    [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
-    PER = 26
-    chunks = [allrows[i:i + PER] for i in range(0, len(allrows), PER)] or [[]]
+    blocks.append([("tot", "總計", [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
+                   [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)])])
+
+    # 分頁：盡量 by NG，但填得滿就填 —— 範疇放得落整個放；唔夠位但仲有位(≥6行)就拆範疇填滿當前頁
+    # (續頁重覆 section header 加「（續）」)；冇乜位就整個範疇落下頁；範疇本身大過一頁先切。
+    CAP = 27
+
+    def _cont(blk, start):
+        sec = blk[0]
+        return [("sec", str(sec[1]) + "（續）", None)] + list(blk[start:])
+
+    chunks, cur = [], []
+    for blk in blocks:
+        if cur and len(cur) + len(blk) > CAP:
+            space = CAP - len(cur)
+            if space >= 6 and len(blk) - 1 > space:      # 有位 → 拆範疇填滿當前頁
+                cur.extend(blk[:space]); chunks.append(cur); cur = _cont(blk, space)
+            else:                                        # 冇乜位 → 整個範疇落下頁
+                chunks.append(cur); cur = list(blk)
+        else:
+            cur.extend(blk)
+        while len(cur) > CAP:                            # 範疇本身大過一頁 → 直接切（罕見）
+            chunks.append(cur[:CAP]); cur = list(cur[CAP:])
+    if cur:
+        chunks.append(cur)
+    if not chunks:
+        chunks = [[]]
     page = page_start
     for ci, chunk in enumerate(chunks):
         slide = prs.slides.add_slide(prs.slide_layouts[6])
@@ -291,8 +316,9 @@ def _review_pages(prs, year, page_start):
         sr.text = f"其他信息  |  MGM {year}年度投資計劃單個項目審查結果匯總表（{ci + 1}/{len(chunks)}）"
         sr.font.size = Pt(11); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT_HEAD
         ncol = 18
-        gt = slide.shapes.add_table(2 + len(chunk), ncol, Inches(0.2), Inches(0.68),
-                                    Inches(W - 0.4), Inches(6.3)).table
+        nr = 2 + len(chunk)
+        gt = slide.shapes.add_table(nr, ncol, Inches(0.2), Inches(0.68),
+                                    Inches(W - 0.4), Inches(min(6.3, nr * 0.175))).table
         gt.first_row = False; gt.horz_banding = False
         tw = sum(RV_W)
         for i, wd in enumerate(RV_W):
@@ -320,6 +346,8 @@ def _review_pages(prs, year, page_start):
                 for c in range(2, ncol):
                     _set_cell(gt.cell(ri, c), (vals[c - 2] if vals else ""), size=4.3, bold=bold, fill=fill)
         _thin_borders(gt)
+        for rr in gt.rows:
+            rr.height = Emu(150000)      # ~0.164in compact 行高（貼 scan 密度）
         _footer(slide, page); page += 1
     return page
 
