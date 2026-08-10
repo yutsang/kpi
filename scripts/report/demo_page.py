@@ -283,25 +283,16 @@ def _review_pages(prs, year, page_start):
     blocks.append([("tot", "總計", [_fmt(pl), _fmt(rep), _rate(rep, pl)] + ["-"] * 8 +
                    [_fmt(adj), _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)])])
 
-    # 分頁：盡量 by NG，但填得滿就填 —— 範疇放得落整個放；唔夠位但仲有位(≥6行)就拆範疇填滿當前頁
-    # (續頁重覆 section header 加「（續）」)；冇乜位就整個範疇落下頁；範疇本身大過一頁先切。
+    # 分頁 = 完全 by NG（範疇）：每個範疇【完整】放同一頁、絕不拆（對 scan —— 每個 block 都有自己小計、
+    # 全份報告冇「續」）。一頁盡量塞多幾個完整範疇；下個範疇放唔落就開新頁。
+    # 只有單一範疇本身大過一頁先逼住切（MGM 各範疇 ≤21 行 < CAP，實際唔會 hit）。
     CAP = 25
-
-    def _cont(blk, start):
-        sec = blk[0]
-        return [("sec", str(sec[1]) + "（續）", None)] + list(blk[start:])
-
     chunks, cur = [], []
     for blk in blocks:
-        if cur and len(cur) + len(blk) > CAP:
-            space = CAP - len(cur)
-            if space >= 6 and len(blk) - 1 > space:      # 有位 → 拆範疇填滿當前頁
-                cur.extend(blk[:space]); chunks.append(cur); cur = _cont(blk, space)
-            else:                                        # 冇乜位 → 整個範疇落下頁
-                chunks.append(cur); cur = list(blk)
-        else:
-            cur.extend(blk)
-        while len(cur) > CAP:                            # 範疇本身大過一頁 → 直接切（罕見）
+        if cur and len(cur) + len(blk) > CAP:            # 下個範疇放唔落 → 開新頁（唔拆）
+            chunks.append(cur); cur = []
+        cur.extend(blk)
+        while len(cur) > CAP:                            # 安全網：單一範疇 > 一頁先切（MGM 唔會 hit）
             chunks.append(cur[:CAP]); cur = list(cur[CAP:])
     if cur:
         chunks.append(cur)
@@ -335,7 +326,7 @@ def _review_pages(prs, year, page_start):
         ncol = 18
         nr = 2 + len(chunk)
         gt = slide.shapes.add_table(nr, ncol, Inches(0.2), Inches(0.99),
-                                    Inches(W - 0.4), Inches(min(5.3, nr * 0.175))).table
+                                    Inches(W - 0.4), Inches(min(5.5, nr * 0.2))).table
         gt.first_row = False; gt.horz_banding = False
         tw = sum(RV_W)
         for i, wd in enumerate(RV_W):
