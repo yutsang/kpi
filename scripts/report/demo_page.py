@@ -139,18 +139,36 @@ def _rows(agg):
     n, pl, rep, aft, fac, act = grand
     rows.append(("總計", "tot", [str(n), _fmt(pl), _fmt(rep), _rate(rep, pl),
                                  _fmt(aft), _rate(aft, pl), _fmt(fac), _fmt(act)]))
-    # 簡單敘述（由數計，非機密）
-    cats = [(s, agg[(sc, s)]) for sc in ("gaming", "non_gaming") for s in (GAMING_SUBS if sc == "gaming" else NONG_ORDER) if (sc, s) in agg]
-    hi = [f"{s}（{a[2]/a[1]*100:.1f}%）" for s, a in cats if a[1] and a[2] / a[1] >= 1.0]
-    lo = [f"{s}（{a[2]/a[1]*100:.1f}%）" for s, a in cats if a[1] and a[2] / a[1] < 0.5]
-    bullets = [
-        ("整體概況：", f"博彩項目完成率 {_rate(g_tot[2], g_tot[1])}，非博彩項目 {_rate(ng_tot[2], ng_tot[1])}，"
-                     f"整體 {_rate(grand[2], grand[1])}。"),
-        ("潛在調整後：", f"博彩項目 {_rate(g_tot[3], g_tot[1])}，非博彩項目平均 {_rate(ng_tot[3], ng_tot[1])}。"),
-        ("完成率較高的範疇：", "、".join(hi) + "。" if hi else "—"),
-        ("完成率相對較低的範疇：", "、".join(lo) + "。" if lo else "—"),
+    # ── 由 tsv 真數計 intro headline + 右敘述（scan slide 10 三段式 pattern；全部自洽、非機密）──
+    N, PL, REP, AFT = grand[0], grand[1], grand[2], grand[3]
+    ADJ = AFT - REP                       # 潛在調整合計（負數 = 調減）
+    comp, comp_aft = _rate(REP, PL), _rate(AFT, PL)
+
+    def yi(w):
+        return f"{w / 10000.0:.1f}"       # 萬 → 億
+
+    headline = (f"MGM 2025年度原獲批計劃開展 {N} 個投資項目，涉及計劃投資金額約 {yi(PL)} 億澳門元；"
+                f"MGM 提交的投資執行報告顯示 2025年度投資金額約 {yi(REP)} 億澳門元（投資計劃完成率 {comp}），"
+                f"本次審查工作識別潛在調整金額約 {yi(abs(ADJ))} 億澳門元，"
+                f"經潛在調整後 2025年度投資金額約 {yi(AFT)} 億澳門元（經調整後投資計劃金額完成率 {comp_aft}）。")
+
+    cats = [(s, agg[(sc, s)]) for sc in ("gaming", "non_gaming")
+            for s in (GAMING_SUBS if sc == "gaming" else NONG_ORDER) if (sc, s) in agg]
+    hi = [f"{s}（{a[2] / a[1] * 100:.1f}%）" for s, a in cats if a[1] and a[2] / a[1] >= 1.0]
+    lo = [f"{s}（{a[2] / a[1] * 100:.1f}%）" for s, a in cats if a[1] and a[2] / a[1] < 0.5]
+    narr = [
+        ("2025年度獲批的計劃投資金額對應的投資金額",
+         f"MGM 2025年度獲批計劃共 {N} 個投資項目，計劃投資金額約 {yi(PL)} 億澳門元；報告投資金額約 "
+         f"{yi(REP)} 億澳門元，投資計劃完成率為 {comp}，其中博彩項目 {_rate(g_tot[2], g_tot[1])}、"
+         f"非博彩項目 {_rate(ng_tot[2], ng_tot[1])}。"),
+        ("按範疇的投資執行情況",
+         "投資計劃完成率較高的範疇包括 " + ("、".join(hi[:4]) if hi else "—") + "；"
+         "相對較低的範疇包括 " + ("、".join(lo) if lo else "—") + "。"),
+        ("2025年度投資支出金額的潛在調整影響",
+         f"本次審查工作識別潛在調整金額約 {yi(abs(ADJ))} 億澳門元，經潛在調整後 2025年度投資金額約 "
+         f"{yi(AFT)} 億澳門元，經調整後投資計劃完成率為 {comp_aft}。"),
     ]
-    return rows, bullets
+    return rows, narr, headline
 
 
 def load_projects(year="25"):
@@ -398,41 +416,27 @@ def _thin_borders(table):
 
 def _overview_slide(prs, page):
     agg, src = load_agg()
-    ROWS, BULLETS = _rows(agg)
+    ROWS, NARR, headline_txt = _rows(agg)
     W = 10.83
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _breadcrumb(slide, 0)
 
-    # 真敘述（gitignored results/demo_narrative.txt）
-    headline_txt, bullets_real = None, BULLETS
-    _np = Path("results/demo_narrative.txt")
-    if _np.exists():
-        _nl = [x for x in _np.read_text(encoding="utf-8").splitlines() if x.strip()]
-        if _nl:
-            headline_txt = _nl[0]
-            bullets_real = [(x.split("|||", 1) if "|||" in x else ("", x)) for x in _nl[1:]]
-    if headline_txt is None:
-        headline_txt = "MGM 2025年度計劃投資項目涵蓋博彩及非博彩範疇（示範；真 headline 由 build 填）。"
-
-    # title（subtitle line）0.53,0.48 —— KPMG Bold navy
+    # subtitle line（對 scan slide 10）—— KPMG Bold navy
     st = slide.shapes.add_textbox(Inches(0.53), Inches(0.44), Inches(9.76), Inches(0.4))
     sr = st.text_frame.paragraphs[0].add_run()
-    sr.text = "2025年度投資計劃執行情況概述  |  2025年度投資項目的整體執行概況"
+    sr.text = "2025年度投資計劃執行情況概述  |  2025年度計劃的整體投資支出概況"
     sr.font.size = Pt(12); sr.font.bold = True; sr.font.color.rgb = NAVY; sr.font.name = FONT_HEAD
 
-    # headline（strapline）navy 段
+    # headline（strapline）navy 段 —— 由 tsv 真數計，同下面表格自洽
     hl = slide.shapes.add_textbox(Inches(0.53), Inches(1.02), Inches(9.76), Inches(1.0))
     hl.text_frame.word_wrap = True
     hr = hl.text_frame.paragraphs[0].add_run(); hr.text = headline_txt
     hr.font.size = Pt(7.5); hr.font.color.rgb = NAVY; hr.font.name = FONT_CN
 
-    # 左 table title + 右 narrative subtitle（收緊：貼近 headline 下）
+    # 左 table title（對 scan「MGM 2025年度的整體投資支出概況」）
     tt = slide.shapes.add_textbox(Inches(0.53), Inches(1.72), Inches(6.46), Inches(0.2))
-    ttr = tt.text_frame.paragraphs[0].add_run(); ttr.text = "MGM 2025年度計劃的整體投資執行概況"
+    ttr = tt.text_frame.paragraphs[0].add_run(); ttr.text = "MGM 2025年度的整體投資支出概況"
     ttr.font.size = Pt(7.5); ttr.font.bold = True; ttr.font.color.rgb = NAVY; ttr.font.name = FONT_CN
-    ns = slide.shapes.add_textbox(Inches(7.1), Inches(1.72), Inches(3.19), Inches(0.2))
-    nsr = ns.text_frame.paragraphs[0].add_run(); nsr.text = "2025年度投資項目的整體執行概況"
-    nsr.font.size = Pt(7.5); nsr.font.bold = True; nsr.font.color.rgb = NAVY; nsr.font.name = FONT_CN
 
     # 表（收緊 y=1.94）
     ncol = 9
@@ -463,18 +467,18 @@ def _overview_slide(prs, page):
     b.text = "註：投資計劃完成率 ＝ 報告投資金額 ／ 獲批的計劃投資金額；潛在調整後完成率 ＝ 潛在調整後投資金額 ／ 獲批的計劃投資金額。"
     b.font.size = Pt(5); b.font.italic = True; b.font.color.rgb = GREY; b.font.name = FONT_CN
 
-    # 右敘述（精確位 7.1,3.19）密實
-    nb = slide.shapes.add_textbox(Inches(7.1), Inches(1.94), Inches(3.19), Inches(4.9))
+    # 右敘述（scan slide 10 pattern：navy 粗體小標題一行 + 下面 body 段落，冇 ■）
+    nb = slide.shapes.add_textbox(Inches(7.1), Inches(1.68), Inches(3.19), Inches(5.2))
     ntf = nb.text_frame; ntf.word_wrap = True
-    for j, (lead, body) in enumerate(bullets_real):
-        p = ntf.paragraphs[0] if j == 0 else ntf.add_paragraph()
-        p.space_after = Pt(3)
-        rb = p.add_run(); rb.text = "■ "
-        rb.font.size = Pt(6.5); rb.font.color.rgb = NAVY; rb.font.name = FONT_CN
-        if lead:
-            rl = p.add_run(); rl.text = lead
-            rl.font.size = Pt(6.5); rl.font.bold = True; rl.font.color.rgb = NAVY; rl.font.name = FONT_CN
-        rt = p.add_run(); rt.text = body
+    first = True
+    for head, body in NARR:
+        ph = ntf.paragraphs[0] if first else ntf.add_paragraph()
+        first = False
+        ph.space_before = Pt(0 if ph is ntf.paragraphs[0] else 6); ph.space_after = Pt(1)
+        rh = ph.add_run(); rh.text = head
+        rh.font.size = Pt(7); rh.font.bold = True; rh.font.color.rgb = NAVY; rh.font.name = FONT_CN
+        pb = ntf.add_paragraph(); pb.space_after = Pt(2)
+        rt = pb.add_run(); rt.text = body
         rt.font.size = Pt(6.5); rt.font.color.rgb = RGBColor(0x33, 0x33, 0x33); rt.font.name = FONT_CN
 
     _footer(slide, page)
