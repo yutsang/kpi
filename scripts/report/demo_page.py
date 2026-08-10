@@ -31,6 +31,12 @@ FONT = FONT_CN            # 舊 alias
 
 SUB = ["（萬澳門元）", "項目\n數量", "獲批的計劃\n投資金額", "報告\n投資金額", "投資計劃\n完成率",
        "潛在調整後\n投資金額", "潛在調整後\n完成率", "設施建設/\n資本性支出", "活動舉辦/\n營運性支出"]
+# 1.4 潛在調整事項匯總（對 scan slide 15）：範疇 × 七大類調整 + 合計/調整後/完成率（12 欄）
+ADJ_SUPER = [("", 0, 2), ("投資金額的潛在調整事項（七大類）", 2, 9), ("潛在調整後投資金額", 9, 12)]
+ADJ_SUB = ["（萬澳門元）", "報告\n投資金額", "一般支持\n人工成本", "其他日常\n營運支出", "超出可計入\n內部資源",
+           "酒店客房\n改造", "不符合吸引\n外國客源", "未完全實現\n投資目的", "投資計劃\n獲批前",
+           "潛在調整\n合計", "調整後\n投資金額", "投資計劃\n完成率"]
+ADJ_W = [2.35, 0.82] + [0.72] * 7 + [0.82, 0.82, 0.72]
 # 博彩範疇擺前（其餘當非博彩）；顯示順序
 GAMING_SUBS = ["博彩娛樂場優化", "博彩設施設備優化"]
 NONG_ORDER = ["吸引外國客源", "會議展覽", "娛樂表演", "體育盛事", "文化藝術", "健康養生",
@@ -484,6 +490,95 @@ def _overview_slide(prs, page):
     _footer(slide, page)
 
 
+def _adj_rows(agg):
+    """agg → 1.4 範疇級 rows：[(kind,label,vals[11])]。vals = [報告, 7類調整(-), 調整合計, 調整後, 完成率]。"""
+    def line(scope, subs, label_tot):
+        out, tot = [], [0.0, 0.0, 0.0]      # pl, rep, aft
+        for sub in subs:
+            a = agg.get((scope, sub))
+            if not a:
+                continue
+            _, pl, rep, aft = a[0], a[1], a[2], a[3]
+            adj = aft - rep
+            out.append(("data", sub, [_fmt(rep)] + ["-"] * 7 + [_fmt(adj), _fmt(aft), _rate(aft, pl)]))
+            tot[0] += pl; tot[1] += rep; tot[2] += aft
+        pl, rep, aft = tot
+        sub_row = ("subtot", label_tot, [_fmt(rep)] + ["-"] * 7 + [_fmt(aft - rep), _fmt(aft), _rate(aft, pl)])
+        return out, sub_row, tot
+
+    rows = [("sec", "博彩項目", None)]
+    g, gs, gt = line("gaming", GAMING_SUBS, "博彩項目小計")
+    rows += g + [gs]
+    rows.append(("sec", "非博彩項目", None))
+    ng, ngs, ngt = line("non_gaming", NONG_ORDER, "非博彩項目小計")
+    rows += ng + [ngs]
+    pl, rep, aft = (gt[i] + ngt[i] for i in range(3))
+    rows.append(("tot", "總計", [_fmt(rep)] + ["-"] * 7 + [_fmt(aft - rep), _fmt(aft), _rate(aft, pl)]))
+    return rows, (pl, rep, aft)
+
+
+def _adj_summary_slide(prs, page):
+    """1.4 潛在調整事項匯總（對 scan slide 15）：範疇 × 七大類調整 table + intro strapline。
+    七大類 breakdown 個 tsv 未 dump → 暫 '-'（最後修 database 時補）。合計/調整後/完成率 由真數計。"""
+    agg, _ = load_agg()
+    ROWS, (PL, REP, AFT) = _adj_rows(agg)
+    W = 10.83
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _breadcrumb(slide, 0)
+    st = slide.shapes.add_textbox(Inches(0.53), Inches(0.30), Inches(9.76), Inches(0.18))
+    sr = st.text_frame.paragraphs[0].add_run()
+    sr.text = "2025年度投資計劃執行情況概述  |  2025年度投資計劃報告投資金額的潛在調整事項匯總"
+    sr.font.size = Pt(8.5); sr.font.color.rgb = RGBColor(0x59, 0x59, 0x59); sr.font.name = FONT_CN
+    # strapline（intro，由真數計）
+    N = sum(a[0] for a in agg.values())
+    hl = slide.shapes.add_textbox(Inches(0.53), Inches(0.50), Inches(9.76), Inches(0.7))
+    hl.text_frame.word_wrap = True
+    hr = hl.text_frame.paragraphs[0].add_run()
+    hr.text = (f"基於我們的各項審查程序，我們認為 MGM 報告的 2025年度投資金額中，存在七大類的調整事項，"
+               f"潛在調減投資金額約 {abs(AFT - REP) / 10000.0:.1f} 億澳門元（涉及 {N} 個投資項目），"
+               f"經潛在調整後 2025年度計劃的投資金額約 {AFT / 10000.0:.1f} 億澳門元。（1/3）")
+    hr.font.size = Pt(9); hr.font.bold = True; hr.font.color.rgb = NAVY; hr.font.name = FONT_CN
+    # navy caption bar
+    from pptx.enum.shapes import MSO_SHAPE
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.53), Inches(1.28), Inches(W - 1.06), Inches(0.17))
+    bar.fill.solid(); bar.fill.fore_color.rgb = NAVY; bar.line.fill.background(); bar.shadow.inherit = False
+    btf = bar.text_frame; btf.margin_top = btf.margin_bottom = Emu(0); btf.margin_left = Emu(36000)
+    btf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    brun = btf.paragraphs[0].add_run(); brun.text = "MGM 2025年度投資計劃報告投資金額的潛在調整事項匯總"
+    brun.font.size = Pt(6); brun.font.bold = True; brun.font.color.rgb = WHITE; brun.font.name = FONT_CN
+    # table
+    ncol = 12
+    nr = 2 + len(ROWS)
+    gt = slide.shapes.add_table(nr, ncol, Inches(0.53), Inches(1.45), Inches(W - 1.06),
+                                Inches(min(4.6, nr * 0.24))).table
+    gt.first_row = False; gt.horz_banding = False
+    tw = sum(ADJ_W)
+    for i, wd in enumerate(ADJ_W):
+        gt.columns[i].width = Inches(wd * (W - 1.06) / tw)
+    for c in range(ncol):
+        _set_cell(gt.cell(0, c), "", size=5, fill=NAVY, white=True)
+    for name, a, b in ADJ_SUPER:
+        gt.cell(0, a).merge(gt.cell(0, b - 1))
+        if name:
+            _set_cell(gt.cell(0, a), name, size=5.5, bold=True, fill=NAVY, white=True, align=PP_ALIGN.CENTER)
+    for c in range(ncol):
+        _set_cell(gt.cell(1, c), ADJ_SUB[c], size=5, bold=True, fill=NAVY, white=True,
+                  align=PP_ALIGN.LEFT if c == 0 else PP_ALIGN.CENTER)
+    for ri, (kind, label, vals) in enumerate(ROWS, start=2):
+        fill = {"sec": SECHDR, "subtot": SUBTOT, "tot": TOT}.get(kind)
+        bold = kind in ("sec", "subtot", "tot")
+        _set_cell(gt.cell(ri, 0), label, size=5.5, bold=bold, fill=fill, align=PP_ALIGN.LEFT)
+        for c in range(1, ncol):
+            _set_cell(gt.cell(ri, c), (vals[c - 1] if vals else ""), size=5.5, bold=bold, fill=fill)
+    _thin_borders(gt)
+    src = slide.shapes.add_textbox(Inches(0.53), Inches(6.4), Inches(9), Inches(0.3))
+    sc = src.text_frame.paragraphs[0].add_run()
+    sc.text = ("註：七大類調整之逐類金額於本示範暫以「-」顯示（demo tsv 未拆分）；合計、調整後、"
+               "完成率為真數。上表金額單位為萬澳門元。")
+    sc.font.size = Pt(5.5); sc.font.italic = True; sc.font.color.rgb = GREY; sc.font.name = FONT_CN
+    _footer(slide, page)
+
+
 def build():
     print(f"  數據來源：{load_agg()[1]}")
     prs = Presentation()
@@ -495,7 +590,8 @@ def build():
         "1.2  2025年度計劃的整體投資支出概況",
         "1.3  2025年度投資項目的整體執行概況",
         "1.4  2025年度投資計劃報告投資金額的潛在調整事項匯總"]); p += 1
-    _overview_slide(prs, p); p += 1                             # 概述 整體執行概況
+    _overview_slide(prs, p); p += 1                             # 1.2 整體投資支出概況
+    _adj_summary_slide(prs, p); p += 1                          # 1.4 潛在調整事項匯總（表）
     _divider(prs, 4, "其他信息", [
         "4.1  2025年度投資計劃及過往年度期後投資於2025年發生的投資金額匯總",
         "4.2  單個項目審查結果匯總"]); p += 1
