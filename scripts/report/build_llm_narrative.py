@@ -70,6 +70,32 @@ def tbl_key(kind, arg=""):
     return f"{kind}|{arg}"
 
 
+def proj_key(adj_type, ng_scope, code):
+    """主要發現 card 逐項目『事項描述』嘅 key（generator 同 make_report 必須用同一個）。"""
+    return f"{adj_type}|{ng_scope}|{B._norm(code)}"
+
+
+def _proj_prompt(adj_type, name, code, rep, adjv, find, mgmt, b2, ruling, content=""):
+    ctx = [f"投資項目：{code}　{name}", f"潛在調整類型：{adj_type}",
+           f"報告投資金額：{rep:,.0f}萬澳門元；本類潛在調整：{adjv:,.0f}萬澳門元"]
+    if content:
+        ctx.append(f"實際投資內容（項目清單）：{content[:400]}")
+    if b2:      # 表2＝審查底稿，最權威，俾最多
+        ctx.append(f"審查底稿表2（關注事項／調整原因／跨司意見，事實依據）：{b2[:1200]}")
+    if find:
+        ctx.append(f"KPMG分析發現（項目清單）：{find[:400]}")
+    if mgmt:
+        ctx.append(f"承批公司管理層解釋：{mgmt[:300]}")
+    if ruling:
+        ctx.append(f"跨司工作組／KPMG回覆（項目清單）：{ruling[:300]}")
+    return ("請為報告『本年度審查工作的主要發現』其中一個投資項目，寫一段【事項描述】"
+            "（約150-250字）：講清楚該項目投資咗啲乜、我們喺審查中發現咗咩、"
+            "點解相關支出不應／只可部分計入報告投資金額、以及調整金額。"
+            "★如有跨司工作組回覆，用『跨司工作組』集體稱呼（例：『根據我們向跨司工作組諮詢得到的回覆，"
+            "跨司工作組認為…』），切勿逐個司局點名，亦切勿自創『KPMG最終立場』等標籤。"
+            "只可用下面提供嘅事實同數字，唔可以虛構。\n\n" + "\n".join(ctx))
+
+
 def _tbl_text(df, max_rows=40):
     """DataFrame → 精簡 TSV 餵 LLM（數字原封不動）。"""
     cols = list(df.columns)
@@ -186,14 +212,23 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
         amt = r.get(pb, 0)
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
-        sub = d[(d["_adj"] == t) & (d["_bucket"] == pb) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
+        sub = d[(d["_adj"] == t) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
+        agg = sub.groupby(["ng_scope", "dicj code"]).agg(
+            nm=("project", "first"), rep=("調整前_萬", "sum"), adjv=("調整_萬", "sum")).reset_index()
+        agg = agg.reindex(agg["adjv"].abs().sort_values(ascending=False).index)
         projs = []
-        for _, pp in sub.drop_duplicates("dicj code").iterrows():
+        for _, pp in agg.iterrows():
             nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
             b2t = B2.b2look(b2, pp["ng_scope"], pp["dicj code"])
             ruling = "；".join(x for x in (nr.get("跨司回覆", ""), nr.get("KPMG回覆", "")) if x)
-            projs.append((str(pp["project"]), nr.get("KPMG分析發現", ""),
+            projs.append((str(pp["nm"]), nr.get("KPMG分析發現", ""),
                           nr.get("管理層解釋", ""), b2t, ruling))
+            # 逐項目『事項描述』（主要發現 card）：用表2 + 清單寫返報告嗰種 narrative
+            tasks.append(("proj", proj_key(t, pp["ng_scope"], pp["dicj code"]),
+                          _proj_prompt(t, pp["nm"], pp["dicj code"], pp["rep"], pp["adjv"],
+                                       nr.get("KPMG分析發現", ""), nr.get("管理層解釋", ""),
+                                       b2t, ruling, nr.get("實際投資內容", "")),
+                          "medium", SYS_ADJ))
         tasks.append(("adj", t, _adj_prompt(t, amt, projs), "medium", SYS_ADJ))
 
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
@@ -249,7 +284,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                       "medium", SYS_TBL_ADJ, True))
 
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
-    out = {"adj": {}, "cat": {}, "tbl": {}}
+    out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}}
     try:                                    # tqdm 進度條（冇裝就照 log 逐個）
         from tqdm import tqdm
     except ImportError:
@@ -272,7 +307,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])}、"
-        f"tbl {len(out['tbl'])} 段）")
+        f"tbl {len(out['tbl'])}、proj {len(out['proj'])} 段）")
     return out
 
 

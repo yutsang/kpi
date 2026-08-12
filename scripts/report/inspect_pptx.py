@@ -99,13 +99,147 @@ def _text_h(sh):
     return box_h, need
 
 
+# 機械 fallback 敘述嘅固定小標題（用嚟分辨「LLM 寫」定「冇 LLM 頂上」）
+_MECH_HEADS = ("整體情況", "博彩／非博彩分佈", "金額最大的範疇")
+
+
+def _slide_kind(slide, W, H):
+    full = any(_in(s.width) > W - 0.1 and _in(s.height) > H - 0.1 for s in slide.shapes)
+    n_tbl = sum(1 for s in slide.shapes if s.has_table)
+    bars = sum(1 for s in slide.shapes if not s.has_table and s.has_text_frame
+               and _in(s.width) > W * 0.6 and _in(s.height) < 0.3
+               and s.text_frame.text.strip() and _fill_hex(s) == "00338D")
+    if full:
+        return "封面/分隔"
+    if n_tbl and _has_side_prose(slide, W):
+        return "表+敘述"
+    if n_tbl:
+        return "表"
+    if bars >= 1:
+        return "card"
+    return "敘述"
+
+
+def _fill_hex(sh):
+    try:
+        c = sh.fill.fore_color.rgb
+        return f"{c[0]:02X}{c[1]:02X}{c[2]:02X}"
+    except Exception:
+        return ""
+
+
+def _has_side_prose(slide, W):
+    """表右邊有冇敘述框（＝報告式 2 欄）。"""
+    tbl_r = max((_in(s.left) + _in(s.width) for s in slide.shapes if s.has_table), default=0)
+    for s in slide.shapes:
+        if s.has_table or not s.has_text_frame:
+            continue
+        if _in(s.left) >= tbl_r - 0.1 and _in(s.top) < 3.0 and \
+                len(s.text_frame.text.strip()) > 60:
+            return True
+    return False
+
+
+def _crumb_of(slide):
+    for s in slide.shapes:
+        if s.has_text_frame and 0.28 < _in(s.top) < 0.46 and "  |  " in s.text_frame.text:
+            return s.text_frame.text.strip()
+    return ""
+
+
+def _prose_stats(slide, W):
+    """(段數, 字數, 係咪機械 fallback)。skip breadcrumb/footer/表。"""
+    n = chars = 0
+    mech = False
+    for s in slide.shapes:
+        if s.has_table or not s.has_text_frame:
+            continue
+        t = s.text_frame.text.strip()
+        if not t or _in(s.top) < 0.28 or _in(s.top) > 7.0:
+            continue
+        if t.startswith("©") or t.startswith("初稿") or t.startswith("KPMG"):
+            continue
+        n += len([p for p in s.text_frame.paragraphs if p.text.strip()])
+        chars += len(t)
+        if any(t.startswith(h) or f"\n{h}" in t for h in _MECH_HEADS):
+            mech = True
+    return n, chars, mech
+
+
+def _empty_cols(tbl):
+    """整欄冇數（全部 '-' 或空）嘅欄名 → 報告出咗一堆得個殼嘅欄。"""
+    out, ncol = [], len(tbl.columns)
+    hdr_rows = min(2, len(tbl.rows))
+    for ci in range(1, ncol):
+        vals = [tbl.cell(ri, ci).text.strip() for ri in range(hdr_rows, len(tbl.rows))]
+        if vals and all(v in ("", "-") for v in vals):
+            name = " ".join(tbl.cell(ri, ci).text.strip() for ri in range(hdr_rows)).strip()
+            out.append(name.replace("\n", "") or f"col{ci}")
+    return out
+
+
 def audit(path, tol=0.02):
     prs = Presentation(str(path))
     W, H = _in(prs.slide_width), _in(prs.slide_height)
-    print(f"── {Path(path).name}：{len(prs.slides._sldIdLst)} 版，{W:.2f} x {H:.2f} in")
+    n_slides = len(prs.slides._sldIdLst)
+    print(f"── {Path(path).name}：{n_slides} 版，{W:.2f} x {H:.2f} in")
     if abs(W - L.SLIDE_W) > 0.05 or abs(H - L.SLIDE_H) > 0.05:
         print(f"   ⚠ slide 尺寸 ≠ 報告標準 {L.SLIDE_W} x {L.SLIDE_H} in")
-    bad, palette_hits = 0, {}
+    inv, warn, stat = [], [], {"tbl": 0, "side": 0, "mech": 0, "chars": 0, "para": 0,
+                               "cells": 0, "todo": 0}
+    seen_text = {}
+    for i, slide in enumerate(prs.slides, 1):
+        kind = _slide_kind(slide, W, H)
+        crumb = _crumb_of(slide)
+        npara, nchar, mech = _prose_stats(slide, W)
+        dims, empties = [], []
+        for sh in slide.shapes:
+            if sh.has_table:
+                t = sh.table
+                dims.append(f"{len(t.rows)}x{len(t.columns)}")
+                stat["tbl"] += 1
+                stat["cells"] += len(t.rows) * len(t.columns)
+                empties += _empty_cols(t)
+        stat["para"] += npara; stat["chars"] += nchar
+        if kind == "表+敘述":
+            stat["side"] += 1
+            if mech:
+                stat["mech"] += 1
+        inv.append((i, kind, crumb[:52], ",".join(dims), npara, nchar,
+                    "機械" if mech else ("LLM/清單" if npara else "")))
+        if dims and nchar < 60:
+            warn.append(f"slide {i}：有表但敘述只有 {nchar} 字（報告唔應該淨表冇字）")
+        if len(empties) >= 2:      # 1 欄空好平常（該頁啱啱冇嗰類調整）；≥2 先值得望一望
+            warn.append(f"slide {i}：本頁有 {len(empties)} 個調整欄整欄無數 → "
+                        f"{'、'.join(empties[:4])}（該頁項目冇呢幾類調整，正常；淨係提你留意）")
+        for sh in slide.shapes:
+            if sh.has_text_frame:
+                t = sh.text_frame.text
+                stat["todo"] += t.count("〔待插入〕")
+                if _in(sh.top) < 1.75 or _in(sh.top) > 7.0:
+                    continue                      # breadcrumb / 導語 / footer：跨版重複係設計（同 scan）
+                for para in t.split("\n"):
+                    q = para.strip()
+                    if len(q) > 40:
+                        seen_text.setdefault(q, []).append(i)
+
+    print("\n── 內容清單")
+    print(f"{'#':>3}  {'類型':<8} {'版面':<52} {'表':<10} {'段':>3} {'字':>6}  來源")
+    for i, kind, crumb, dims, npara, nchar, src in inv:
+        print(f"{i:>3}  {kind:<8} {crumb:<52} {dims:<10} {npara:>3} {nchar:>6}  {src}")
+
+    print("\n── 覆蓋")
+    print(f"  表格 {stat['tbl']} 張（{stat['cells']:,} 格）；敘述 {stat['para']} 段共 {stat['chars']:,} 字")
+    print(f"  表旁敘述 {stat['side']} 版（其中 {stat['mech']} 版係機械 fallback"
+          f"{'／建議跑 LLM' if stat['mech'] else '，全部 LLM/清單'}）")
+    if stat["todo"]:
+        print(f"  〔待插入〕placeholder {stat['todo']} 個（現場走訪相等）")
+
+    dup = {t: v for t, v in seen_text.items() if len(v) >= 3}
+    if dup:
+        warn.append(f"有 {len(dup)} 段文字喺 ≥3 版重複出現（例：{list(dup)[0][:40]}…）")
+
+    bad, palette_hits, geo = 0, {}, []
     for i, slide in enumerate(prs.slides, 1):
         issues, has_table, has_prose, has_foot = [], False, False, False
         for sh in slide.shapes:
@@ -147,11 +281,17 @@ def audit(path, tol=0.02):
             issues.append("OFF-PALETTE  " + ", ".join("#" + c for c in sorted(off)))
         if issues:
             bad += 1
-            print(f"\n  [slide {i}] {n_sh} shapes")
-            for m in issues:
-                print(f"      ✗ {m}")
-    print(f"\n── 有問題 {bad} / {len(prs.slides._sldIdLst)} 版")
-    return bad
+            geo.append((i, n_sh, issues))
+    print(f"\n── 版面體檢：{bad} / {n_slides} 版有問題")
+    for i, n_sh, issues in geo:
+        print(f"  [slide {i}] {n_sh} shapes")
+        for m in issues:
+            print(f"      ✗ {m}")
+
+    print(f"\n── 內容提示：{len(warn)} 項")
+    for m in warn:
+        print(f"  ! {m}")
+    return bad + len(warn)
 
 
 def dump_slide(path, n):

@@ -142,7 +142,9 @@ import build_summary_tables as S
 import build_overview_tables as O
 import build_narrative as N
 import render_review_table_pptx as R
-from build_llm_narrative import generate_llm_narrative, Workbench, tbl_key   # bundler 會 inline
+import biao2 as B2
+from build_llm_narrative import (generate_llm_narrative, Workbench, tbl_key,   # bundler 會 inline
+                                 proj_key)
 
 FEED = "tableau_combined_25.csv"
 
@@ -546,9 +548,11 @@ def _finding_body(box, find, mgmt, grey=None):
             head_size=7.5, body_size=7.5, gap=3)
 
 
-def render_findings(prs, ent_up, df, narr):
-    """③ 主要發現：每 canonical 調整類型 → 受影響項目 card
-    = navy 標題條(項目+金額) + body(KPMG分析發現/管理層解釋 清單抄字)。"""
+def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
+    """③ 主要發現：每 canonical 調整類型 → 受影響項目 card = navy 標題條(項目+金額) + body。
+    body 優先用 LLM 寫嘅『事項描述』（ground 住表2＋清單），管理層原話照樣保留；
+    冇 LLM 就 fallback 清單抄字（KPMG分析發現／管理層解釋）。"""
+    llm_proj = (llm or {}).get("proj", {})
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
     for adj in B.ADJ7:
@@ -561,10 +565,20 @@ def render_findings(prs, ent_up, df, narr):
         recs = []
         for _, p in projs.iterrows():
             nr = N.nlook(narr, p["ng_scope"], p["dicj code"])
-            items = [(l + "：", t) for l, t in
-                     [("KPMG分析發現", nr.get("KPMG分析發現", "")),
-                      ("管理層解釋", nr.get("管理層解釋", "")),
-                      ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
+            desc = llm_proj.get(proj_key(adj, p["ng_scope"], p["dicj code"]), "")
+            if desc:      # LLM 寫嘅事項描述（ground 表2＋清單）＋ 管理層原話
+                items = [("事項描述：", desc)]
+                if nr.get("管理層解釋"):
+                    items.append(("管理層解釋：", nr["管理層解釋"]))
+            else:
+                items = [(l + "：", t) for l, t in
+                         [("KPMG分析發現", nr.get("KPMG分析發現", "")),
+                          ("管理層解釋", nr.get("管理層解釋", "")),
+                          ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
+                if not items and b2:      # 清單冇 → 用表2 抽到嘅原文頂住
+                    t2 = B2.b2look(b2, p["ng_scope"], p["dicj code"])
+                    if t2:
+                        items = [("事項描述：", t2[:600])]
             if not items:
                 items = [("", "清單未提供本項目之分析發現，待項目組補充。")]
             recs.append((f"{p['dicj code']}　{str(p['名稱'])[:34]}　│　報告 "
@@ -902,7 +916,8 @@ def main():
                 print(f"  ⚠ LLM 生成失敗（{type(e).__name__}: {e}）→ 用現有 json / 清單 fallback")
     llm = _load_llm(entity)     # {entity}_llm_narrative.json 有就用 LLM 文字，否則清單 fallback
     if llm:
-        print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
+        print("    LLM narrative: " + "、".join(f"{k} {len(llm.get(k, {}))}"
+                                              for k in ("adj", "cat", "tbl", "proj")) + " 段")
 
     global USE_TEMPLATE
     tmpl = _find_template() if "--use-template" in sys.argv else None   # 預設 fresh 手砌（template 樣式已 hardcode）；--use-template 先開 template
@@ -985,8 +1000,14 @@ def main():
                                  f"萬澳門元，摘要如下；逐項說明見後頁。"),
                        note="註：金額單位為萬澳門元；括號表示調減。",
                        llm=llm, tbl_id=tbl_key("發現摘要"))
-    if narr:      # 逐調整類型 × 項目：金額(feed) + 發現/管理層解釋(清單抄字)
-        render_findings(prs, ent_up, sdf, narr)
+    if narr:      # 逐調整類型 × 項目：金額(feed) + 事項描述(LLM ground 表2＋清單) / 清單抄字
+        b2 = {}
+        try:            # 表2＝審查底稿，清單冇料時頂住（加密檔，開唔到就靜靜跳過）
+            b2 = B2.load_biao2(av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
+                               entity, log=lambda *a: None)
+        except Exception:
+            pass
+        render_findings(prs, ent_up, sdf, narr, llm=llm, b2=b2)
 
     # ④ 其他信息（報告 slide 42-63）
     S4 = "其他信息"
