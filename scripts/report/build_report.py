@@ -104,51 +104,51 @@ FONT_HEAD = "KPMG Bold"
 
 
 # ── from layout ──
-SZ_CRUMB = 5.5
+SZ_CRUMB = 7.0
 
 
 # ── from layout ──
-SZ_TITLE = 8.5
+SZ_TITLE = 12.0
 
 
 # ── from layout ──
-SZ_HEAD = 8.5
+SZ_HEAD = 13.0
 
 
 # ── from layout ──
-SZ_BODY = 8.0
+SZ_BODY = 9.0
 
 
 # ── from layout ──
-SZ_BODY_HEAD = 8.5
+SZ_BODY_HEAD = 9.5
 
 
 # ── from layout ──
-SZ_TBL = 6.5
+SZ_TBL = 7.5
 
 
 # ── from layout ──
-SZ_TBL_HDR = 6.0
+SZ_TBL_HDR = 7.0
 
 
 # ── from layout ──
-SZ_TBL_WIDE = 5.8
+SZ_TBL_WIDE = 6.0
 
 
 # ── from layout ──
-SZ_CAPTION = 6.0
+SZ_CAPTION = 7.5
 
 
 # ── from layout ──
-SZ_NOTE = 6.0
+SZ_NOTE = 7.0
 
 
 # ── from layout ──
-SZ_FOOT = 5.0
+SZ_FOOT = 6.0
 
 
 # ── from layout ──
-SZ_PAGE = 7.0
+SZ_PAGE = 9.0
 
 
 # ── from layout ──
@@ -330,7 +330,7 @@ def footer(slide, W, H, page):
 
 
 # ── from layout ──
-MAX_HEAD_H = 1.05
+MAX_HEAD_H = 1.35
 
 
 # ── from layout ──
@@ -2626,7 +2626,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "d6dfa62 2026-08-12 12:13"
+BUILD_STAMP = "6a13761 2026-08-12 12:24"
 
 
 # ── from make_report ──
@@ -3013,7 +3013,10 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     cols = list(ov.columns)
     d = sdf[sdf["_bucket"] == BUCKET_ORDER[0]]
     n_impl = int(d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]["dicj code"].nunique())
-    n_plan = len(plan.get(25, {})) if plan else n_impl
+    # ⚠ 計劃金額 = 0 嘅行唔算「獲批開展嘅投資項目」（清單有大量 0 行；
+    #   之前 len() 全部照計 → 出 256 個，報告係 95 個）
+    n_plan = sum(1 for v in (plan.get(25, {}) or {}).values()
+                 if isinstance(v, (int, float)) and v > 0) if plan else n_impl
     rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: max(n_plan - n_impl, 0)},
             {cols[0]: "投資執行報告中申報已實施的投資項目數量", cols[1]: n_impl}]
     # 10年投資預算：全 cell 搜過清單 + 表2 都冇（2026-08-12 確認），嚟自承批合同。
@@ -3407,7 +3410,10 @@ def _headline(ent_up, ov, df, plan):
     d["_adj"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0)
     codes = d["dicj code"].astype(str)
     n_impl = d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]["dicj code"].nunique()
-    n_plan = len(plan.get(25, {})) if plan else n_impl
+    # ⚠ 計劃金額 = 0 嘅行唔算「獲批開展嘅投資項目」（清單有大量 0 行；
+    #   之前 len() 全部照計 → 出 256 個，報告係 95 個）
+    n_plan = sum(1 for v in (plan.get(25, {}) or {}).values()
+                 if isinstance(v, (int, float)) and v > 0) if plan else n_impl
     n_zero = max(n_plan - n_impl, 0)
     n_adj = d[d["_adj"] != 0]["dicj code"].nunique()
     headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{_amt(plan_amt)}；"

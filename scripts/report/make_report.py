@@ -511,7 +511,10 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     cols = list(ov.columns)
     d = sdf[sdf["_bucket"] == S.BUCKET_ORDER[0]]
     n_impl = int(d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]["dicj code"].nunique())
-    n_plan = len(plan.get(25, {})) if plan else n_impl
+    # ⚠ 計劃金額 = 0 嘅行唔算「獲批開展嘅投資項目」（清單有大量 0 行；
+    #   之前 len() 全部照計 → 出 256 個，報告係 95 個）
+    n_plan = sum(1 for v in (plan.get(25, {}) or {}).values()
+                 if isinstance(v, (int, float)) and v > 0) if plan else n_impl
     rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: max(n_plan - n_impl, 0)},
             {cols[0]: "投資執行報告中申報已實施的投資項目數量", cols[1]: n_impl}]
     # 10年投資預算：全 cell 搜過清單 + 表2 都冇（2026-08-12 確認），嚟自承批合同。
@@ -894,7 +897,10 @@ def _headline(ent_up, ov, df, plan):
     d["_adj"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0)
     codes = d["dicj code"].astype(str)
     n_impl = d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]["dicj code"].nunique()
-    n_plan = len(plan.get(25, {})) if plan else n_impl
+    # ⚠ 計劃金額 = 0 嘅行唔算「獲批開展嘅投資項目」（清單有大量 0 行；
+    #   之前 len() 全部照計 → 出 256 個，報告係 95 個）
+    n_plan = sum(1 for v in (plan.get(25, {}) or {}).values()
+                 if isinstance(v, (int, float)) and v > 0) if plan else n_impl
     n_zero = max(n_plan - n_impl, 0)
     n_adj = d[d["_adj"] != 0]["dicj code"].nunique()
     headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{_amt(plan_amt)}；"
