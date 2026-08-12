@@ -53,18 +53,24 @@ FONT_NUM = "Arial"                          # <a:latin>（數字/英文）
 FONT_HEAD = "KPMG Bold"                     # 標題 latin（中文照樣行 ea）
 
 # ── 字號（集中一處；inspect_pptx --fonts 可印出嚟同真報告逐個位置對）────────
-SZ_CRUMB = 5.5      # ① 頂 breadcrumb
-SZ_TITLE = 8.5      # ② 章節｜子題
-SZ_HEAD = 8.5       # ③ 導語 strapline
-SZ_BODY = 8.0       # ④ 內文 body（prose 段落）
-SZ_BODY_HEAD = 8.5  # ④ 內文小標題
-SZ_TBL = 6.5        # 表身
-SZ_TBL_HDR = 6.0    # 表頭
-SZ_TBL_WIDE = 5.8   # 表身（>16 欄嘅大表）
-SZ_CAPTION = 6.0    # 表頂 navy caption bar
-SZ_NOTE = 6.0       # ⑤ 資料來源 / 註
-SZ_FOOT = 5.0       # ⑥ footer 版權
-SZ_PAGE = 7.0       # ⑥ 頁碼
+# ★ 由項目組真報告實測（inspect_pptx --fonts --range 10-63，2026-08-12）：
+#   章節｜子題 12pt（202 runs 單一值）｜導語 13-14pt｜內文 body 9pt（575 runs）
+#   資料來源/註 7pt｜native 表格 9pt（佢哋大表多數係 Tableau 截圖，所以表身抽到 0）
+#   我哋原本細成 1.5 倍（8.5/8.5/8.0/6.0/6.5）→ 全部校準。
+#   ⚠ 字大咗，同一版塞唔到咁多 → 自動分頁會出多幾版，呢個【正合】報告嘅版數
+#     （報告 1.3 有 4 版、1.4 有 3 版，我哋之前一版塞晒）。
+SZ_CRUMB = 7.0      # ① 頂 breadcrumb（scan 睇落細，唔跟 body）
+SZ_TITLE = 12.0     # ② 章節｜子題
+SZ_HEAD = 13.0      # ③ 導語 strapline
+SZ_BODY = 9.0       # ④ 內文 body（prose 段落）
+SZ_BODY_HEAD = 9.5  # ④ 內文小標題
+SZ_TBL = 7.5        # 表身（一般表；真報告 native 表 9pt，但佢哋大表係圖）
+SZ_TBL_HDR = 7.0    # 表頭
+SZ_TBL_WIDE = 6.0   # 表身（>16 欄嘅大表，9pt 塞唔落 18 欄）
+SZ_CAPTION = 7.5    # 表頂 navy caption bar
+SZ_NOTE = 7.0       # ⑤ 資料來源 / 註
+SZ_FOOT = 6.0       # ⑥ footer 版權
+SZ_PAGE = 9.0       # ⑥ 頁碼
 
 SLIDE_W = 10.83                             # 報告 slide 尺寸（scan 量度確認）
 SLIDE_H = 7.5
@@ -205,7 +211,7 @@ def footer(slide, W, H, page):
             color=NAVY, align=PP_ALIGN.RIGHT)
 
 
-MAX_HEAD_H = 1.05      # 導語最多食呢咁多高（scan 一般 2-4 行）；再長就縮字，唔可以食晒成版
+MAX_HEAD_H = 1.35      # 導語最多食呢咁多高（scan 一般 2-4 行）；再長就縮字，唔可以食晒成版
 
 
 def head_h(headline, W, hsize=SZ_HEAD):

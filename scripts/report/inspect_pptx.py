@@ -14,6 +14,7 @@ inspect_pptx.py — 報告 pptx 版面體檢（唔使開 PowerPoint 逐版睇）
 用法：
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx            # 體檢
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --slide 12 # 淨睇某版 shape 清單
+    python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --dump     # 逐版文字（唔使重 build）
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --render   # 用 PowerPoint 出 PDF/PNG（Mac）
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --spec  # 真報告嘅尺寸/字體/配色
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --fonts --range 10-63
@@ -641,11 +642,39 @@ def fonts(path, rng=None):
         print(f"      {k:<12} {getattr(L, k)} pt")
 
 
+def dump(path, with_tables=False):
+    """由【現成 pptx】dump 逐版文字 → 唔使重新 build（user 2026-08-12）。
+    預設唔 dump 表格 cell（表格係數字、另外驗；連表格會大到 paste 唔到）→ --dump-tables 先要。"""
+    prs = Presentation(str(path))
+    lines = []
+    for i, sl in enumerate(prs.slides, 1):
+        parts = []
+        for sh in sl.shapes:
+            if sh.has_table:
+                t = sh.table
+                if not with_tables:
+                    parts.append(f"〔表 {len(t.rows)}x{len(t.columns)}〕"); continue
+                for row in t.rows:
+                    cells = [c.text.strip() for c in row.cells]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+                continue
+            if sh.has_text_frame and sh.text_frame.text.strip():
+                parts.append(sh.text_frame.text.strip())
+        body = "\n".join(parts)
+        lines.append(f"\n===== slide {i}（{len(body)} 字）=====\n" + body)
+    out = Path(path).resolve().with_name(Path(path).stem + "_dump.txt")
+    out.write_text("\n".join(lines), encoding="utf-8")
+    print(f"✓ {out}（{len(prs.slides._sldIdLst)} 版）")
+
+
 def main():
     args = [a for a in sys.argv[1:]]
     if not args:
         print(__doc__); return
     path = args[0]
+    if "--dump" in args:
+        dump(path, with_tables="--dump-tables" in args); return
     if "--fonts" in args:
         rng = None
         if "--range" in args:
