@@ -1439,7 +1439,7 @@ def _gen(wb, prompt, effort, sysp):
 
 # ── from build_llm_narrative ──
 def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
-                           model=None, workers=3, out_path=None, log=print):
+                           model=None, workers=8, out_path=None, log=print):
     """由 feed + 清單 + 表2 用 Workbench 生成 {adj,cat} 敘述；寫 {entity}_llm_narrative.json，回 dict。
     可被 build_report.py --llm 直接調用（唔使另跑 command）。"""
     wb = Workbench(model=model)
@@ -2388,7 +2388,7 @@ def main():
         except Exception:
             has_creds = False
         if has_creds:
-            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 3
+            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 8   # default 8（`mgm` 一個 command 就並行）
             biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
             print("  由 feed+清單+表2 即場生成 LLM 敘述…")
             try:

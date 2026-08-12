@@ -92,7 +92,7 @@ def _gen(wb, prompt, effort, sysp):
 
 
 def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
-                           model=None, workers=3, out_path=None, log=print):
+                           model=None, workers=8, out_path=None, log=print):
     """由 feed + 清單 + 表2 用 Workbench 生成 {adj,cat} 敘述；寫 {entity}_llm_narrative.json，回 dict。
     可被 build_report.py --llm 直接調用（唔使另跑 command）。"""
     wb = Workbench(model=model)
@@ -172,7 +172,7 @@ def main():
     args = sys.argv[1:]
     entity = qingdan = model = None
     biao2_dir = "data/表2"
-    workers = 3
+    workers = 8
     cfg_only = "--config" in args
     if cfg_only:
         args.remove("--config")
