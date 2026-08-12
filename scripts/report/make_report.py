@@ -661,11 +661,13 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
             L.put(slide, L.MARGIN, top, W - 2 * L.MARGIN, 0.18, subtitle, size=6.5,
                   italic=True, color=L.GREY)
             top += 0.20
-        # 逐個 bullet 累積高度，夠一欄就轉去右欄
-        cut, used, lim = len(page), 0.0, L.CONTENT_BOTTOM - top
-        for i, it in enumerate(page):
-            ih = L.est_prose_h([it], colw, head_size=7.5, body_size=7)
-            if used + ih > lim:
+        # 斷欄：以【總高一半】為目標令左右大致平均（對 scan），但唔可以超過一欄可用高
+        lim = L.CONTENT_BOTTOM - top
+        hs = [L.est_prose_h([it], colw, head_size=7.5, body_size=7) for it in page]
+        target = sum(hs) / 2.0
+        cut, used = len(page), 0.0
+        for i, ih in enumerate(hs):
+            if i and (used >= target or used + ih > lim):
                 cut = i; break
             used += ih
         cut = max(1, cut)
