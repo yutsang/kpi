@@ -77,8 +77,15 @@ def _find_template():
     return None
 
 
+USE_TEMPLATE = False    # 只有 --use-template 真係開咗 KPMG template 先可以用 template layout
+
+
 def _layout(prs, key):
-    """跨所有 master 搵第一個名 match LAYOUTS[key] 嘅 slide layout；搵唔到回 None。"""
+    """跨所有 master 搵第一個名 match LAYOUTS[key] 嘅 slide layout；搵唔到回 None。
+    ⚠ 冇開 template 時一定回 None —— 否則會撞正 python-pptx 預設包嗰個 'Title Slide'
+    layout，封面變一版白底光板（冇深底/冇 KPMG 字標/冇日期）。"""
+    if not USE_TEMPLATE:
+        return None
     wanted = LAYOUTS.get(key, [key])
     for master in prs.slide_masters:
         for lay in master.slide_layouts:
@@ -850,7 +857,9 @@ def main():
     if llm:
         print(f"    LLM narrative: adj {len(llm.get('adj', {}))}、cat {len(llm.get('cat', {}))} 段")
 
+    global USE_TEMPLATE
     tmpl = _find_template() if "--use-template" in sys.argv else None   # 預設 fresh 手砌（template 樣式已 hardcode）；--use-template 先開 template
+    USE_TEMPLATE = bool(tmpl)
     if tmpl:
         prs = Presentation(str(tmpl))
         _strip_slides(prs)      # drop_rel 正確清走原有 content slides（唔會 duplicate 名 corrupt）
