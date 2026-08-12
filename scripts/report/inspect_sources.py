@@ -206,7 +206,8 @@ def find_all(entity, needles, out):
     import openpyxl
     import biao2 as B2
     import inspect_biao2 as IB
-    pats = [str(n) for n in needles]
+    import re as _re
+    pats = [_re.sub(r"\s+", "", str(n)) for n in needles]
 
     def scan(label, wb):
         for sn in wb.sheetnames:
@@ -216,24 +217,35 @@ def find_all(entity, needles, out):
                         if v is None:
                             continue
                         t = _clean(v)
-                        tn = t.replace(",", "")
-                        if any(p in t or p in tn for p in pats):
+                        tn = _re.sub(r"[\s,，]", "", t)      # 去晒空白同逗號先比（「10 年」「1,970,000」都捉到）
+                        if any(p in tn for p in pats):
                             ctx = " ⁄ ".join(_clean(x)[:40] for x in (row or [])[max(0, ci-2):ci+3] if x is not None)
                             out.append(f"HIT | {label} | {sn[:26]} | r{ri} c{ci} | {t[:70]} | …{ctx[:110]}")
             except Exception as e:
                 out.append(f"# ⚠ {label}｜{sn}: {e}")
+    # --find 掃闊啲：清單資料夾【全部】xlsx（唔限檔名含 entity）+ 表2【連「提供附件」】
+    files = []
     d = Path(QINGDAN_DIR)
-    for p in (sorted(d.rglob("*.xlsx")) if d.exists() else []):
-        if entity.lower() in p.name.lower() and not p.name.startswith("~$"):
-            scan(f"清單 {p.name[:24]}", openpyxl.load_workbook(p, data_only=True, read_only=True))
+    for p in (sorted(d.rglob("*.xls*")) if d.exists() else []):
+        if not p.name.startswith("~$"):
+            files.append(("清單", p))
     d = Path(BIAO2_DIR)
     for p in (sorted(d.rglob("*.xls*")) if d.exists() else []):
-        if p.name.startswith("~$") or not B2._match_entity(p.name, entity.lower()):
-            continue
+        if not p.name.startswith("~$") and B2._match_entity(p.name, entity.lower()):
+            files.append(("表2", p))
+    out.append(f"# 掃 {len(files)} 個檔：")
+    for tag, p in files:
+        out.append(f"#   {tag} {p.name}")
+    for tag, p in files:
         try:
-            scan(f"表2 {p.name[:24]}", IB.load_wb(p))
-        except Exception as e:
-            out.append(f"# ⚠ 開唔到 {p.name}: {e}")
+            wb = (openpyxl.load_workbook(p, data_only=True, read_only=True)
+                  if tag == "清單" else IB.load_wb(p))
+        except Exception:
+            try:
+                wb = IB.load_wb(p)               # 清單都可能加密
+            except Exception as e:
+                out.append(f"# ⚠ 開唔到 {p.name}: {e}"); continue
+        scan(f"{tag} {p.name[:26]}", wb)
 
 
 def main():

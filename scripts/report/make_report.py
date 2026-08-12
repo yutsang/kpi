@@ -470,6 +470,58 @@ def _table_bullets(df):
     return out
 
 
+# 10年投資預算：唔喺 feed／清單／表2（2026-08-12 全 cell 搜尋確認），嚟自承批合同 → 外部 config。
+# 放 data/10year_budget.yml（gitignored；public repo 唔可以有客戶數）：
+#   mgm: {總計: 1970000, 博彩: 996800, 非博彩: 973200}
+BUDGET_FILES = ["data/10year_budget.yml", "data/10year_budget.json", "conf/local/10year_budget.yml"]
+
+
+def _load_budget(entity):
+    for fn in BUDGET_FILES:
+        p = Path(fn)
+        if not p.exists():
+            continue
+        try:
+            if p.suffix == ".json":
+                import json
+                d = json.loads(p.read_text(encoding="utf-8"))
+            else:
+                import yaml
+                d = yaml.safe_load(p.read_text(encoding="utf-8"))
+            b = (d or {}).get(entity) or (d or {}).get(entity.upper()) or {}
+            if b:
+                print(f"    10年投資預算：{fn} → 總計 {b.get('總計', 0):,.0f} 萬澳門元")
+                return {k: float(v) for k, v in b.items()}
+        except Exception as e:
+            print(f"    ⚠ 讀唔到 {fn}: {e}")
+    return {}
+
+
+def _overview_extra(ov, plan, sdf, budget, ent_up):
+    """1.2 概況表尾段（scan slide 11）：原計劃未實施／已實施項目數量 + 承諾的10年投資預算 + 佔比。
+    項目數量計得到；10年預算要 config，冇就唔出嗰兩行。"""
+    cols = list(ov.columns)
+    d = sdf[sdf["_bucket"] == S.BUCKET_ORDER[0]]
+    n_impl = int(d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]["dicj code"].nunique())
+    n_plan = len(plan.get(25, {})) if plan else n_impl
+    rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: max(n_plan - n_impl, 0)},
+            {cols[0]: "投資執行報告中申報已實施的投資項目數量", cols[1]: n_impl}]
+    if budget:
+        tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+        gm = ov[ov["範疇"].astype(str).str.strip() == "博彩項目小計"]
+        ng = ov[ov["範疇"].astype(str).str.strip() == "非博彩項目小計"]
+        b_all, b_g, b_ng = (budget.get("總計", 0), budget.get("博彩", 0), budget.get("非博彩", 0))
+        rows.append({cols[0]: "承諾的10年投資預算", "報告投資金額": b_all})
+        r = {cols[0]: "2025年投資支出佔10年投資預算的完成率"}
+        for lab, df_, bud in (("報告投資金額", tot, b_all),):
+            for c, src in (("報告投資金額", "報告投資金額"), ("潛在調整後投資金額", "潛在調整後投資金額")):
+                if c in cols and len(df_):
+                    v = pd.to_numeric(pd.Series([df_.iloc[0][src]]), errors="coerce").iloc[0]
+                    r[c] = B._rate(float(v or 0), bud) if bud else None
+        rows.append(r)
+    return pd.concat([ov, pd.DataFrame(rows)], ignore_index=True) if rows else ov
+
+
 def _bucket_adj_table(ov):
     """期後調整事項匯總嘅左表（對 scan p-11）：範疇 × 報告(a)｜潛在調整(b)｜調整後(c=a+b)｜b/a。"""
     keep = ["範疇", "項目數量", "報告投資金額", "潛在調整金額", "潛在調整後投資金額"]
@@ -1224,6 +1276,7 @@ def main():
         ("1.3  2025年度投資項目的整體執行概況", ""),
         ("1.4  2025年度投資計劃報告投資金額的潛在調整事項匯總", ""),
     ])
+    budget = _load_budget(entity)
     ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan, cat)
     adj = O.adjustment_bridge(sdf)
     NOTE_RATE = ("註：投資計劃完成率 ＝ 報告投資金額 ／ 獲批的計劃投資金額；潛在調整後完成率 ＝ "
@@ -1232,7 +1285,8 @@ def main():
         hl, hlb = _headline(ent_up, ov, sdf, plan)
         exb = _exec_bullets(ent_up, ov)
         render_overview_page(prs, f"{S1}  |  {ent_up} 2025年度計劃的整體投資支出及執行概況",
-                             hl, ov.fillna(""), hlb + exb, sec=0,
+                             hl, _overview_extra(ov, plan, sdf, budget, ent_up).fillna(""),
+                             hlb + exb, sec=0,
                              table_name=f"{ent_up} 2025年度的整體投資支出概況", note=NOTE_RATE)
         render_category_overview(prs, ent_up, ov, sdf, narr, llm)   # slide 13-14 逐範疇概況（LLM 優先）
         zit = O.zero_investment_text(O.zero_investment_summary(sdf, plan, cat, narr, ent_up), ent_up)
