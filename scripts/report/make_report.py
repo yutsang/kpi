@@ -576,7 +576,7 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
                           ("管理層解釋", nr.get("管理層解釋", "")),
                           ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
                 if not items and b2:      # 清單冇 → 用表2 抽到嘅原文頂住
-                    t2 = B2.b2look(b2, p["ng_scope"], p["dicj code"])
+                    t2 = B2.b2text(b2, p["ng_scope"], p["dicj code"])
                     if t2:
                         items = [("事項描述：", t2[:600])]
             if not items:
@@ -1003,7 +1003,7 @@ def main():
     if narr:      # 逐調整類型 × 項目：金額(feed) + 事項描述(LLM ground 表2＋清單) / 清單抄字
         b2 = {}
         try:            # 表2＝審查底稿，清單冇料時頂住（加密檔，開唔到就靜靜跳過）
-            b2 = B2.load_biao2(av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
+            b2 = B2.load_biao2_struct(av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
                                entity, log=lambda *a: None)
         except Exception:
             pass

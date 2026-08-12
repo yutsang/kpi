@@ -1741,8 +1741,164 @@ def _match_entity(fname, entity):
 
 
 # ── from biao2 ──
+def _txt(v):
+    return re.sub(r"\s+", " ", str(v if v is not None else "")).strip()
+
+
+# ── from biao2 ──
+B2_FIELDS = {
+    "關注事項": ["畢馬威關注事項"],                 # ★ 調整嘅正文
+    "調整類型": ["需溝通關注事項"],                 # e.g.「一般支持性部門的人工成本」
+    "關注事項金額": ["該關注事項涉及調整金額"],
+    "建議調整金額": ["建議調整金額"],
+    "調整原因": ["調整原因"],
+    "建議調整後金額": ["建議調整後金額"],
+    "KPMG分析": ["KPMG分析"],                     # 第一/二輪諮詢各一，兩個都收
+    "管理層解釋": ["承批公司管理層解釋"],
+    "承批公司反饋": ["承批公司的反饋意見"],
+    "跨司回覆": ["跨司工作組的回覆", "跨司工作組最新反饋意見", "跨司工作組的反饋意見",
+                 "跨司工作組主責部門"],
+    "項目分析意見": ["項目分析意見"],
+    "建議接納調整後金額": ["建議接納之調整後金額"],
+    "實際情況": ["已投放金額", "截至"],
+    "擬投資內容": ["擬投資金額", "擬落實"],
+}
+
+
+# ── from biao2 ──
+B2_ORDER = ["調整類型", "關注事項", "調整原因", "關注事項金額", "建議調整金額",
+            "建議調整後金額", "KPMG分析", "管理層解釋", "承批公司反饋", "跨司回覆",
+            "項目分析意見", "建議接納調整後金額", "實際情況", "擬投資內容"]
+
+
+# ── from biao2 ──
+_HDR_HINT = [k for ks in B2_FIELDS.values() for k in ks] + ["項目編號", "資料要求", "問題狀態"]
+
+
+# ── from biao2 ──
+def _detail_header_row(rows, band=10):
+    """detail 表頭行 = 頭 band 行入面 match 到最多概念嗰行（group 行喺佢上面）。"""
+    best, bn = 0, 0
+    for ri in range(min(band, len(rows))):
+        n = sum(1 for v in (rows[ri] or []) if any(k in _txt(v) for k in _HDR_HINT))
+        if n > bn:
+            bn, best = n, ri
+    return best, bn
+
+
+# ── from biao2 ──
+def _field_cols(hdr):
+    """detail 表頭 → {概念: [col_idx]}。"""
+    cols = {}
+    for ci, v in enumerate(hdr):
+        s = _txt(v)
+        if not s:
+            continue
+        for concept, keys in B2_FIELDS.items():
+            if any(k in s for k in keys):
+                cols.setdefault(concept, []).append(ci)
+    return cols
+
+
+# ── from biao2 ──
+def load_biao2_struct(folder, entity, log=lambda *a: None):
+    """{(gaming, 正規化碼): {概念: 文字}} —— 按【欄名】structured 抽（唔再盲抓）。
+    表2 layout：group 行 + detail 表頭行（概念名）+ 逐項目 data 行；欄序浮動 → 全部按名認。
+    同一個碼有多行（matrix）→ 每個概念收最長嗰個非空值，其餘唔同值就接落去。"""
+    out = {}
+    d = Path(folder)
+    if not d.exists():
+        log(f"（冇 {folder}）"); return out
+    allx = [p for p in sorted(d.rglob("*.xls*")) if not p.name.startswith("~$")]
+    files = [p for p in allx if _match_entity(p.name, entity.lower()) and "提供附件" not in p.name]
+    log(f"表2 folder {folder}：共 {len(allx)} 個 xls*，match「{entity}」{len(files)} 檔")
+    n_field = 0
+    for p in files:
+        gaming = ("博監局" in p.name)
+        try:
+            wb = load_wb(p)
+        except Exception as e:
+            log(f"  ⚠ 開唔到 {p.name}: {e}"); continue
+        for sn in wb.sheetnames:
+            try:
+                rows = []
+                for i, r in enumerate(wb[sn].iter_rows(values_only=True)):
+                    rows.append(r)
+                    if i > 700:
+                        break
+                ncol = max((len(r) for r in rows if r), default=0)
+                if ncol == 0:
+                    continue
+                hr, nmatch = _detail_header_row(rows)
+                if nmatch < 3:
+                    continue                     # 唔似標準表2 sheet（附件/圖片頁）→ 跳
+                fcols = _field_cols(rows[hr])
+                if not fcols:
+                    continue
+                # code 欄：優先『項目編號』表頭（實測佢喺 group 行，唔喺 detail 行）→ 兩行都揾；
+                # 都揾唔到就用 _CODE_RE 命中最多嗰欄
+                hdr_band = list(rows[hr]) + list(rows[hr - 1] if hr else [])
+                code_c = next((ci % max(ncol, 1) for ci, v in enumerate(hdr_band)
+                               if "項目編號" in _txt(v)), None)
+                if code_c is None:
+                    best, bestn = None, 0
+                    for ci in range(ncol):
+                        n = sum(1 for r in rows if ci < len(r) and r[ci] is not None
+                                and _CODE_RE.match(re.sub(r"\s+", "", str(r[ci]))))
+                        if n > bestn:
+                            bestn, best = n, ci
+                    code_c = best
+                if code_c is None:
+                    continue
+                log(f"  · {p.name}｜{sn}：detail表頭 r{hr+1}、code欄 col{code_c}、"
+                    f"{len(fcols)} 個概念（{'博彩' if gaming else '非博彩'}）")
+                for r in rows[hr + 1:]:
+                    if code_c >= len(r) or r[code_c] is None:
+                        continue
+                    if not _CODE_RE.match(re.sub(r"\s+", "", str(r[code_c]))):
+                        continue
+                    rec = out.setdefault((gaming, _norm(r[code_c])), {})
+                    for concept, cis in fcols.items():
+                        for ci in cis:
+                            if ci >= len(r):
+                                continue
+                            s = _txt(r[ci])
+                            if len(s) < 3 or _JUNK_RE.match(s):
+                                continue
+                            cur = rec.get(concept, "")
+                            if s in cur:
+                                continue
+                            rec[concept] = (cur + "　" + s).strip("　") if cur else s
+                            n_field += 1
+            except Exception as e:
+                log(f"  ⚠ {p.name}｜{sn}: {e}")
+    log(f"表2（structured）：{len(files)} 檔 → {len(out)} 個 (gaming,碼)、{n_field} 個欄值")
+    return out
+
+
+# ── from biao2 ──
+def b2rec(b2s, ng_scope, code):
+    """由 (ng_scope, code) 攞 structured rec（撞號先試 exact）。"""
+    g = (ng_scope == "gaming")
+    c = _norm(code)
+    return b2s.get((g, c)) or b2s.get((not g, c)) or {}
+
+
+# ── from biao2 ──
+def b2text(b2s, ng_scope, code, limit=1400):
+    """structured rec → 有 label 嘅文字（餵 LLM 用；比盲抓清楚好多）。"""
+    rec = b2rec(b2s, ng_scope, code)
+    if not rec:
+        return ""
+    parts = [f"{k}：{rec[k]}" for k in B2_ORDER if rec.get(k)]
+    s = "；".join(parts)
+    return s[:limit]
+
+
+# ── from biao2 ──
 def load_biao2(folder, entity, log=lambda *a: None):
-    """{(gaming, 正規化碼): [finding 文字…]}。best-effort，逐檔逐 sheet try。"""
+    """{(gaming, 正規化碼): [finding 文字…]}。best-effort，逐檔逐 sheet try。
+    （舊版盲抓；新 code 請用 load_biao2_struct + b2text。）"""
     out = {}
     d = Path(folder)
     if not d.exists():
@@ -1971,7 +2127,7 @@ def _proj_sources(d, narr, b2, mask, kind="content", n=5):
     out = []
     for _, p in top.iterrows():
         nr = nlook(narr, p["ng_scope"], p["dicj code"])
-        b2t = b2look(b2, p["ng_scope"], p["dicj code"])
+        b2t = b2text(b2, p["ng_scope"], p["dicj code"])
         if kind == "finding":
             txt = nr.get("KPMG分析發現", "") or b2t
             mg = nr.get("管理層解釋", "")
@@ -1994,7 +2150,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
     wb = Workbench(model=model)
     df = _load(Path(feed_path), entity)
     narr = load_narrative(Path(qingdan)) if qingdan else {}
-    b2 = load_biao2(biao2_dir, entity or "", log=log)
+    b2 = load_biao2_struct(biao2_dir, entity or "", log=log)
     plan = load_plan(Path(qingdan)) if qingdan else None
     cat = load_category(Path(qingdan)) if qingdan else None
     ov = overview_by_bucket(df, "2025年度投資計劃", plan, cat)
@@ -2019,7 +2175,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
         projs = []
         for _, pp in agg.iterrows():
             nr = nlook(narr, pp["ng_scope"], pp["dicj code"])
-            b2t = b2look(b2, pp["ng_scope"], pp["dicj code"])
+            b2t = b2text(b2, pp["ng_scope"], pp["dicj code"])
             ruling = "；".join(x for x in (nr.get("跨司回覆", ""), nr.get("KPMG回覆", "")) if x)
             projs.append((str(pp["nm"]), nr.get("KPMG分析發現", ""),
                           nr.get("管理層解釋", ""), b2t, ruling))
@@ -2043,7 +2199,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
             content = content or nr.get("實際投資內容", "")
             reason = reason or nr.get("管理層解釋", "")   # 業務原因；唔用 KPMG分析發現（審計腔）
             if not b2t:
-                b2t = b2look(b2, scope, pp["dicj code"])
+                b2t = b2text(b2, scope, pp["dicj code"])
             if content and reason and b2t:
                 break
         tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
@@ -2706,7 +2862,7 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
                           ("管理層解釋", nr.get("管理層解釋", "")),
                           ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
                 if not items and b2:      # 清單冇 → 用表2 抽到嘅原文頂住
-                    t2 = b2look(b2, p["ng_scope"], p["dicj code"])
+                    t2 = b2text(b2, p["ng_scope"], p["dicj code"])
                     if t2:
                         items = [("事項描述：", t2[:600])]
             if not items:
@@ -3145,7 +3301,7 @@ def main():
     if narr:      # 逐調整類型 × 項目：金額(feed) + 事項描述(LLM ground 表2＋清單) / 清單抄字
         b2 = {}
         try:            # 表2＝審查底稿，清單冇料時頂住（加密檔，開唔到就靜靜跳過）
-            b2 = load_biao2(av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
+            b2 = load_biao2_struct(av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
                                entity, log=lambda *a: None)
         except Exception:
             pass

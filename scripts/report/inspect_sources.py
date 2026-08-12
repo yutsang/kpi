@@ -74,6 +74,30 @@ def _find_header(rows, keys, maxscan=14):
     return None, []
 
 
+# 表2 標準概念（由 mgm sources audit 2026-08-12 實測得出）→ 用嚟認【detail 表頭行】
+B2_CONCEPTS = [
+    "投資項目序號及名稱", "實施時間", "擬投資金額", "已投放金額", "是否該司局範疇",
+    "是否有希望諮詢的問題", "問題狀態", "KPMG提出日期", "KPMG分析", "承批公司管理層解釋",
+    "KPMG希望進一步", "跨司工作組的回覆", "畢馬威關注事項", "承批公司的反饋意見",
+    "跨司工作組的反饋意見", "是否需進一步", "需溝通關注事項", "該關注事項涉及調整金額",
+    "跨司工作組主責部門", "KPMG需與跨司工作組", "跨司工作組最新反饋意見",
+    "建議調整金額", "調整原因", "建議調整後金額", "項目分析意見", "建議接納之調整後金額",
+    "項目編號", "資料要求",
+]
+
+
+def _detail_header(rows, band=10):
+    """表2 真正嘅 detail 表頭行 = 頭 band 行入面 match 到最多概念嗰行。
+    ⚠ 之前用『第一個含關鍵字嘅行』會揾到 group 行（上面一行），令 detail 欄名全部變 (無標題)。
+    回 (row_idx, n_match)。"""
+    best, bn = None, 0
+    for ri in range(min(band, len(rows))):
+        n = sum(1 for v in (rows[ri] or []) if any(c in _clean(v) for c in B2_CONCEPTS))
+        if n > bn:
+            bn, best = n, ri
+    return best, bn
+
+
 def audit_qingdan(entity, maxrows, out):
     import openpyxl
     d = Path(QINGDAN_DIR)
@@ -100,7 +124,7 @@ def audit_qingdan(entity, maxrows, out):
     for ci in range(ncol):
         st = _col_stats(body, ci, hdr[ci] if ci < len(hdr) else "", USED_QINGDAN)
         if st:
-            out.append("清單\t" + ws.title + "\t" + "\t".join(st))
+            out.append(" | ".join(["清單", ws.title] + st))
 
 
 def audit_biao2(entity, maxrows, out):
@@ -129,20 +153,22 @@ def audit_biao2(entity, maxrows, out):
                 ncol = max((len(r) for r in rows if r), default=0)
                 if ncol == 0:
                     continue
-                # 表2 兩層表頭：揾「投資項目」/「序號」嗰行，同上一行（group 標題）夾埋做欄名
-                hr, hdr = _find_header(rows, ["投資項目", "項目序號", "項目名稱"])
+                # 表2 兩層表頭：detail 行（概念名）+ 上面 group 行
+                hr, nmatch = _detail_header(rows)
                 if hr is None:
-                    hr, hdr = 0, [_clean(v) for v in (rows[0] or [])]
+                    hr, nmatch = 0, 0
+                hdr = [_clean(v) for v in (rows[hr] or [])]
                 grp = [_clean(v) for v in (rows[hr - 1] or [])] if hr > 0 else []
                 body = rows[hr + 1:]
-                out.append(f"# 表2 {p.name}｜{sn}：表頭第{hr+1}行，{ncol} 欄，{len(body)} 行")
+                out.append(f"# 表2 {p.name}｜{sn}：detail表頭第{hr+1}行（match {nmatch} 個概念）、"
+                           f"group第{hr}行，{ncol} 欄，{len(body)} 行資料")
                 for ci in range(ncol):
                     h = hdr[ci] if ci < len(hdr) else ""
                     g = grp[ci] if ci < len(grp) else ""
                     name = (f"{g}／{h}" if g and h and g != h else (h or g))
                     st = _col_stats(body, ci, name, [])      # 表2 全部當「未用」（而家係盲抓）
                     if st:
-                        out.append(f"表2\t{p.name[:28]}｜{sn[:22]}\t" + "\t".join(st))
+                        out.append(" | ".join(["表2", f"{p.name[:28]}｜{sn[:22]}"] + st))
             except Exception as e:
                 out.append(f"# ⚠ {p.name}｜{sn}: {e}")
 
@@ -155,9 +181,14 @@ def audit_feed(entity, out):
     p = Path(FEED)
     if not p.exists():
         out.append(f"# feed：揾唔到 {FEED}"); return
-    df = pd.read_csv(p, low_memory=False, nrows=200000)
-    if "entity" in df.columns:
-        df = df[df["entity"].astype(str).str.lower() == entity.lower()]
+    # ⚠ 唔可以 nrows 截：feed 幾十萬行、entity 唔一定排喺頭（之前出「0 行」就係咁）
+    parts = []
+    for ch in pd.read_csv(p, low_memory=False, chunksize=200000):
+        parts.append(ch[ch["entity"].astype(str).str.lower() == entity.lower()]
+                     if "entity" in ch.columns else ch)
+    df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+    if df.empty:
+        out.append(f"# feed {p.name}：0 行（{entity}）—— 檢查 entity 值同 feed 內容"); return
     out.append(f"# feed {p.name}：{len(df)} 行（{entity}），{len(df.columns)} 欄")
     for ci, c in enumerate(df.columns):
         s = df[c]
@@ -165,8 +196,8 @@ def audit_feed(entity, out):
         if nn == 0:
             continue
         samp = " ⁄ ".join(_clean(x)[:60] for x in s.dropna().unique()[:2])
-        out.append("\t".join(["feed", "-", str(ci), _clean(c)[:60], str(nn),
-                              str(int(s.nunique(dropna=True))), _used(c, USED_FEED), samp]))
+        out.append(" | ".join(["feed", "-", str(ci), _clean(c)[:60], str(nn),
+                               str(int(s.nunique(dropna=True))), _used(c, USED_FEED), samp]))
 
 
 def main():
@@ -180,7 +211,8 @@ def main():
             batch = v if flag == "--batch" else batch
     entity = entity.lower()
     out = [f"# ==== report sources audit｜entity={entity} ====",
-           "# 欄位：來源\t檔／sheet\t欄index\t欄名\t有值行數\t相異值\t用咗未\t樣本",
+           "# 欄位（用 | 分隔，tab 一 paste 就會變空格）：來源 | 檔／sheet | 欄index | 欄名 | "
+           "有值行數 | 相異值 | 用咗未 | 樣本",
            "# 『USED』＝已接入報告；『—』＝未用（可以攞嚟寫報告內容）"]
     audit_feed(entity, out)
     audit_qingdan(entity, maxrows, out)
@@ -188,8 +220,8 @@ def main():
 
     f = Path(f"{entity}_sources_audit.txt")
     f.write_text("\n".join(out), encoding="utf-8")
-    n_un = sum(1 for l in out if "\t—\t" in l)
-    n_us = sum(1 for l in out if "\tUSED\t" in l)
+    n_un = sum(1 for l in out if " | — | " in l)
+    n_us = sum(1 for l in out if " | USED | " in l)
     print(f"✓ {f.resolve()}（{len(out)} 行；USED {n_us}、未用 {n_un}）")
     print(f"── 以下分批印出，每批 ≤{batch} 行，逐批 paste 返俾我 ──")
     for i in range(0, len(out), batch):
