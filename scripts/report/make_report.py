@@ -142,7 +142,7 @@ import build_summary_tables as S
 import build_overview_tables as O
 import build_narrative as N
 import render_review_table_pptx as R
-from build_llm_narrative import generate_llm_narrative, Workbench   # bundler 會 inline
+from build_llm_narrative import generate_llm_narrative, Workbench, tbl_key   # bundler 會 inline
 
 FEED = "tableau_combined_25.csv"
 
@@ -427,11 +427,58 @@ def _total_line(df):
     return "；".join(parts[:6]) + "（單位：萬澳門元，除完成率外）。" if parts else ""
 
 
-def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=None):
+def _table_bullets(df):
+    """冇 LLM 時嘅機械表旁敘述（由表自己嘅小計/總計行計，自洽）→ [(小標題, 內容)]。"""
+    cols = list(df.columns)
+    first = df[cols[0]].astype(str).str.strip()
+    num = [c for c in cols[1:] if pd.to_numeric(df[c], errors="coerce").notna().any()]
+    if not num:
+        return []
+    out = []
+    tot = df[first.str.endswith("總計")]
+    if not tot.empty:
+        out.append(("整體情況", "全部範疇合計 " +
+                    "；".join(f"{c.replace('·', '－')} {_cell_txt(c, tot.iloc[0][c])}"
+                              for c in num[:5]) + "（單位：萬澳門元，除完成率外）。"))
+    subs = df[first.str.endswith("小計")]
+    if not subs.empty:
+        out.append(("博彩／非博彩分佈", "；".join(
+            f"{r[cols[0]]} " + "、".join(f"{c.replace('·', '－')} {_cell_txt(c, r[c])}"
+                                         for c in num[:3]) for _, r in subs.iterrows()) + "。"))
+    val = next((c for c in num if "報告" in c or "合計" in c), num[0])
+    data = df[~first.str.endswith(("小計", "總計")) &
+              df[cols[1:]].astype(str).apply(lambda r: any(x.strip() for x in r), axis=1)].copy()
+    data["_v"] = pd.to_numeric(data[val], errors="coerce")
+    top = data.sort_values("_v", ascending=False).head(4)
+    if not top.empty:
+        out.append((f"金額最大的範疇（按{val.replace('·', '－')}）", "、".join(
+            f"{r[cols[0]]}（{_cell_txt(val, r[val])}）" for _, r in top.iterrows()) + "。"))
+    return out
+
+
+def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=None,
+                   llm=None, tbl_id=None, side=None):
     """單張表（範疇/項目 + 數字欄；·=2-row group header）。逐頁：crumb + 導語 + caption bar
-    + 表 + 資料來源，按【累積高度】分頁（唔會超出版面）。"""
+    + 表 + 資料來源，按【累積高度】分頁（唔會超出版面）。
+
+    side=True → 報告式 2 欄（表左 + 敘述右，對 scan p-10~p-13）。敘述優先用 LLM 寫嘅
+    `llm['tbl'][tbl_id]`，冇就用 _table_bullets 機械生成。欄數少（≤8）而且一版放得落先會用。"""
     if df is None or df.empty:
         return
+    bullets = [tuple(x) for x in ((llm or {}).get("tbl", {}).get(tbl_id) or [])] \
+        or _table_bullets(df)
+    if side is None:
+        side = len(df.columns) <= 8 and bool(bullets)
+    if side and bullets:
+        W, _H = L.size_of(prs)
+        lw = W * 0.60
+        s2, r2, w2, sp2 = _df_table(df)
+        wid2 = [w * lw / sum(w2) for w in w2]
+        need = L.header_h(sp2, s2, wid2, 5.0) + sum(L.row_h(c, wid2, 5.0) for _, c in r2)
+        if need <= L.CONTENT_BOTTOM - 1.9:              # 一版放得落先用 2 欄，否則落返全闊分頁
+            render_overview_page(prs, (crumb or title), headline or _total_line(df), df,
+                                 bullets, sec=sec, table_name=title, note=note)
+            return
     subs, rows, widths, supers = _df_table(df)
     W, H = L.size_of(prs)
     tw = W - 2 * L.MARGIN
@@ -923,7 +970,8 @@ def main():
             render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""), sec=1,
                            crumb=f"{S2}  |  {bk}金額概覽",
                            headline=_bucket_headline(ent_up, bk, ov),
-                           note="註：金額單位為萬澳門元；括號表示調減。")
+                           note="註：金額單位為萬澳門元；括號表示調減。",
+                           llm=llm, tbl_id=tbl_key("期後概覽", bk))
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
     S3 = "本年度審查工作的主要發現"
@@ -935,7 +983,8 @@ def main():
                        headline=(f"本次審查工作就{ent_up}報告的投資金額識別出{len(fs)}類潛在調整事項，"
                                  f"合計潛在調減約{abs(pd.to_numeric(fs['調整額合計'], errors='coerce').sum()):,.0f}"
                                  f"萬澳門元，摘要如下；逐項說明見後頁。"),
-                       note="註：金額單位為萬澳門元；括號表示調減。")
+                       note="註：金額單位為萬澳門元；括號表示調減。",
+                       llm=llm, tbl_id=tbl_key("發現摘要"))
     if narr:      # 逐調整類型 × 項目：金額(feed) + 發現/管理層解釋(清單抄字)
         render_findings(prs, ent_up, sdf, narr)
 
@@ -947,7 +996,7 @@ def main():
                    crumb=f"{S4}  |  2025年發生的投資金額匯總",
                    headline=(f"下表匯總{ent_up} 2025年度投資計劃及過往年度計劃期後投資"
                              f"於2025年發生的投資金額（報告投資金額及潛在調整後投資金額）。"),
-                   note="註：金額單位為萬澳門元。")
+                   note="註：金額單位為萬澳門元。", llm=llm, tbl_id=tbl_key("金額匯總"))
     for bk in S.BUCKET_ORDER:
         fa = S.facility_activity(sdf, bk)
         if not fa.empty:
@@ -955,7 +1004,8 @@ def main():
                            crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦",
                            headline=(f"下表按範疇列示{ent_up} {bk}於2025年發生的投資金額，"
                                      f"區分設施建設（資本性支出）及活動舉辦（營運性支出）。"),
-                           note="註：金額為潛在調整後金額，單位為萬澳門元。")
+                           note="註：金額為潛在調整後金額，單位為萬澳門元。",
+                           llm=llm, tbl_id=tbl_key("設施活動", bk))
     for yr in (25, 24, 23):     # 單個項目審查匯總（slide 46-63）
         tab, _ = B.build_year(df, yr, plan.get(yr) if plan else None)
         if tab is not None and not tab.empty:
