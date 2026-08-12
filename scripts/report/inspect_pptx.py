@@ -14,7 +14,8 @@ inspect_pptx.py — 報告 pptx 版面體檢（唔使開 PowerPoint 逐版睇）
 用法：
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx            # 體檢
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --slide 12 # 淨睇某版 shape 清單
-    python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --dump     # 逐版文字（唔使重 build）
+    python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --dump [--batch 12]
+                                            # 逐版文字（唔使重 build）；出檔 + console 印方便 copy
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --render   # 用 PowerPoint 出 PDF/PNG（Mac）
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --spec  # 真報告嘅尺寸/字體/配色
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --fonts --range 10-63
@@ -642,7 +643,7 @@ def fonts(path, rng=None):
         print(f"      {k:<12} {getattr(L, k)} pt")
 
 
-def dump(path, with_tables=False):
+def dump(path, with_tables=False, batch=0):
     """由【現成 pptx】dump 逐版文字 → 唔使重新 build（user 2026-08-12）。
     預設唔 dump 表格 cell（表格係數字、另外驗；連表格會大到 paste 唔到）→ --dump-tables 先要。"""
     prs = Presentation(str(path))
@@ -664,8 +665,17 @@ def dump(path, with_tables=False):
         body = "\n".join(parts)
         lines.append(f"\n===== slide {i}（{len(body)} 字）=====\n" + body)
     out = Path(path).resolve().with_name(Path(path).stem + "_dump.txt")
-    out.write_text("\n".join(lines), encoding="utf-8")
+    txt = "\n".join(lines)
+    out.write_text(txt, encoding="utf-8")
     print(f"✓ {out}（{len(prs.slides._sldIdLst)} 版）")
+    # 同時喺 console 印，user 直接 copy（--batch N = 每批 N 版；0 = 一次過）
+    if batch:
+        for i in range(0, len(lines), batch):
+            print(f"\n########## BATCH {i//batch + 1}/{-(-len(lines)//batch)}"
+                  f"（slide {i+1}-{min(i+batch, len(lines))}）##########")
+            print("\n".join(lines[i:i + batch]))
+    else:
+        print(txt)
 
 
 def main():
@@ -674,7 +684,8 @@ def main():
         print(__doc__); return
     path = args[0]
     if "--dump" in args:
-        dump(path, with_tables="--dump-tables" in args); return
+        b = int(args[args.index("--batch") + 1]) if "--batch" in args else 0
+        dump(path, with_tables="--dump-tables" in args, batch=b); return
     if "--fonts" in args:
         rng = None
         if "--range" in args:
