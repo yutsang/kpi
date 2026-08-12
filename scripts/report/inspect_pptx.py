@@ -32,8 +32,11 @@ except ImportError:
 import layout as L
 
 EMU_IN = 914400.0
-PALETTE = {  # KPMG 品牌色 + 由品牌色派生嘅表格 tint（其餘算 off-palette）
-    "00338D": "KPMG Blue", "005EB8": "Medium Blue", "0091DA": "Light Blue",
+PALETTE = {  # 公司 template theme 實際配色（--spec 讀出，2026-08-12）＋ 派生 tint
+    "00338D": "dk2/accent2 KPMG Blue", "0C233C": "accent3 深底", "1E49E2": "accent1",
+    "00B8F5": "accent4", "7213EA": "accent5", "FD349C": "accent6", "E5E5E5": "lt2",
+    "ACEAFF": "master3 accent1", "00C0AE": "master3 accent4",
+    "005EB8": "Medium Blue", "0091DA": "Light Blue",
     "483698": "Violet", "470A68": "Purple", "6D2077": "Light Purple", "00A3A1": "Green",
     "FFFFFF": "White", "EEF1F8": "tint-section", "D9E1F2": "tint-subtotal",
     "BDD7EE": "tint-total", "BFBFBF": "格線", "222222": "內文", "333333": "內文",

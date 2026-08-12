@@ -92,11 +92,15 @@ NEG_COLOR = None
 
 
 # ── from layout ──
-FONT_CN = "微软雅黑"
+FONT_CN = "Microsoft YaHei"
 
 
 # ── from layout ──
 FONT_NUM = "Arial"
+
+
+# ── from layout ──
+FONT_HEAD = "KPMG Bold"
 
 
 # ── from layout ──
@@ -109,6 +113,10 @@ SLIDE_H = 7.5
 
 # ── from layout ──
 MARGIN = 0.53
+
+
+# ── from layout ──
+COL_GAP = 0.21
 
 
 # ── from layout ──
@@ -138,6 +146,37 @@ SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計�
 
 # ── from layout ──
 _CN_RE = None
+
+
+# ── from layout ──
+def set_ea(run_or_font, ea=None):
+    """寫 <a:ea>（中文字體）—— python-pptx 只寫 <a:latin>，唔寫 ea 中文會跌返 theme 預設。
+    OOXML 次序：… latin, ea, cs …，所以要 insert 喺 latin 之後。"""
+    f = getattr(run_or_font, "font", run_or_font)
+    try:
+        rPr = f._rPr
+    except AttributeError:
+        return
+    if rPr is None:
+        return
+    el = rPr.find(qn("a:ea"))
+    if el is None:
+        el = rPr.makeelement(qn("a:ea"), {})
+        lat = rPr.find(qn("a:latin"))
+        (lat.addnext(el) if lat is not None else rPr.append(el))
+    el.set("typeface", ea or FONT_CN)
+
+
+# ── from layout ──
+def setfont(run, size, *, bold=False, italic=False, color=None, heading=False, latin=None):
+    """一次過設 size/bold/color + <a:latin> + <a:ea>（跟 template theme）。"""
+    f = run.font
+    f.size = Pt(size); f.bold = bold; f.italic = italic
+    if color is not None:
+        f.color.rgb = color
+    f.name = latin or (FONT_HEAD if heading else FONT_NUM)
+    set_ea(f)
+    return run
 
 
 # ── from layout ──
@@ -209,9 +248,7 @@ def put(slide, x, y, w, h, text, *, size=8, bold=False, color=INK, align=PP_ALIG
     p.font.size = Pt(size)                      # 定死：空段落唔好跌返 Calibri 18
     p._p.get_or_add_endParaRPr().set("sz", str(int(round(size * 100))))
     r = p.add_run(); r.text = str(text)
-    r.font.size = Pt(size); r.font.bold = bold; r.font.italic = italic
-    r.font.color.rgb = color
-    r.font.name = font or (FONT_CN if has_cn(text) else FONT_NUM)
+    setfont(r, size, bold=bold, italic=italic, color=color, latin=font)
     return box
 
 
@@ -223,12 +260,9 @@ def breadcrumb(slide, W, active=0, entity="MGM"):
     for i, s in enumerate(SECTIONS):
         if i:
             sep = p.add_run(); sep.text = "  |  "
-            sep.font.size = Pt(5.5); sep.font.color.rgb = RGBColor(0xC8, 0xC8, 0xC8)
-            sep.font.name = FONT_CN
+            setfont(sep, 5.5, color=RGBColor(0xC8, 0xC8, 0xC8))
         r = p.add_run(); r.text = s
-        r.font.size = Pt(5.5); r.font.name = FONT_CN
-        r.font.bold = (i == active)
-        r.font.color.rgb = NAVY if i == active else LGREY
+        setfont(r, 5.5, bold=(i == active), color=NAVY if i == active else LGREY)
     put(slide, W - 1.05, CRUMB_Y, 0.85, 0.18, f"{entity}  ◀ ⌂ ▶", size=5.5,
         color=LGREY, align=PP_ALIGN.RIGHT)
 
@@ -238,8 +272,7 @@ def footer(slide, W, H, page):
     """底：KPMG 字標 + 版權 + 初稿/頁碼（對 scan）。"""
     kb = _tb(slide, MARGIN - 0.23, H - 0.34, 0.7, 0.22)
     kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
-    kr.font.size = Pt(11); kr.font.bold = True; kr.font.italic = True
-    kr.font.color.rgb = NAVY; kr.font.name = FONT_NUM
+    setfont(kr, 11, bold=True, italic=True, color=NAVY)
     put(slide, MARGIN + 0.5, H - 0.30, W - 2.2, 0.2,
         "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。",
         size=5, color=LGREY)
@@ -275,7 +308,7 @@ def page_head(slide, W, crumb, headline=None, *, hsize=8.5):
     box = _tb(slide, MARGIN, HEAD_Y, W - 2 * MARGIN, h)
     p = box.text_frame.paragraphs[0]
     r = p.add_run(); r.text = str(headline)
-    r.font.size = Pt(hsize); r.font.bold = True; r.font.color.rgb = NAVY; r.font.name = FONT_CN
+    setfont(r, hsize, bold=True, color=NAVY, heading=True)
     return HEAD_Y + h + 0.10
 
 
@@ -291,7 +324,7 @@ def caption_bar(slide, x, y, w, text, *, size=6):
     tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     p = tf.paragraphs[0]; p.alignment = PP_ALIGN.LEFT
     r = p.add_run(); r.text = str(text)
-    r.font.size = Pt(size); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = FONT_CN
+    setfont(r, size, bold=True, color=WHITE)
     return y + 0.17
 
 
@@ -335,7 +368,7 @@ def set_cell(cell, text, *, size=6, bold=False, fill=None, align=PP_ALIGN.RIGHT,
     #   style（python-pptx fresh deck ＝ Calibri 18pt）→ row 被撐到 ~0.3in，成張表爆版。
     #   所以：paragraph 層 defRPr + endParaRPr 都寫死，而且空字串索性唔加 run。
     p.font.size = Pt(size); p.font.bold = bold
-    p.font.name = FONT_CN if has_cn(txt) else FONT_NUM
+    p.font.name = FONT_NUM; set_ea(p.font)
     epr = p._p.get_or_add_endParaRPr()
     epr.set("sz", str(int(round(size * 100))))
     if not txt:
@@ -347,9 +380,7 @@ def set_cell(cell, text, *, size=6, bold=False, fill=None, align=PP_ALIGN.RIGHT,
         if not seg:
             continue
         r = p.add_run(); r.text = seg
-        r.font.size = Pt(size); r.font.bold = bold
-        r.font.name = FONT_CN if has_cn(seg) else FONT_NUM
-        r.font.color.rgb = color
+        setfont(r, size, bold=bold, color=color)
 
 
 # ── from layout ──
@@ -465,8 +496,7 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
             p.font.size = Pt(head_size)
             p._p.get_or_add_endParaRPr().set("sz", str(int(round(head_size * 100))))
             r = p.add_run(); r.text = str(head)
-            r.font.size = Pt(head_size); r.font.bold = True
-            r.font.color.rgb = NAVY; r.font.name = FONT_CN
+            setfont(r, head_size, bold=True, color=NAVY)
             first = False
         if body:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
@@ -474,8 +504,7 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
             p.font.size = Pt(body_size)
             p._p.get_or_add_endParaRPr().set("sz", str(int(round(body_size * 100))))
             r = p.add_run(); r.text = str(body)
-            r.font.size = Pt(body_size); r.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-            r.font.name = FONT_CN
+            setfont(r, body_size, color=RGBColor(0x33, 0x33, 0x33))
             first = False
 
 
@@ -491,8 +520,7 @@ def prose_numbered(box, items, *, size=7, gap=7, indent=0.24, title=None, tsize=
         p.font.size = Pt(tsize)
         p._p.get_or_add_endParaRPr().set("sz", str(int(round(tsize * 100))))
         r = p.add_run(); r.text = str(title)
-        r.font.size = Pt(tsize); r.font.bold = True
-        r.font.color.rgb = NAVY; r.font.name = FONT_CN
+        setfont(r, tsize, bold=True, color=NAVY)
         first = False
     emu = int(indent * 914400)
     for no, head, body in items:
@@ -504,14 +532,11 @@ def prose_numbered(box, items, *, size=7, gap=7, indent=0.24, title=None, tsize=
         p.font.size = Pt(size)
         p._p.get_or_add_endParaRPr().set("sz", str(int(round(size * 100))))
         rn = p.add_run(); rn.text = f"{no}.\t"
-        rn.font.size = Pt(size); rn.font.bold = True
-        rn.font.color.rgb = NAVY; rn.font.name = FONT_NUM
+        setfont(rn, size, bold=True, color=NAVY)
         rh = p.add_run(); rh.text = str(head)
-        rh.font.size = Pt(size); rh.font.bold = True
-        rh.font.color.rgb = NAVY; rh.font.name = FONT_CN
+        setfont(rh, size, bold=True, color=NAVY)
         rb = p.add_run(); rb.text = str(body)
-        rb.font.size = Pt(size); rb.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-        rb.font.name = FONT_CN
+        setfont(rb, size, color=RGBColor(0x33, 0x33, 0x33))
 
 
 # ── from layout ──
@@ -565,8 +590,7 @@ def dark_slide(prs):
     rect.line.fill.background(); rect.shadow.inherit = False
     kb = _tb(slide, 0.55, 0.35, 2.2, 0.4)
     kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
-    kr.font.size = Pt(20); kr.font.bold = True; kr.font.italic = True
-    kr.font.color.rgb = WHITE; kr.font.name = FONT_NUM
+    setfont(kr, 20, bold=True, italic=True, color=WHITE)
     return slide, W, H
 
 
@@ -2531,7 +2555,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "474307a 2026-08-12 11:37"
+BUILD_STAMP = "28c33a6 2026-08-12 11:45"
 
 
 # ── from make_report ──
@@ -3369,7 +3393,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
         return
     numbered = bool(bullets) and len(bullets[0]) == 3      # (no, head, body) = scan 編號清單
     W, H = size_of(prs)
-    colw = (W - 2 * MARGIN - 0.24) / 2
+    colw = (W - 2 * MARGIN - COL_GAP) / 2
     probe = HEAD_Y + head_h(headline, W)[0] + 0.10
     avail = CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
     if numbered:
@@ -3404,12 +3428,12 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
         if numbered:
             prose_numbered(_tb(slide, MARGIN, top, colw, lim), page[:cut], size=7)
             if page[cut:]:
-                prose_numbered(_tb(slide, MARGIN + colw + 0.24, top, colw, lim),
+                prose_numbered(_tb(slide, MARGIN + colw + COL_GAP, top, colw, lim),
                                  page[cut:], size=7)
         else:
             prose_box(slide, MARGIN, top, colw, lim, page[:cut], head_size=7.5, body_size=7)
             if page[cut:]:
-                prose_box(slide, MARGIN + colw + 0.24, top, colw, lim, page[cut:],
+                prose_box(slide, MARGIN + colw + COL_GAP, top, colw, lim, page[cut:],
                             head_size=7.5, body_size=7)
         source_note(slide, W, more=(pi < len(half_pages) - 1))
 
