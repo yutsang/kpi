@@ -16,6 +16,8 @@ inspect_pptx.py — 報告 pptx 版面體檢（唔使開 PowerPoint 逐版睇）
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --slide 12 # 淨睇某版 shape 清單
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --render   # 用 PowerPoint 出 PDF/PNG（Mac）
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --spec  # 真報告嘅尺寸/字體/配色
+    python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --fonts --range 10-63
+                                                          # 真報告【逐個位置實際用幾多 pt】
 """
 import re
 import subprocess
@@ -571,11 +573,85 @@ def spec(path):
                   f"w={_in(sh.width):5.2f} h={_in(sh.height):5.2f}  pt={sizes}  font={names}")
 
 
+def fonts(path, rng=None):
+    """dump 一份 pptx 【實際用緊】嘅字號：按版面位置分 role，出 pt 直方圖 + 樣本。
+    → 用喺項目組真報告上，就知每個位應該用幾多 pt（--spec 只睇 theme，睇唔到內文）。"""
+    prs = Presentation(str(path))
+    W, H = _in(prs.slide_width), _in(prs.slide_height)
+    lo, hi = (rng or (1, 10 ** 9))
+    tbl_hdr, tbl_body, roles = {}, {}, {}
+
+    def add(d, k, txt):
+        e = d.setdefault(k, [0, ""])
+        e[0] += 1
+        if not e[1] and txt.strip():
+            e[1] = txt.strip().replace("\n", " ")[:44]
+
+    def role_of(y, h):
+        if y < 0.30:
+            return "① 頂 breadcrumb"
+        if y < 0.50:
+            return "② 章節｜子題"
+        if y < 1.70:
+            return "③ 導語 strapline"
+        if y > H - 0.45:
+            return "⑥ footer/頁碼"
+        if y > H - 0.85:
+            return "⑤ 資料來源/註"
+        return "④ 內文 body"
+    for i, sl in enumerate(prs.slides, 1):
+        if not (lo <= i <= hi):
+            continue
+        for sh in sl.shapes:
+            if sh.has_table:
+                t = sh.table
+                for ri, r in enumerate(t.rows):
+                    for c in r.cells:
+                        for p_ in c.text_frame.paragraphs:
+                            for run in p_.runs:
+                                if run.font.size:
+                                    add(tbl_hdr if ri < 2 else tbl_body,
+                                        round(run.font.size.pt, 1), run.text)
+                continue
+            if not sh.has_text_frame:
+                continue
+            y = _in(sh.top)
+            for p_ in sh.text_frame.paragraphs:
+                for run in p_.runs:
+                    if run.font.size and run.text.strip():
+                        roles.setdefault(role_of(y, _in(sh.height)), {})
+                        add(roles[role_of(y, _in(sh.height))],
+                            round(run.font.size.pt, 1), run.text)
+    print(f"── {Path(path).name}：{len(prs.slides._sldIdLst)} 版"
+          f"{f'（只計 slide {lo}-{hi}）' if rng else ''}\n")
+    print("── 非表格文字：逐個版面位置嘅字號分佈")
+    for role in sorted(roles):
+        print(f"\n  {role}")
+        for pt, (n, samp) in sorted(roles[role].items(), key=lambda kv: -kv[1][0])[:6]:
+            print(f"      {pt:>5} pt  × {n:<5}  「{samp}」")
+    print("\n── 表格字號")
+    for lab, d in (("表頭（頭 2 行）", tbl_hdr), ("表身", tbl_body)):
+        if not d:
+            continue
+        print(f"  {lab}")
+        for pt, (n, samp) in sorted(d.items(), key=lambda kv: -kv[1][0])[:5]:
+            print(f"      {pt:>5} pt  × {n:<6}  「{samp}」")
+    print("\n── 我哋而家用緊（layout.py）")
+    for k in sorted(v for v in dir(L) if v.startswith("SZ_")):
+        print(f"      {k:<12} {getattr(L, k)} pt")
+
+
 def main():
     args = [a for a in sys.argv[1:]]
     if not args:
         print(__doc__); return
     path = args[0]
+    if "--fonts" in args:
+        rng = None
+        if "--range" in args:
+            a, b = args[args.index("--range") + 1].split("-")
+            rng = (int(a), int(b))
+        fonts(path, rng); return
     if "--spec" in args:
         spec(path); return
     if "--render" in args:
