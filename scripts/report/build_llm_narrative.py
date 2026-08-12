@@ -172,7 +172,7 @@ def _proj_sources(d, narr, b2, mask, kind="content", n=5):
     out = []
     for _, p in top.iterrows():
         nr = N.nlook(narr, p["ng_scope"], p["dicj code"])
-        b2t = B2.b2look(b2, p["ng_scope"], p["dicj code"])
+        b2t = B2.b2text(b2, p["ng_scope"], p["dicj code"])
         if kind == "finding":
             txt = nr.get("KPMG分析發現", "") or b2t
             mg = nr.get("管理層解釋", "")
@@ -194,7 +194,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
     wb = Workbench(model=model)
     df = S._load(Path(feed_path), entity)
     narr = N.load_narrative(Path(qingdan)) if qingdan else {}
-    b2 = B2.load_biao2(biao2_dir, entity or "", log=log)
+    b2 = B2.load_biao2_struct(biao2_dir, entity or "", log=log)
     plan = B.load_plan(Path(qingdan)) if qingdan else None
     cat = B.load_category(Path(qingdan)) if qingdan else None
     ov = O.overview_by_bucket(df, "2025年度投資計劃", plan, cat)
@@ -219,7 +219,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
         projs = []
         for _, pp in agg.iterrows():
             nr = N.nlook(narr, pp["ng_scope"], pp["dicj code"])
-            b2t = B2.b2look(b2, pp["ng_scope"], pp["dicj code"])
+            b2t = B2.b2text(b2, pp["ng_scope"], pp["dicj code"])
             ruling = "；".join(x for x in (nr.get("跨司回覆", ""), nr.get("KPMG回覆", "")) if x)
             projs.append((str(pp["nm"]), nr.get("KPMG分析發現", ""),
                           nr.get("管理層解釋", ""), b2t, ruling))
@@ -243,7 +243,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
             content = content or nr.get("實際投資內容", "")
             reason = reason or nr.get("管理層解釋", "")   # 業務原因；唔用 KPMG分析發現（審計腔）
             if not b2t:
-                b2t = B2.b2look(b2, scope, pp["dicj code"])
+                b2t = B2.b2text(b2, scope, pp["dicj code"])
             if content and reason and b2t:
                 break
         tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
