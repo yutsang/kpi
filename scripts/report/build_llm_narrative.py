@@ -77,6 +77,32 @@ def proj_key(adj_type, ng_scope, code):
     return f"{adj_type}|{ng_scope}|{B._norm(code)}"
 
 
+def bkt_key(bucket, adj_type):
+    """期後調整事項匯總（scan p-11/p-13）逐類開場句嘅 key。"""
+    return f"{bucket}|{adj_type}"
+
+
+def _bkt_prompt(yr, adj_type, amt_wan, projects):
+    lines = [f"年度：{yr}年度投資計劃期後投資（於2025年發生）", f"調整類型：{adj_type}",
+             f"該類潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元", "涉及項目："]
+    for nm, amt, b2, find in projects[:5]:
+        seg = f"- {nm}（{abs(amt):,.0f}萬澳門元）"
+        if b2:
+            seg += f"；【審查底稿表2】{b2[:600]}"
+        elif find:
+            seg += f"；KPMG分析發現：{find[:300]}"
+        lines.append(seg)
+    return ("請寫【一句至兩句】開場描述，講清楚喺該年度期後投資金額中，承批公司申報咗啲乜"
+            "而我哋認為要調整。示範句式（要用返下面嘅真數同項目，唔好照抄）：\n"
+            "　『在2024年度投資計劃期後投資金額中，MGM申報了澳門美高梅國際旗艦級藝術珍寶博物館"
+            "營運後的營運成本（827萬澳門元）。』\n"
+            "　『在2024年度投資計劃期後投資金額中，MGM仍申報了酒店客房改造支出，主要包括："
+            "1）非博彩項目111多功能娛樂體驗區塊（娛樂表演範疇）的相關支出420萬澳門元；"
+            "2）非博彩項目21美獅美高梅高端康養醫療中心的相關支出3,532萬澳門元。』\n"
+            "★只寫呢一兩句，唔好寫調整建議／跨司意見／結論（後面有固定句接落去）。\n\n"
+            + "\n".join(lines))
+
+
 def _proj_prompt(adj_type, name, code, rep, adjv, find, mgmt, b2, ruling, content=""):
     ctx = [f"投資項目：{code}　{name}", f"潛在調整類型：{adj_type}",
            f"報告投資金額：{rep:,.0f}萬澳門元；本類潛在調整：{adjv:,.0f}萬澳門元"]
@@ -281,6 +307,22 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                                   amt.fillna(""), _proj_sources(d, narr, b2,
                                                                 d["_bucket"] == pb, "content")),
                       "low", SYS_TBL_DESC, True))
+    for bk in S.BUCKET_ORDER[1:]:                       # 期後調整事項匯總：逐類開場句
+        dd = d[d["_bucket"] == bk]
+        for t in B.ADJ7:
+            sub = dd[dd["_adj"] == t]
+            amt = pd.to_numeric(sub["調整_萬"], errors="coerce").sum()
+            if abs(amt) < 0.5:
+                continue
+            g = (sub.groupby(["ng_scope", "dicj code"])
+                    .agg(nm=("project", "first"), v=("調整_萬", "sum")).reset_index())
+            g = g.reindex(g["v"].abs().sort_values(ascending=False).index)
+            projs = [(str(r["nm"]), r["v"], B2.b2text(b2, r["ng_scope"], r["dicj code"]),
+                      N.nlook(narr, r["ng_scope"], r["dicj code"]).get("KPMG分析發現", ""))
+                     for _, r in g.iterrows()]
+            tasks.append(("bkt", bkt_key(bk, t), _bkt_prompt(bk[:4], t, amt, projs),
+                          "low", SYS_ADJ))
+
     fs = O.finding_summary(df)                          # ③ 主要發現摘要
     if not fs.empty:
         tasks.append(("tbl", tbl_key("發現摘要"),
@@ -291,7 +333,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                       "medium", SYS_TBL_ADJ, True))
 
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
-    out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}}
+    out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}, "bkt": {}}
     try:                                    # tqdm 進度條（冇裝就照 log 逐個）
         from tqdm import tqdm
     except ImportError:
@@ -314,7 +356,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])}、"
-        f"tbl {len(out['tbl'])}、proj {len(out['proj'])} 段）")
+        f"tbl {len(out['tbl'])}、proj {len(out['proj'])}、bkt {len(out['bkt'])} 段）")
     return out
 
 

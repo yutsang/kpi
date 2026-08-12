@@ -419,6 +419,12 @@ def _draw_text(dr, runs, x, y, w, scale, *, align="LEFT", valign_h=None):
         maxw = w * 72 * scale
         for text, sz, bold, rgb in rs:
             for ch in text:
+                if ch == "\t":                       # hanging indent tab
+                    tgt = 0.24 * 72 * scale
+                    if lw < tgt:
+                        line.append((" ", _font(False, False, max(6, int(round(sz * scale)))), rgb))
+                        lw = tgt
+                    continue
                 if ch == "\n":                       # <a:br/> 硬換行
                     _flush(dr, line, x, y, maxw, scale, align)
                     y += lh; line, lw = [], 0.0

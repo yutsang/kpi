@@ -480,6 +480,49 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
 
 
 # ── from layout ──
+def prose_numbered(box, items, *, size=7, gap=7, indent=0.24, title=None, tsize=7.5):
+    """scan 表旁格式（p-11/p-13 右欄）：navy 粗體小標題 + 編號清單
+        1.  {粗體類型}（{金額}）：{內文…}       ← hanging indent，內文對齊類型名
+    items = [(編號, 粗體引子, 內文)]；編號跟七大類 canonical 序（會跳號）。"""
+    tf = box.text_frame; tf.word_wrap = True
+    first = True
+    if title:
+        p = tf.paragraphs[0]; p.space_after = Pt(4)
+        p.font.size = Pt(tsize)
+        p._p.get_or_add_endParaRPr().set("sz", str(int(round(tsize * 100))))
+        r = p.add_run(); r.text = str(title)
+        r.font.size = Pt(tsize); r.font.bold = True
+        r.font.color.rgb = NAVY; r.font.name = FONT_CN
+        first = False
+    emu = int(indent * 914400)
+    for no, head, body in items:
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        p.space_before = Pt(gap); p.space_after = Pt(0)
+        pPr = p._p.get_or_add_pPr()
+        pPr.set("marL", str(emu)); pPr.set("indent", str(-emu))     # hanging indent
+        p.font.size = Pt(size)
+        p._p.get_or_add_endParaRPr().set("sz", str(int(round(size * 100))))
+        rn = p.add_run(); rn.text = f"{no}.\t"
+        rn.font.size = Pt(size); rn.font.bold = True
+        rn.font.color.rgb = NAVY; rn.font.name = FONT_NUM
+        rh = p.add_run(); rh.text = str(head)
+        rh.font.size = Pt(size); rh.font.bold = True
+        rh.font.color.rgb = NAVY; rh.font.name = FONT_CN
+        rb = p.add_run(); rb.text = str(body)
+        rb.font.size = Pt(size); rb.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+        rb.font.name = FONT_CN
+
+
+# ── from layout ──
+def est_numbered_h(items, w, size=7, gap=7, title=None, tsize=7.5, indent=0.24):
+    h = (est_lines(title, w, tsize) * tsize * 1.3 / 72.0 + 4 / 72.0) if title else 0.0
+    for _no, head, body in items:
+        h += est_lines(f"　{head}{body}", w - indent, size) * size * 1.35 / 72.0 + gap / 72.0
+    return h
+
+
+# ── from layout ──
 def prose_box(slide, x, y, w, h, items, **kw):
     box = _tb(slide, x, y, w, h)
     prose(box, items, **kw)
@@ -2052,6 +2095,34 @@ def proj_key(adj_type, ng_scope, code):
 
 
 # ── from build_llm_narrative ──
+def bkt_key(bucket, adj_type):
+    """期後調整事項匯總（scan p-11/p-13）逐類開場句嘅 key。"""
+    return f"{bucket}|{adj_type}"
+
+
+# ── from build_llm_narrative ──
+def _bkt_prompt(yr, adj_type, amt_wan, projects):
+    lines = [f"年度：{yr}年度投資計劃期後投資（於2025年發生）", f"調整類型：{adj_type}",
+             f"該類潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元", "涉及項目："]
+    for nm, amt, b2, find in projects[:5]:
+        seg = f"- {nm}（{abs(amt):,.0f}萬澳門元）"
+        if b2:
+            seg += f"；【審查底稿表2】{b2[:600]}"
+        elif find:
+            seg += f"；KPMG分析發現：{find[:300]}"
+        lines.append(seg)
+    return ("請寫【一句至兩句】開場描述，講清楚喺該年度期後投資金額中，承批公司申報咗啲乜"
+            "而我哋認為要調整。示範句式（要用返下面嘅真數同項目，唔好照抄）：\n"
+            "　『在2024年度投資計劃期後投資金額中，MGM申報了澳門美高梅國際旗艦級藝術珍寶博物館"
+            "營運後的營運成本（827萬澳門元）。』\n"
+            "　『在2024年度投資計劃期後投資金額中，MGM仍申報了酒店客房改造支出，主要包括："
+            "1）非博彩項目111多功能娛樂體驗區塊（娛樂表演範疇）的相關支出420萬澳門元；"
+            "2）非博彩項目21美獅美高梅高端康養醫療中心的相關支出3,532萬澳門元。』\n"
+            "★只寫呢一兩句，唔好寫調整建議／跨司意見／結論（後面有固定句接落去）。\n\n"
+            + "\n".join(lines))
+
+
+# ── from build_llm_narrative ──
 def _proj_prompt(adj_type, name, code, rep, adjv, find, mgmt, b2, ruling, content=""):
     ctx = [f"投資項目：{code}　{name}", f"潛在調整類型：{adj_type}",
            f"報告投資金額：{rep:,.0f}萬澳門元；本類潛在調整：{adjv:,.0f}萬澳門元"]
@@ -2263,6 +2334,22 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                                   amt.fillna(""), _proj_sources(d, narr, b2,
                                                                 d["_bucket"] == pb, "content")),
                       "low", SYS_TBL_DESC, True))
+    for bk in BUCKET_ORDER[1:]:                       # 期後調整事項匯總：逐類開場句
+        dd = d[d["_bucket"] == bk]
+        for t in ADJ7:
+            sub = dd[dd["_adj"] == t]
+            amt = pd.to_numeric(sub["調整_萬"], errors="coerce").sum()
+            if abs(amt) < 0.5:
+                continue
+            g = (sub.groupby(["ng_scope", "dicj code"])
+                    .agg(nm=("project", "first"), v=("調整_萬", "sum")).reset_index())
+            g = g.reindex(g["v"].abs().sort_values(ascending=False).index)
+            projs = [(str(r["nm"]), r["v"], b2text(b2, r["ng_scope"], r["dicj code"]),
+                      nlook(narr, r["ng_scope"], r["dicj code"]).get("KPMG分析發現", ""))
+                     for _, r in g.iterrows()]
+            tasks.append(("bkt", bkt_key(bk, t), _bkt_prompt(bk[:4], t, amt, projs),
+                          "low", SYS_ADJ))
+
     fs = finding_summary(df)                          # ③ 主要發現摘要
     if not fs.empty:
         tasks.append(("tbl", tbl_key("發現摘要"),
@@ -2273,7 +2360,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                       "medium", SYS_TBL_ADJ, True))
 
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
-    out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}}
+    out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}, "bkt": {}}
     try:                                    # tqdm 進度條（冇裝就照 log 逐個）
         from tqdm import tqdm
     except ImportError:
@@ -2296,7 +2383,7 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])}、"
-        f"tbl {len(out['tbl'])}、proj {len(out['proj'])} 段）")
+        f"tbl {len(out['tbl'])}、proj {len(out['proj'])}、bkt {len(out['bkt'])} 段）")
     return out
 
 
@@ -2641,8 +2728,20 @@ def _find(dirp, entity, ext, prefer=None):
 
 
 # ── from make_report ──
+def _fmt_ratio(v):
+    """比例欄：scan 寫『(89.4%)』—— 調減（負數）用括號。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "" if v is None or str(v).strip() == "" else str(v)
+    return f"({abs(f)*100:.1f}%)" if f < 0 else f"{f*100:.1f}%"
+
+
+# ── from make_report ──
 def _cell_txt(c, v):
-    """跟欄名格式化：率→%，數字→千分位（負數括號），其餘原文。"""
+    """跟欄名格式化：率／比例→%，數字→千分位（負數括號），其餘原文。"""
+    if "比例" in str(c):
+        return _fmt_ratio(v)
     if "率" in str(c):
         return fmt_pct(v)
     if _is_num(v):
@@ -2771,6 +2870,75 @@ def _table_bullets(df):
         out.append((f"金額最大的範疇（按{val.replace('·', '－')}）", "、".join(
             f"{r[cols[0]]}（{_cell_txt(val, r[val])}）" for _, r in top.iterrows()) + "。"))
     return out
+
+
+# ── from make_report ──
+def _bucket_adj_table(ov):
+    """期後調整事項匯總嘅左表（對 scan p-11）：範疇 × 報告(a)｜潛在調整(b)｜調整後(c=a+b)｜b/a。"""
+    keep = ["範疇", "項目數量", "報告投資金額", "潛在調整金額", "潛在調整後投資金額"]
+    d = ov[[c for c in keep if c in ov.columns]].copy()
+    rep = pd.to_numeric(d.get("報告投資金額"), errors="coerce")
+    adj = pd.to_numeric(d.get("潛在調整金額"), errors="coerce")
+    d["潛在調整金額佔報告投資金額比例"] = (adj / rep).where(rep.abs() > 0)
+    blank = d["範疇"].astype(str).str.strip().eq("") | rep.isna()
+    d.loc[blank, "潛在調整金額佔報告投資金額比例"] = ""
+    return d
+
+
+# ── from make_report ──
+def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
+    """② 期後【調整事項匯總】（scan p-11 / p-13）：左 = 範疇 × 調整表，
+    右 = navy 小標題 + 編號清單『 類型（金額）：說明』，編號跟七大類 canonical 序（會跳號）。"""
+    yr = bk[:4]
+    d = sdf[sdf["_bucket"] == bk].copy()
+    if d.empty:
+        return
+    d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
+    llm_bkt = (llm or {}).get("bkt", {})
+    items = []
+    for i, t in enumerate(ADJ7, start=1):      # 編號＝七大類 canonical 序
+        sub = d[d["_adj"] == t]
+        amt = pd.to_numeric(sub["調整_萬"], errors="coerce").sum()
+        if abs(amt) < 0.5:
+            continue
+        body = llm_bkt.get(bkt_key(bk, t)) or (
+            f"在{yr}年度投資計劃期後投資金額中，{ent_up}同樣申報了{t}。")
+        body += (f"與前述的「2025年度投資計劃報告投資金額的潛在調整事項匯總」一致，"
+                 f"我們就{yr}年度投資計劃期後投資金額同樣建議了該項調整。詳見後續主要發現「{t}」。")
+        items.append((i, f"{t}（{_amt(amt)}）：", body))
+    if not items:
+        return
+    tot = pd.to_numeric(d["調整_萬"], errors="coerce").sum()
+    npj = int(d[pd.to_numeric(d["調整_萬"], errors="coerce") != 0]["dicj code"].nunique())
+    aft = pd.to_numeric(d["調整後_萬"], errors="coerce").sum()
+    head = (f"基於我們的各項審查程序，我們認為{ent_up}報告的{yr}年度投資計劃在2025年繼續執行的支出中，"
+            f"存在{_cn(len(items))}大類的調整事項，潛在調減投資金額約{_amt(tot)}"
+            f"（涉及{npj}個投資項目），經潛在調減後的{yr}年度計劃投資項目在2025年的投資金額約{_amt(aft)}。")
+    S2 = "過往年度投資計劃在2025年繼續執行的審查跟進"
+    tname = f"{ent_up} {yr}年度投資計劃於2025年申報的期後投資金額的潛在調整"
+    W, H = size_of(prs)
+    lw = W * 0.55
+    tbl = _bucket_adj_table(ov)
+    subs, rows, widths, supers = _df_table(tbl)
+    wid = [w * lw / sum(widths) for w in widths]
+    cw = W - (MARGIN + lw + 0.22) - MARGIN
+    pages = fit_prose([(h, b) for _n, h, b in items], cw, CONTENT_BOTTOM - 1.9)
+    idx = 0
+    for pi, page in enumerate(pages):
+        suffix = _pg(pi + 1, len(pages))
+        slide, W, H, top = _page(prs, 1, f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總",
+                                 head + suffix)
+        if pi == 0:
+            t2 = caption_bar(slide, MARGIN, top, lw, tname)
+            draw_table(slide, MARGIN, t2, lw, subs, rows, widths, supers=supers,
+                         font=6, hfont=5.5, fill_h=CONTENT_BOTTOM - t2 - 0.28)
+            put(slide, MARGIN, CONTENT_BOTTOM - 0.26, lw, 0.3,
+                  "註：金額單位為萬澳門元；括號表示調減。", size=5, italic=True, color=GREY)
+        box = _tb(slide, MARGIN + lw + 0.22, top - 0.02, cw, CONTENT_BOTTOM - top)
+        prose_numbered(box, items[idx:idx + len(page)], size=6.5,
+                         title=(tname if pi == 0 else tname + "（續）"))
+        idx += len(page)
+        source_note(slide, W, more=(pi < len(pages) - 1))
 
 
 # ── from make_report ──
@@ -3090,11 +3258,22 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
     每頁裝幾多由【估算高度】決定，唔會爆版。"""
     if not bullets:
         return
+    numbered = bool(bullets) and len(bullets[0]) == 3      # (no, head, body) = scan 編號清單
     W, H = size_of(prs)
     colw = (W - 2 * MARGIN - 0.24) / 2
     probe = HEAD_Y + head_h(headline, W)[0] + 0.10
     avail = CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
-    half_pages = fit_prose(bullets, colw, avail * 2, head_size=7.5, body_size=7)
+    if numbered:
+        hs_all = [est_numbered_h([b], colw, size=7) for b in bullets]
+        half_pages, cur, used = [], [], 0.0
+        for b, hh in zip(bullets, hs_all):
+            if cur and used + hh > avail * 2:
+                half_pages.append(cur); cur, used = [], 0.0
+            cur.append(b); used += hh
+        if cur:
+            half_pages.append(cur)
+    else:
+        half_pages = fit_prose(bullets, colw, avail * 2, head_size=7.5, body_size=7)
     for pi, page in enumerate(half_pages):
         suffix = f"（{pi+1}/{len(half_pages)}）" if len(half_pages) > 1 else ""
         slide, W, H, top = _page(prs, sec, title, (headline or "") + suffix)
@@ -3104,7 +3283,8 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
             top += 0.20
         # 斷欄：以【總高一半】為目標令左右大致平均（對 scan），但唔可以超過一欄可用高
         lim = CONTENT_BOTTOM - top
-        hs = [est_prose_h([it], colw, head_size=7.5, body_size=7) for it in page]
+        hs = [(est_numbered_h([it], colw, size=7) if numbered
+               else est_prose_h([it], colw, head_size=7.5, body_size=7)) for it in page]
         target = sum(hs) / 2.0
         cut, used = len(page), 0.0
         for i, ih in enumerate(hs):
@@ -3112,10 +3292,16 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
                 cut = i; break
             used += ih
         cut = max(1, cut)
-        prose_box(slide, MARGIN, top, colw, lim, page[:cut], head_size=7.5, body_size=7)
-        if page[cut:]:
-            prose_box(slide, MARGIN + colw + 0.24, top, colw, lim, page[cut:],
-                        head_size=7.5, body_size=7)
+        if numbered:
+            prose_numbered(_tb(slide, MARGIN, top, colw, lim), page[:cut], size=7)
+            if page[cut:]:
+                prose_numbered(_tb(slide, MARGIN + colw + 0.24, top, colw, lim),
+                                 page[cut:], size=7)
+        else:
+            prose_box(slide, MARGIN, top, colw, lim, page[:cut], head_size=7.5, body_size=7)
+            if page[cut:]:
+                prose_box(slide, MARGIN + colw + 0.24, top, colw, lim, page[cut:],
+                            head_size=7.5, body_size=7)
         source_note(slide, W, more=(pi < len(half_pages) - 1))
 
 
@@ -3190,8 +3376,9 @@ def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
         amt = r.get(pb, 0)
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
+        no = (ADJ7.index(t) + 1) if t in ADJ7 else len(ADJ7) + 1
         if t in llm_adj and llm_adj[t]:                   # LLM 寫嘅摘要優先
-            bullets.append((f"{t}（約{abs(amt):,.0f}萬澳門元）：", llm_adj[t])); continue
+            bullets.append((no, f"{t}（{_amt(amt)}）：", llm_adj[t])); continue
         sub = d[(d["_adj"] == t) & (d["_bucket"] == pb) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
             continue
@@ -3208,7 +3395,7 @@ def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
         r2 = (reason[:150] + "…") if len(reason) > 150 else reason
         rl = ("跨司工作組／KPMG意見：" + (ruling[:90] + "…" if len(ruling) > 90 else ruling)) if ruling else ""
         body = f"主要涉及{names}等項目。{r2}{rl}" if (r2 or rl) else f"主要涉及{names}等項目。"
-        bullets.append((f"{t}（約{abs(amt):,.0f}萬澳門元）：", body))
+        bullets.append((no, f"{t}（{_amt(amt)}）：", body))
     return bullets
 
 
@@ -3314,7 +3501,7 @@ def main():
     llm = _load_llm(entity)     # {entity}_llm_narrative.json 有就用 LLM 文字，否則清單 fallback
     if llm:
         print("    LLM narrative: " + "、".join(f"{k} {len(llm.get(k, {}))}"
-                                              for k in ("adj", "cat", "tbl", "proj")) + " 段")
+                                              for k in ("adj", "cat", "tbl", "proj", "bkt")) + " 段")
 
     global USE_TEMPLATE
     tmpl = _find_template() if "--use-template" in sys.argv else None   # 預設 fresh 手砌（template 樣式已 hardcode）；--use-template 先開 template
@@ -3384,6 +3571,7 @@ def main():
                            headline=_bucket_headline(ent_up, bk, ov),
                            note="註：金額單位為萬澳門元；括號表示調減。",
                            llm=llm, tbl_id=tbl_key("期後概覽", bk))
+            render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm)   # 2.2 / 2.4
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
     S3 = "本年度審查工作的主要發現"
