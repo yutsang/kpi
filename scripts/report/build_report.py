@@ -2637,7 +2637,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "f5b6946 2026-08-12 12:37"
+BUILD_STAMP = "08797ea 2026-08-12 14:54"
 
 
 # ── from make_report ──
@@ -2875,11 +2875,15 @@ def _df_table(df, first_label=None):
     第一欄表頭：範疇表用「（萬澳門元）」（跟 scan 角位放單位），其餘用返欄名。"""
     cols = list(df.columns)
     if first_label is None:
-        first_label = "（萬澳門元）" if cols[0] == "範疇" else cols[0]
+        first_label = ("序號" if cols[0] == "序號" else
+                       ("（萬澳門元）" if cols[0] == "範疇" else cols[0]))
     grouped = any("·" in c for c in cols)
-    widths = [2.0 if c in ("範疇", "項目名稱", "潛在調整事項") else
-              (2.8 if c == "主要涉及項目" else 0.95) for c in cols]
+    widths = [0.4 if c == "序號" else
+              (2.0 if c in ("範疇", "項目名稱", "潛在調整事項") else
+               (2.8 if c == "主要涉及項目" else 0.95)) for c in cols]
     subs = [first_label] + [(c.split("·")[1] if "·" in c else c) for c in cols[1:]]
+    if cols[0] == "序號" and len(cols) > 1 and cols[1] == "範疇":
+        subs[1] = "（萬澳門元）"                      # 單位放範疇欄（跟 scan 角位）
     supers = None
     if grouped:
         groups = [""] + [(c.split("·")[0] if "·" in c else "") for c in cols[1:]]
@@ -2916,6 +2920,39 @@ def _bullets_into(box, bullets, size=8):
 
 
 # ── from make_report ──
+_OV_GROUP = {
+    "報告投資金額": "報告投資金額·金額",
+    "投資計劃完成率": "報告投資金額·完成率",
+    "潛在調整金額": "潛在調整後投資金額·潛在調整金額",
+    "潛在調整後投資金額": "潛在調整後投資金額·金額",
+    "潛在調整後投資計劃完成率": "潛在調整後投資金額·完成率",
+    "設施建設/資本性支出": "潛在調整後投資金額·設施建設/資本性支出",
+    "活動舉辦/營運性支出": "潛在調整後投資金額·活動舉辦/營運性支出",
+}
+
+
+# ── from make_report ──
+def _overview_display(ov):
+    """概覽表 → 顯示用：範疇前加【序號】（逐 scope 由 1 數起，section/小計/總計留空）+ 兩層表頭。"""
+    if ov is None or ov.empty or "範疇" not in ov.columns:
+        return ov
+    d = ov.copy()
+    seq, n = [], 0
+    for _, r in d.iterrows():
+        lab = str(r["範疇"]).strip()
+        others = [c for c in d.columns if c != "範疇"]
+        if all(str(r[c]).strip() == "" for c in others):      # section 行（博彩項目/非博彩項目）
+            n = 0; seq.append("")
+        elif lab.endswith(("小計", "總計", "合計")) or lab.startswith(("原計劃", "投資執行報告",
+                                                                   "承諾的", "2025年投資支出")):
+            seq.append("")
+        else:
+            n += 1; seq.append(str(n))
+    d.insert(0, "序號", seq)
+    return d.rename(columns={k: v for k, v in _OV_GROUP.items() if k in d.columns})
+
+
+# ── from make_report ──
 def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, table_name=None,
                          note=None):
     """報告概述式 2 欄版（對 scan slide 10/15）：crumb + navy 導語，左 表，右 敘述。"""
@@ -2925,12 +2962,12 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
     if table_df is not None and not table_df.empty:
         if table_name:
             top = caption_bar(slide, MARGIN, top, left_w, table_name)
-        subs, rows, widths, supers = _df_table(table_df)
+        subs, rows, widths, supers = _df_table(_overview_display(table_df))
         wid = [w * left_w / sum(widths) for w in widths]
         avail = CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
-        hh = header_h(supers, subs, wid, 5.5)
-        font = 6.0
-        while font > 4.2 and sum(row_h(c, wid, font) for _, c in rows) > avail - hh:
+        hh = header_h(supers, subs, wid, SZ_TBL_HDR)
+        font = SZ_TBL
+        while font > 4.5 and sum(row_h(c, wid, font) for _, c in rows) > avail - hh:
             font -= 0.25
         tbl_bot, _ = draw_table(slide, MARGIN, top, left_w, subs, rows, widths,
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
@@ -3257,6 +3294,7 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
             render_overview_page(prs, (crumb or title), headline or _total_line(df), df,
                                  bullets, sec=sec, table_name=title, note=note)
             return
+    df = _overview_display(df) if "範疇" in df.columns and "項目數量" in df.columns else df
     subs, rows, widths, supers = _df_table(df)
     W, H = size_of(prs)
     tw = W - 2 * MARGIN
