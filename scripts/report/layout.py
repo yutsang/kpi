@@ -383,6 +383,47 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
             first = False
 
 
+def prose_numbered(box, items, *, size=7, gap=7, indent=0.24, title=None, tsize=7.5):
+    """scan 表旁格式（p-11/p-13 右欄）：navy 粗體小標題 + 編號清單
+        1.  {粗體類型}（{金額}）：{內文…}       ← hanging indent，內文對齊類型名
+    items = [(編號, 粗體引子, 內文)]；編號跟七大類 canonical 序（會跳號）。"""
+    tf = box.text_frame; tf.word_wrap = True
+    first = True
+    if title:
+        p = tf.paragraphs[0]; p.space_after = Pt(4)
+        p.font.size = Pt(tsize)
+        p._p.get_or_add_endParaRPr().set("sz", str(int(round(tsize * 100))))
+        r = p.add_run(); r.text = str(title)
+        r.font.size = Pt(tsize); r.font.bold = True
+        r.font.color.rgb = NAVY; r.font.name = FONT_CN
+        first = False
+    emu = int(indent * 914400)
+    for no, head, body in items:
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        p.space_before = Pt(gap); p.space_after = Pt(0)
+        pPr = p._p.get_or_add_pPr()
+        pPr.set("marL", str(emu)); pPr.set("indent", str(-emu))     # hanging indent
+        p.font.size = Pt(size)
+        p._p.get_or_add_endParaRPr().set("sz", str(int(round(size * 100))))
+        rn = p.add_run(); rn.text = f"{no}.\t"
+        rn.font.size = Pt(size); rn.font.bold = True
+        rn.font.color.rgb = NAVY; rn.font.name = FONT_NUM
+        rh = p.add_run(); rh.text = str(head)
+        rh.font.size = Pt(size); rh.font.bold = True
+        rh.font.color.rgb = NAVY; rh.font.name = FONT_CN
+        rb = p.add_run(); rb.text = str(body)
+        rb.font.size = Pt(size); rb.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+        rb.font.name = FONT_CN
+
+
+def est_numbered_h(items, w, size=7, gap=7, title=None, tsize=7.5, indent=0.24):
+    h = (est_lines(title, w, tsize) * tsize * 1.3 / 72.0 + 4 / 72.0) if title else 0.0
+    for _no, head, body in items:
+        h += est_lines(f"　{head}{body}", w - indent, size) * size * 1.35 / 72.0 + gap / 72.0
+    return h
+
+
 def prose_box(slide, x, y, w, h, items, **kw):
     box = _tb(slide, x, y, w, h)
     prose(box, items, **kw)
