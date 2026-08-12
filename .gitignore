@@ -101,3 +101,15 @@ demo_overview.pptx
 demo_*.pdf
 demo_*.png
 project_dump.tsv
+
+# Report generator outputs — ALL contain real client figures/narrative. Public repo → never commit.
+*.pptx
+*_llm_narrative.json
+*_sources_audit.txt
+*_報告_dump.txt
+*_narrative.xlsx
+*_項目審查匯總*.xlsx
+*_概述數字.xlsx
+*_金額匯總.xlsx
+*_preview/
+*_render/
