@@ -108,9 +108,12 @@ def overview_by_bucket(df, bucket, plan, category=None):
         for _, row in sc.iterrows():
             rows.append(mk(row["_sub"], row["項目數量"], plan_by_sub.get(row["_sub"], 0.0),
                            row["報告"], row["調整"], row["後"], row["設施"], row["活動"]))
-        rows.append(mk(f"{name}小計", sc["項目數量"].sum(), _plan_tot(plan, yr, scope == 0),
+        # ⚠ 項目數量：小計/總計要用【去重】distinct，唔可以逐範疇加總 ——
+        #   一個項目跨兩個範疇會被計兩次（user 2026-08-12 對數揭到）
+        n_sc = d[d["_scope"] == scope]["dicj code"].nunique()
+        rows.append(mk(f"{name}小計", n_sc, _plan_tot(plan, yr, scope == 0),
                        sc["報告"].sum(), sc["調整"].sum(), sc["後"].sum(), sc["設施"].sum(), sc["活動"].sum()))
-    rows.append(mk("總計", g["項目數量"].sum(), _plan_tot(plan, yr, None),
+    rows.append(mk("總計", d["dicj code"].nunique(), _plan_tot(plan, yr, None),
                    g["報告"].sum(), g["調整"].sum(), g["後"].sum(), g["設施"].sum(), g["活動"].sum()))
     if is_py:
         cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額", "投資計劃完成率",

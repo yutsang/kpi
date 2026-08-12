@@ -509,8 +509,8 @@ def apply_theme_fonts(prs):
             for tag, latin in (("majorFont", FONT_HEAD), ("minorFont", FONT_NUM)):
                 def _fix(mo, latin=latin):
                     seg = mo.group(0)
-                    seg = _re.sub(r'<a:latin typeface="[^"]*"', f'<a:latin typeface="{latin}"', seg, 1)
-                    seg = _re.sub(r'<a:ea typeface="[^"]*"', f'<a:ea typeface="{FONT_CN}"', seg, 1)
+                    seg = _re.sub(r'<a:latin typeface="[^"]*"', f'<a:latin typeface="{latin}"', seg, count=1)
+                    seg = _re.sub(r'<a:ea typeface="[^"]*"', f'<a:ea typeface="{FONT_CN}"', seg, count=1)
                     return seg
                 xml = _re.sub(r"<a:" + tag + r">.*?</a:" + tag + r">", _fix, xml, flags=_re.S)
             part._blob = xml.encode("utf-8")

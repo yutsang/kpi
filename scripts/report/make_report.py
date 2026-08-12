@@ -600,7 +600,7 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
         L.source_note(slide, W, more=(pi < len(pages) - 1))
 
 
-def _cum_table(df, plan):
+def _cum_table(df, plan, cat=None):
     """三年累計表（scan slide 26）→ DataFrame（`·` = 兩層表頭）。
     每個計劃年 Y：獲批(a)=清單計劃｜2025年前已獲認可(b)=報告年<25 調整後｜2025年期後(c)=報告年25 調整後
     ｜合計(d=b+c)｜完成率(d/a)。2025計劃冇 b。尾段＝三年累計 Σa｜Σd｜Σd/Σa。"""
@@ -617,12 +617,23 @@ def _cum_table(df, plan):
              ascending=[False, True, True, True])[["_g", "_sub"]].values.tolist())
     code_sub = {(bool(r["_g"]), B._norm(r["dicj code"])): str(r["_sub"])
                 for _, r in d.drop_duplicates(["_g", "dicj code"]).iterrows()}
-    A = {}
+    # feed 有嘅項目 → 直接知範疇；feed 冇（零投資／往年項目）→ 用清單『項目性質』學返
+    d2sub = {}
+    for (gm, code), sub in code_sub.items():
+        dv = (cat or {}).get((gm, code))
+        if dv:
+            d2sub.setdefault(str(dv), set()).add(sub)
+    d2sub1 = {k: next(iter(v)) for k, v in d2sub.items() if len(v) == 1}
+    A, miss = {}, 0.0
     for yr in (23, 24, 25):
         for (gm, code), v in (plan.get(yr, {}) or {}).items():
-            sub = code_sub.get((bool(gm), code))
+            sub = code_sub.get((bool(gm), code)) or d2sub1.get(str((cat or {}).get((bool(gm), code), "")))
             if sub:
                 A[(yr, bool(gm), sub)] = A.get((yr, bool(gm), sub), 0.0) + float(v or 0)
+            else:
+                miss += float(v or 0)
+    if miss > 0.5:
+        print(f"    ⚠ 2.5 三年累計：{miss:,.0f} 萬計劃金額派唔到範疇（清單項目性質對唔到）")
 
     def _af(yr, gm, sub, pre):
         m = ((d["_plan_year"] == yr) & (d["_g"] == gm) & (d["_sub"] == sub) &
@@ -671,7 +682,7 @@ def _cum_table(df, plan):
 
 def render_cumulative(prs, ent_up, df, plan, cat=None):
     """2.5 截至2025年末投資金額概覽（scan slide 26）。"""
-    tbl = _cum_table(df, plan)
+    tbl = _cum_table(df, plan, cat)
     if tbl.empty:
         return
     t = tbl[tbl["範疇"].astype(str).str.strip() == "合計"]
@@ -877,7 +888,7 @@ def _prose_slide(prs, title, bullets, headline=None, *, sec=0):
         L.source_note(slide, W, more=(pi < len(pages) - 1))
 
 
-def _headline(ent_up, ov, df, plan):
+def _headline(ent_up, ov, df, plan, n_zero=None):
     """slide 10 整體投資支出概況 → 回 (headline 句, bullets)。全 mechanical 由數字生成。"""
     tot = ov[ov["範疇"] == "總計"]
     if not len(tot):
@@ -901,7 +912,7 @@ def _headline(ent_up, ov, df, plan):
     #   之前 len() 全部照計 → 出 256 個，報告係 95 個）
     n_plan = sum(1 for v in (plan.get(25, {}) or {}).values()
                  if isinstance(v, (int, float)) and v > 0) if plan else n_impl
-    n_zero = max(n_plan - n_impl, 0)
+    n_zero = max(n_plan - n_impl, 0) if n_zero is None else n_zero
     n_adj = d[d["_adj"] != 0]["dicj code"].nunique()
     headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{_amt(plan_amt)}；"
                 f"{ent_up}提交的投資執行報告顯示2025年度投資金額約{_amt(report_amt)}"
@@ -1170,16 +1181,18 @@ def _exec_bullets(ent_up, ov):
     cat = cat[cat["投資計劃完成率"].apply(lambda v: isinstance(v, (int, float)) and not pd.isna(v))]
     high = cat[cat["投資計劃完成率"] >= 1.0].sort_values("投資計劃完成率", ascending=False)
     low = cat[cat["投資計劃完成率"] < 0.5].sort_values("投資計劃完成率")
-    high_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in high.iterrows()) or "—"
-    low_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in low.iterrows()) or "—"
+    high_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in high.iterrows())
+    low_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in low.iterrows())
     bullets = [
         ("", f"{ent_up}於2025年度計劃投資項目涵蓋博彩及非博彩範疇。在報告投資金額中，"
              f"博彩項目的投資計劃完成率為{_pct(g)}，非博彩項目為{_pct(ng)}，整體為{_pct(tot)}。"),
         ("", f"考慮投資金額的潛在調整後，博彩項目的投資計劃完成率為{_pct(ga)}，"
              f"非博彩項目的平均完成率為{_pct(nga)}。"),
-        ("報告投資金額完成率較高的範疇包括：", f"{high_s}。"),
-        ("報告投資金額完成率相對較低的範疇包括：", f"{low_s}。"),
     ]
+    if high_s:      # 冇符合條件就唔好出個空 bullet（原本會印「—。」）
+        bullets.append(("報告投資金額完成率較高的範疇包括：", f"{high_s}。"))
+    if low_s:
+        bullets.append(("報告投資金額完成率相對較低的範疇包括：", f"{low_s}。"))
     return bullets
 
 
@@ -1296,14 +1309,15 @@ def main():
     NOTE_RATE = ("註：投資計劃完成率 ＝ 報告投資金額 ／ 獲批的計劃投資金額；潛在調整後完成率 ＝ "
                  "潛在調整後投資金額 ／ 獲批的計劃投資金額。金額單位為萬澳門元。")
     if not ov.empty:      # slide 10-11：表左 + headline/執行敘述右（報告 2 欄式）
-        hl, hlb = _headline(ent_up, ov, sdf, plan)
+        zi = O.zero_investment_summary(sdf, plan, cat, narr, ent_up)
+        hl, hlb = _headline(ent_up, ov, sdf, plan, n_zero=(zi[0] if zi else None))
         exb = _exec_bullets(ent_up, ov)
         render_overview_page(prs, f"{S1}  |  {ent_up} 2025年度計劃的整體投資支出及執行概況",
                              hl, _overview_extra(ov, plan, sdf, budget, ent_up).fillna(""),
                              hlb + exb, sec=0,
                              table_name=f"{ent_up} 2025年度的整體投資支出概況", note=NOTE_RATE)
         render_category_overview(prs, ent_up, ov, sdf, narr, llm)   # slide 13-14 逐範疇概況（LLM 優先）
-        zit = O.zero_investment_text(O.zero_investment_summary(sdf, plan, cat, narr, ent_up), ent_up)
+        zit = O.zero_investment_text(zi, ent_up)
         if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
             _prose_slide(prs, f"{S1}  |  {ent_up} 2025年度計劃申報投資支出為零的項目",
                          [("", x) for x in zit[1:]], headline=zit[0], sec=0)
