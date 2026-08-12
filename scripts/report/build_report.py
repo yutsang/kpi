@@ -104,6 +104,54 @@ FONT_HEAD = "KPMG Bold"
 
 
 # ── from layout ──
+SZ_CRUMB = 5.5
+
+
+# ── from layout ──
+SZ_TITLE = 8.5
+
+
+# ── from layout ──
+SZ_HEAD = 8.5
+
+
+# ── from layout ──
+SZ_BODY = 8.0
+
+
+# ── from layout ──
+SZ_BODY_HEAD = 8.5
+
+
+# ── from layout ──
+SZ_TBL = 6.5
+
+
+# ── from layout ──
+SZ_TBL_HDR = 6.0
+
+
+# ── from layout ──
+SZ_TBL_WIDE = 5.8
+
+
+# ── from layout ──
+SZ_CAPTION = 6.0
+
+
+# ── from layout ──
+SZ_NOTE = 6.0
+
+
+# ── from layout ──
+SZ_FOOT = 5.0
+
+
+# ── from layout ──
+SZ_PAGE = 7.0
+
+
+# ── from layout ──
 SLIDE_W = 10.83
 
 
@@ -245,7 +293,7 @@ def put(slide, x, y, w, h, text, *, size=8, bold=False, color=INK, align=PP_ALIG
     box = _tb(slide, x, y, w, h)
     p = box.text_frame.paragraphs[0]
     p.alignment = align
-    p.font.size = Pt(size)                      # 定死：空段落唔好跌返 Calibri 18
+    p.font.size = Pt(size); p.font.name = FONT_NUM; set_ea(p.font)   # 空段落唔好跌返 theme 預設
     p._p.get_or_add_endParaRPr().set("sz", str(int(round(size * 100))))
     r = p.add_run(); r.text = str(text)
     setfont(r, size, bold=bold, italic=italic, color=color, latin=font)
@@ -260,10 +308,10 @@ def breadcrumb(slide, W, active=0, entity="MGM"):
     for i, s in enumerate(SECTIONS):
         if i:
             sep = p.add_run(); sep.text = "  |  "
-            setfont(sep, 5.5, color=RGBColor(0xC8, 0xC8, 0xC8))
+            setfont(sep, SZ_CRUMB, color=RGBColor(0xC8, 0xC8, 0xC8))
         r = p.add_run(); r.text = s
-        setfont(r, 5.5, bold=(i == active), color=NAVY if i == active else LGREY)
-    put(slide, W - 1.05, CRUMB_Y, 0.85, 0.18, f"{entity}  ◀ ⌂ ▶", size=5.5,
+        setfont(r, SZ_CRUMB, bold=(i == active), color=NAVY if i == active else LGREY)
+    put(slide, W - 1.05, CRUMB_Y, 0.85, 0.18, f"{entity}  ◀ ⌂ ▶", size=SZ_CRUMB,
         color=LGREY, align=PP_ALIGN.RIGHT)
 
 
@@ -275,9 +323,9 @@ def footer(slide, W, H, page):
     setfont(kr, 11, bold=True, italic=True, color=NAVY)
     put(slide, MARGIN + 0.5, H - 0.30, W - 2.2, 0.2,
         "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。",
-        size=5, color=LGREY)
+        size=SZ_FOOT, color=LGREY)
     if page is not None:
-        put(slide, W - 1.15, H - 0.32, 0.95, 0.2, f"初稿　{page}", size=7, bold=True,
+        put(slide, W - 1.15, H - 0.32, 0.95, 0.2, f"初稿　{page}", size=SZ_PAGE, bold=True,
             color=NAVY, align=PP_ALIGN.RIGHT)
 
 
@@ -286,7 +334,7 @@ MAX_HEAD_H = 1.05
 
 
 # ── from layout ──
-def head_h(headline, W, hsize=8.5):
+def head_h(headline, W, hsize=SZ_HEAD):
     """導語需要嘅高度 + 實際字號（長就自動縮到 MAX_HEAD_H 為止）→ (h, size)。"""
     if not headline:
         return 0.06, hsize
@@ -299,9 +347,9 @@ def head_h(headline, W, hsize=8.5):
 
 
 # ── from layout ──
-def page_head(slide, W, crumb, headline=None, *, hsize=8.5):
+def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
     """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。"""
-    put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=8.5, bold=True, color=NAVY)
+    put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=SZ_TITLE, bold=True, color=NAVY)
     if not headline:
         return HEAD_Y + 0.06
     h, hsize = head_h(headline, W, hsize)
@@ -313,7 +361,7 @@ def page_head(slide, W, crumb, headline=None, *, hsize=8.5):
 
 
 # ── from layout ──
-def caption_bar(slide, x, y, w, text, *, size=6):
+def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
     """表頂 navy caption bar（重覆表名，對 scan 每張表都有）。"""
     bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.17))
     bar.fill.solid(); bar.fill.fore_color.rgb = NAVY
@@ -333,9 +381,9 @@ def source_note(slide, W, y=None, *, note=None, more=False):
     """表下：資料來源（左）+（下頁待續）（右）。"""
     y = CONTENT_BOTTOM if y is None else y
     put(slide, MARGIN, y, W - 2.0, 0.16,
-        note or "資料來源：管理層提供之項目投資計劃及執行報告資料，畢馬威分析", size=6, color=GREY)
+        note or "資料來源：管理層提供之項目投資計劃及執行報告資料，畢馬威分析", size=SZ_NOTE, color=GREY)
     if more:
-        put(slide, W - MARGIN - 1.2, y, 1.2, 0.16, "（下頁待續）", size=6, color=GREY,
+        put(slide, W - MARGIN - 1.2, y, 1.2, 0.16, "（下頁待續）", size=SZ_NOTE, color=GREY,
             align=PP_ALIGN.RIGHT)
 
 
@@ -352,7 +400,7 @@ def _borders(cell):
 
 
 # ── from layout ──
-def set_cell(cell, text, *, size=6, bold=False, fill=None, align=PP_ALIGN.RIGHT,
+def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.RIGHT,
              color=None, wrap=True):
     cell.margin_left = cell.margin_right = Emu(18000)
     cell.margin_top = cell.margin_bottom = Emu(9000)
@@ -434,7 +482,7 @@ def fit_blocks(blocks, widths, font, avail_h, hh):
 
 
 # ── from layout ──
-def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=6, hfont=5.5,
+def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, hfont=SZ_TBL_HDR,
                left_cols=1, fill_h=None, max_row_h=0.34):
     """畫 navy 表。subs=欄名（可含 \\n）；rows=[(kind, cells)]；widths=相對闊度（會 scale 到 w）。
     supers=[(label, c0, c1_exclusive)] 兩層表頭。fill_h=想填滿嘅高度（行數少時撐開行高，
@@ -484,7 +532,7 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=6, hfont
 
 
 # ── from layout ──
-def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
+def prose(box, items, *, head_size=SZ_BODY_HEAD, body_size=SZ_BODY, gap=6):
     """scan 敘述格式：navy 粗體小標題一行 + 下面 body 段落（唔用 ■ bullet）。
     items = [(head, body)]；head 可為空。"""
     tf = box.text_frame; tf.word_wrap = True
@@ -493,7 +541,7 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
         if head:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             p.space_before = Pt(0 if first else gap); p.space_after = Pt(1)
-            p.font.size = Pt(head_size)
+            p.font.size = Pt(head_size); p.font.name = FONT_NUM; set_ea(p.font)
             p._p.get_or_add_endParaRPr().set("sz", str(int(round(head_size * 100))))
             r = p.add_run(); r.text = str(head)
             setfont(r, head_size, bold=True, color=NAVY)
@@ -501,7 +549,7 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
         if body:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             p.space_before = Pt(0 if first else (0 if head else gap)); p.space_after = Pt(1)
-            p.font.size = Pt(body_size)
+            p.font.size = Pt(body_size); p.font.name = FONT_NUM; set_ea(p.font)
             p._p.get_or_add_endParaRPr().set("sz", str(int(round(body_size * 100))))
             r = p.add_run(); r.text = str(body)
             setfont(r, body_size, color=RGBColor(0x33, 0x33, 0x33))
@@ -509,7 +557,7 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
 
 
 # ── from layout ──
-def prose_numbered(box, items, *, size=7, gap=7, indent=0.24, title=None, tsize=7.5):
+def prose_numbered(box, items, *, size=SZ_BODY, gap=7, indent=0.24, title=None, tsize=SZ_BODY_HEAD):
     """scan 表旁格式（p-11/p-13 右欄）：navy 粗體小標題 + 編號清單
         1.  {粗體類型}（{金額}）：{內文…}       ← hanging indent，內文對齊類型名
     items = [(編號, 粗體引子, 內文)]；編號跟七大類 canonical 序（會跳號）。"""
@@ -529,7 +577,7 @@ def prose_numbered(box, items, *, size=7, gap=7, indent=0.24, title=None, tsize=
         p.space_before = Pt(gap); p.space_after = Pt(0)
         pPr = p._p.get_or_add_pPr()
         pPr.set("marL", str(emu)); pPr.set("indent", str(-emu))     # hanging indent
-        p.font.size = Pt(size)
+        p.font.size = Pt(size); p.font.name = FONT_NUM; set_ea(p.font)
         p._p.get_or_add_endParaRPr().set("sz", str(int(round(size * 100))))
         rn = p.add_run(); rn.text = f"{no}.\t"
         setfont(rn, size, bold=True, color=NAVY)
@@ -540,7 +588,7 @@ def prose_numbered(box, items, *, size=7, gap=7, indent=0.24, title=None, tsize=
 
 
 # ── from layout ──
-def est_numbered_h(items, w, size=7, gap=7, title=None, tsize=7.5, indent=0.24):
+def est_numbered_h(items, w, size=SZ_BODY, gap=7, title=None, tsize=SZ_BODY_HEAD, indent=0.24):
     h = (est_lines(title, w, tsize) * tsize * 1.3 / 72.0 + 4 / 72.0) if title else 0.0
     for _no, head, body in items:
         h += est_lines(f"　{head}{body}", w - indent, size) * size * 1.35 / 72.0 + gap / 72.0
@@ -555,7 +603,7 @@ def prose_box(slide, x, y, w, h, items, **kw):
 
 
 # ── from layout ──
-def est_prose_h(items, w, head_size=7, body_size=6.5, gap=6):
+def est_prose_h(items, w, head_size=SZ_BODY_HEAD, body_size=SZ_BODY, gap=6):
     """估敘述高度（吋）→ 用嚟分頁，唔會爆版。"""
     h = 0.0
     for head, body in items:
@@ -579,6 +627,29 @@ def fit_prose(items, w, avail_h, **kw):
     if cur:
         pages.append(cur)
     return pages or [[]]
+
+
+# ── from layout ──
+def apply_theme_fonts(prs):
+    """把生成 deck 嘅 theme 字體改成公司 template 嗰套（major KPMG Bold / minor Arial，
+    ea 兩者都 Microsoft YaHei）。python-pptx 開新檔用 Office 預設 theme（Calibri），
+    凡係我哋冇明寫字體嘅地方（placeholder、空段落、表格預設）都會跌返 Calibri。"""
+    import re as _re
+    try:
+        for m in prs.slide_masters:
+            part = m.part.part_related_by(
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme")
+            xml = part.blob.decode("utf-8")
+            for tag, latin in (("majorFont", FONT_HEAD), ("minorFont", FONT_NUM)):
+                def _fix(mo, latin=latin):
+                    seg = mo.group(0)
+                    seg = _re.sub(r'<a:latin typeface="[^"]*"', f'<a:latin typeface="{latin}"', seg, 1)
+                    seg = _re.sub(r'<a:ea typeface="[^"]*"', f'<a:ea typeface="{FONT_CN}"', seg, 1)
+                    return seg
+                xml = _re.sub(r"<a:" + tag + r">.*?</a:" + tag + r">", _fix, xml, flags=_re.S)
+            part._blob = xml.encode("utf-8")
+    except Exception:
+        pass
 
 
 # ── from layout ──
@@ -738,7 +809,7 @@ def render_sheet(prs, sheet_name, df, cols, *, ent_up="MGM", sec=3, crumb=None, 
         while cj + 1 < ncol and col_group(cols[cj + 1]) == g:
             cj += 1
         supers.append((GROUP_LABEL[g], ci, cj + 1)); ci = cj + 1
-    font = 5.8 if ncol > 16 else 6.3
+    font = SZ_TBL_WIDE if ncol > 16 else SZ_TBL
     yr = "20" + (sheet_name[-2:] if sheet_name[-2:].isdigit() else "25")
     head = (f"下表匯總了我們在審查{ent_up} {yr}年度投資計劃各項目投資執行情況時，識別出的各項目"
             f"投資支出涉及的潛在調整事項，以及相關的影響金額。")
@@ -2555,7 +2626,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "b36106e 2026-08-12 11:54"
+BUILD_STAMP = "d6dfa62 2026-08-12 12:13"
 
 
 # ── from make_report ──
@@ -2606,20 +2677,28 @@ def _coverage_probe(df, qingdan):
 
 
 # ── from make_report ──
-def _dump_pptx_text(prs, entity):
-    """把生成嘅 pptx 逐版文字（含表格 cell）dump 做 txt → user paste 返做 cross-check vs scan（唔使影相）。"""
+def _dump_pptx_text(prs, entity, with_tables=False):
+    """逐版文字 dump → user paste 返，我就可以【逐句對返原報告 scan】（長度／風格／用字）。
+    預設【只 dump 敘述文字，唔 dump 表格 cell】：表格係數字、已經另外驗過，而且會令個檔大到 paste 唔到。
+    要連表格：build_report.py mgm --dump --dump-tables"""
     lines = []
-    for i, s in enumerate(prs.slides, 1):
+    for i, sl in enumerate(prs.slides, 1):
         parts = []
-        for sh in s.shapes:
-            if sh.has_text_frame and sh.text_frame.text.strip():
-                parts.append(sh.text_frame.text.strip())
+        for sh in sl.shapes:
             if sh.has_table:
+                if not with_tables:
+                    t = sh.table
+                    parts.append(f"〔表 {len(t.rows)}x{len(t.columns)}〕")
+                    continue
                 for row in sh.table.rows:
                     cells = [c.text.strip() for c in row.cells]
                     if any(cells):
                         parts.append(" | ".join(cells))
-        lines.append(f"\n===== slide {i} =====\n" + "\n".join(parts))
+                continue
+            if sh.has_text_frame and sh.text_frame.text.strip():
+                parts.append(sh.text_frame.text.strip())
+        body = "\n".join(parts)
+        lines.append(f"\n===== slide {i}（{len(body)} 字）=====\n" + body)
     out = Path(f"{entity}_報告_dump.txt")
     out.write_text("\n".join(lines), encoding="utf-8")
     return out
@@ -2847,7 +2926,7 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
                                   fill_h=avail)
     if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
         put(slide, MARGIN, min(tbl_bot + 0.06, CONTENT_BOTTOM - 0.30), left_w, 0.3,
-              note, size=5, italic=True, color=GREY)
+              note, size=SZ_NOTE - 1, italic=True, color=GREY)
     rx = MARGIN + left_w + 0.22
     prose_box(slide, rx, top - 0.02, W - rx - MARGIN, CONTENT_BOTTOM - top, bullets)
     source_note(slide, W)
@@ -3012,11 +3091,11 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
         if pi == 0:
             t2 = caption_bar(slide, MARGIN, top, lw, tname)
             draw_table(slide, MARGIN, t2, lw, subs, rows, widths, supers=supers,
-                         font=6, hfont=5.5, fill_h=CONTENT_BOTTOM - t2 - 0.28)
+                         font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - t2 - 0.28)
             put(slide, MARGIN, CONTENT_BOTTOM - 0.26, lw, 0.3,
-                  "註：金額單位為萬澳門元；括號表示調減。", size=5, italic=True, color=GREY)
+                  "註：金額單位為萬澳門元；括號表示調減。", size=SZ_NOTE - 1, italic=True, color=GREY)
         box = _tb(slide, MARGIN + lw + 0.22, top - 0.02, cw, CONTENT_BOTTOM - top)
-        prose_numbered(box, items[idx:idx + len(page)], size=6.5,
+        prose_numbered(box, items[idx:idx + len(page)], size=SZ_BODY,
                          title=(tname if pi == 0 else tname + "（續）"))
         idx += len(page)
         source_note(slide, W, more=(pi < len(pages) - 1))
@@ -3169,7 +3248,7 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
         slide, W, H, top = _page(prs, sec, crumb, (head or "") + suffix)
         top = caption_bar(slide, MARGIN, top, tw, title + suffix)
         draw_table(slide, MARGIN, top, tw, subs, chunk, widths, supers=supers,
-                     font=6.5, hfont=6, fill_h=CONTENT_BOTTOM - top - 0.28)
+                     font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - top - 0.28)
         source_note(slide, W, note=note, more=(pi < len(pages) - 1))
 
 
@@ -3183,7 +3262,7 @@ def _cards(prs, sec, crumb, headline, recs, *, note=None):
     avail = CONTENT_BOTTOM - probe
 
     def card_h(items):
-        return 0.24 + est_prose_h(items, cw - 0.12, head_size=7.5, body_size=7.5, gap=3) + 0.14
+        return 0.24 + est_prose_h(items, cw - 0.12, head_size=SZ_BODY, body_size=SZ_BODY, gap=3) + 0.14
     pages, cur, used = [], [], 0.0
     for rec in recs:
         h = card_h(rec[1])
@@ -3206,10 +3285,10 @@ def _cards(prs, sec, crumb, headline, recs, *, note=None):
             br = btf.paragraphs[0].add_run(); br.text = bar_text
             br.font.bold = True; br.font.size = Pt(8)
             br.font.color.rgb = LIGHT; br.font.name = "微软雅黑"
-            bh = min(est_prose_h(items, cw - 0.12, head_size=7.5, body_size=7.5, gap=3),
+            bh = min(est_prose_h(items, cw - 0.12, head_size=SZ_BODY, body_size=SZ_BODY, gap=3),
                      CONTENT_BOTTOM - y - 0.26)
             prose_box(slide, MARGIN + 0.06, y + 0.26, cw - 0.12, bh, items,
-                        head_size=7.5, body_size=7.5, gap=3)
+                        head_size=SZ_BODY, body_size=SZ_BODY, gap=3)
             y += 0.24 + bh + 0.14
         source_note(slide, W, note=note, more=(pi < len(pages) - 1))
 
@@ -3219,7 +3298,7 @@ def _finding_body(box, find, mgmt, grey=None):
     """（保留舊 API）KPMG分析發現 / 管理層解釋 兩段。"""
     prose(box, [(l + "：", t) for l, t in
                   [("KPMG分析發現", find), ("管理層解釋", mgmt)] if t],
-            head_size=7.5, body_size=7.5, gap=3)
+            head_size=SZ_BODY, body_size=SZ_BODY, gap=3)
 
 
 # ── from make_report ──
@@ -3449,7 +3528,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
     probe = HEAD_Y + head_h(headline, W)[0] + 0.10
     avail = CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
     if numbered:
-        hs_all = [est_numbered_h([b], colw, size=7) for b in bullets]
+        hs_all = [est_numbered_h([b], colw, size=SZ_BODY) for b in bullets]
         half_pages, cur, used = [], [], 0.0
         for b, hh in zip(bullets, hs_all):
             if cur and used + hh > avail * 2:
@@ -3458,7 +3537,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
         if cur:
             half_pages.append(cur)
     else:
-        half_pages = fit_prose(bullets, colw, avail * 2, head_size=7.5, body_size=7)
+        half_pages = fit_prose(bullets, colw, avail * 2, head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
     for pi, page in enumerate(half_pages):
         suffix = f"（{pi+1}/{len(half_pages)}）" if len(half_pages) > 1 else ""
         slide, W, H, top = _page(prs, sec, title, (headline or "") + suffix)
@@ -3468,8 +3547,8 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
             top += 0.20
         # 斷欄：以【總高一半】為目標令左右大致平均（對 scan），但唔可以超過一欄可用高
         lim = CONTENT_BOTTOM - top
-        hs = [(est_numbered_h([it], colw, size=7) if numbered
-               else est_prose_h([it], colw, head_size=7.5, body_size=7)) for it in page]
+        hs = [(est_numbered_h([it], colw, size=SZ_BODY) if numbered
+               else est_prose_h([it], colw, head_size=SZ_BODY_HEAD, body_size=SZ_BODY)) for it in page]
         target = sum(hs) / 2.0
         cut, used = len(page), 0.0
         for i, ih in enumerate(hs):
@@ -3478,15 +3557,15 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
             used += ih
         cut = max(1, cut)
         if numbered:
-            prose_numbered(_tb(slide, MARGIN, top, colw, lim), page[:cut], size=7)
+            prose_numbered(_tb(slide, MARGIN, top, colw, lim), page[:cut], size=SZ_BODY)
             if page[cut:]:
                 prose_numbered(_tb(slide, MARGIN + colw + COL_GAP, top, colw, lim),
-                                 page[cut:], size=7)
+                                 page[cut:], size=SZ_BODY)
         else:
-            prose_box(slide, MARGIN, top, colw, lim, page[:cut], head_size=7.5, body_size=7)
+            prose_box(slide, MARGIN, top, colw, lim, page[:cut], head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
             if page[cut:]:
                 prose_box(slide, MARGIN + colw + COL_GAP, top, colw, lim, page[cut:],
-                            head_size=7.5, body_size=7)
+                            head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
         source_note(slide, W, more=(pi < len(half_pages) - 1))
 
 
@@ -3830,6 +3909,7 @@ def main():
     if tmpl:      # template mode：重編 slide 高號，徹底避開 template 殘留 orphan part 撞名 corruption
         _renumber_slides(prs)
 
+    apply_theme_fonts(prs)      # deck theme 字體 → KPMG（唔明寫嘅地方唔會跌返 Calibri）
     out = Path(f"{entity}_report_llm.pptx")
     try:
         prs.save(out)
@@ -3840,7 +3920,7 @@ def main():
         print(f"⚠ 原檔開住(鎖住)，改存 → {out.name}（開之前記得閂舊 pptx）")
     print(f"✓ {out.resolve()}  共 {len(list(prs.slides))} 頁（概述 + 主要發現 + 金額匯總 + 設施 + 單項審查）")
     if "--dump" in sys.argv:      # 要 cross-check 先加 --dump（慳空間；ok 咗嘅唔使 dump）
-        dump = _dump_pptx_text(prs, entity)
+        dump = _dump_pptx_text(prs, entity, with_tables="--dump-tables" in sys.argv)
         print(f"✓ text dump → {dump.name}（逐版文字，cross-check 用）")
 
 

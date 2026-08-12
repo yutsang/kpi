@@ -139,7 +139,7 @@ def render_sheet(prs, sheet_name, df, cols, *, ent_up="MGM", sec=3, crumb=None, 
         while cj + 1 < ncol and col_group(cols[cj + 1]) == g:
             cj += 1
         supers.append((GROUP_LABEL[g], ci, cj + 1)); ci = cj + 1
-    font = 5.8 if ncol > 16 else 6.3
+    font = L.SZ_TBL_WIDE if ncol > 16 else L.SZ_TBL
     yr = "20" + (sheet_name[-2:] if sheet_name[-2:].isdigit() else "25")
     head = (f"下表匯總了我們在審查{ent_up} {yr}年度投資計劃各項目投資執行情況時，識別出的各項目"
             f"投資支出涉及的潛在調整事項，以及相關的影響金額。")
