@@ -2555,7 +2555,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "6b307b2 2026-08-12 11:49"
+BUILD_STAMP = "b36106e 2026-08-12 11:54"
 
 
 # ── from make_report ──
@@ -2919,7 +2919,7 @@ def _load_budget(entity):
                 import yaml
                 d = yaml.safe_load(p.read_text(encoding="utf-8"))
             b = (d or {}).get(entity) or (d or {}).get(entity.upper()) or {}
-            if b:
+            if b:  # noqa: SIM102
                 print(f"    10年投資預算：{fn} → 總計 {b.get('總計', 0):,.0f} 萬澳門元")
                 return {k: float(v) for k, v in b.items()}
         except Exception as e:
@@ -2937,19 +2937,19 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     n_plan = len(plan.get(25, {})) if plan else n_impl
     rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: max(n_plan - n_impl, 0)},
             {cols[0]: "投資執行報告中申報已實施的投資項目數量", cols[1]: n_impl}]
-    if budget:
-        tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
-        gm = ov[ov["範疇"].astype(str).str.strip() == "博彩項目小計"]
-        ng = ov[ov["範疇"].astype(str).str.strip() == "非博彩項目小計"]
-        b_all, b_g, b_ng = (budget.get("總計", 0), budget.get("博彩", 0), budget.get("非博彩", 0))
-        rows.append({cols[0]: "承諾的10年投資預算", "報告投資金額": b_all})
-        r = {cols[0]: "2025年投資支出佔10年投資預算的完成率"}
-        for lab, df_, bud in (("報告投資金額", tot, b_all),):
-            for c, src in (("報告投資金額", "報告投資金額"), ("潛在調整後投資金額", "潛在調整後投資金額")):
-                if c in cols and len(df_):
-                    v = pd.to_numeric(pd.Series([df_.iloc[0][src]]), errors="coerce").iloc[0]
-                    r[c] = _rate(float(v or 0), bud) if bud else None
-        rows.append(r)
+    # 10年投資預算：全 cell 搜過清單 + 表2 都冇（2026-08-12 確認），嚟自承批合同。
+    # 冇 config 就【照出行、留空】—— 保持報告結構，一眼睇到係待填而唔係漏咗（user 2026-08-12）。
+    tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+    b_all = budget.get("總計") if budget else None
+    rows.append({cols[0]: "承諾的10年投資預算", "報告投資金額": b_all if b_all else ""})
+    r = {cols[0]: "2025年投資支出佔10年投資預算的完成率"}
+    for c in ("報告投資金額", "潛在調整後投資金額"):
+        if c in cols and len(tot) and b_all:
+            v = pd.to_numeric(pd.Series([tot.iloc[0][c]]), errors="coerce").iloc[0]
+            r[c] = _rate(float(v or 0), b_all)
+        else:
+            r[c] = ""
+    rows.append(r)
     return pd.concat([ov, pd.DataFrame(rows)], ignore_index=True) if rows else ov
 
 
