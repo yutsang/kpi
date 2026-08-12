@@ -8,6 +8,11 @@ build_report.py — 單一自足檔：由底層數據（feed + 清單）生成�
     python build_report.py [entity] --llm      # 即場生成 LLM 敘述（需 KPMG 網 + workbench creds）再出報告
 （此檔由各 build/LLM 模組自動合併；LLM 相關 heavy import [openai/msoffcrypto] 全 lazy；報告只作 ref。）
 """
+from pptx.util import Inches, Pt, Emu
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.oxml.ns import qn
 import sys
 from pathlib import Path
 import re
@@ -16,6 +21,493 @@ import os
 from typing import Any
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+# ── from layout ──
+NAVY = RGBColor(0x00, 0x33, 0x8D)
+
+
+# ── from layout ──
+MBLUE = RGBColor(0x00, 0x5E, 0xB8)
+
+
+# ── from layout ──
+LBLUE = RGBColor(0x00, 0x91, 0xDA)
+
+
+# ── from layout ──
+VIOLET = RGBColor(0x48, 0x36, 0x98)
+
+
+# ── from layout ──
+PURPLE = RGBColor(0x47, 0x0A, 0x68)
+
+
+# ── from layout ──
+LPURPLE = RGBColor(0x6D, 0x20, 0x77)
+
+
+# ── from layout ──
+GREEN = RGBColor(0x00, 0xA3, 0xA1)
+
+
+# ── from layout ──
+SECFILL = RGBColor(0xEE, 0xF1, 0xF8)
+
+
+# ── from layout ──
+SUBTOT = RGBColor(0xD9, 0xE1, 0xF2)
+
+
+# ── from layout ──
+TOTAL = RGBColor(0xBD, 0xD7, 0xEE)
+
+
+# ── from layout ──
+BORDER = "BFBFBF"
+
+
+# ── from layout ──
+WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+
+
+# ── from layout ──
+INK = RGBColor(0x22, 0x22, 0x22)
+
+
+# ── from layout ──
+GREY = RGBColor(0x59, 0x59, 0x59)
+
+
+# ── from layout ──
+LGREY = RGBColor(0x8C, 0x8C, 0x8C)
+
+
+# ── from layout ──
+DARK = RGBColor(0x0C, 0x23, 0x3C)
+
+
+# ── from layout ──
+NEG_COLOR = None
+
+
+# ── from layout ──
+FONT_CN = "微软雅黑"
+
+
+# ── from layout ──
+FONT_NUM = "Arial"
+
+
+# ── from layout ──
+SLIDE_W = 10.83
+
+
+# ── from layout ──
+SLIDE_H = 7.5
+
+
+# ── from layout ──
+MARGIN = 0.53
+
+
+# ── from layout ──
+CRUMB_Y = 0.13
+
+
+# ── from layout ──
+SUBTITLE_Y = 0.34
+
+
+# ── from layout ──
+HEAD_Y = 0.56
+
+
+# ── from layout ──
+FOOT_Y = 7.16
+
+
+# ── from layout ──
+CONTENT_BOTTOM = 6.98
+
+
+# ── from layout ──
+SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
+            "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
+
+
+# ── from layout ──
+_CN_RE = None
+
+
+# ── from layout ──
+def _is_cn(ch):
+    return "⺀" <= ch <= "鿿" or "＀" <= ch <= "￯" or "　" <= ch <= "〿"
+
+
+# ── from layout ──
+def has_cn(s):
+    return any(_is_cn(c) for c in str(s))
+
+
+# ── from layout ──
+def text_w(s, size):
+    """估文字闊度（pt）：中文/全形 ≈ 1 em、英數 ≈ 0.52 em。"""
+    w = 0.0
+    for c in str(s):
+        w += size * (1.0 if _is_cn(c) else 0.52)
+    return w
+
+
+# ── from layout ──
+def est_lines(s, col_w_in, size, margin_in=0.06):
+    """估 wrap 行數（col_w_in = 欄闊吋）。認 \\n 明碼換行。"""
+    avail = max((col_w_in - margin_in) * 72.0, 6.0)
+    n = 0
+    for seg in str(s).split("\n"):
+        n += max(1, -(-text_w(seg, size) // avail))     # ceil
+    return int(n)
+
+
+# ── from layout ──
+def row_h(cells, widths, size, pad_in=0.045, min_h=0.155):
+    """一行嘅需要高度（吋）＝ 最多 wrap 行數 × 行距 + 上下 padding。"""
+    lines = 1
+    for txt, w in zip(cells, widths):
+        lines = max(lines, est_lines(txt, w, size))
+    return max(min_h, lines * size * 1.24 / 72.0 + pad_in)
+
+
+# ── from layout ──
+def size_of(prs):
+    return prs.slide_width / 914400.0, prs.slide_height / 914400.0
+
+
+# ── from layout ──
+def blank(prs):
+    lay = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    return prs.slides.add_slide(lay)
+
+
+# ── from layout ──
+def _tb(slide, x, y, w, h):
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.margin_left = tf.margin_right = Emu(0)
+    tf.margin_top = tf.margin_bottom = Emu(0)
+    return box
+
+
+# ── from layout ──
+def put(slide, x, y, w, h, text, *, size=8, bold=False, color=INK, align=PP_ALIGN.LEFT,
+        italic=False, font=None):
+    """一行/一段文字框。"""
+    box = _tb(slide, x, y, w, h)
+    p = box.text_frame.paragraphs[0]
+    p.alignment = align
+    r = p.add_run(); r.text = str(text)
+    r.font.size = Pt(size); r.font.bold = bold; r.font.italic = italic
+    r.font.color.rgb = color
+    r.font.name = font or (FONT_CN if has_cn(text) else FONT_NUM)
+    return box
+
+
+# ── from layout ──
+def breadcrumb(slide, W, active=0, entity="MGM"):
+    """頂 nav：六大章節，當前 navy 粗體，其餘灰（對 scan 每版頂部）。"""
+    box = _tb(slide, MARGIN - 0.23, CRUMB_Y, W - 1.6, 0.18)
+    p = box.text_frame.paragraphs[0]
+    for i, s in enumerate(SECTIONS):
+        if i:
+            sep = p.add_run(); sep.text = "  |  "
+            sep.font.size = Pt(5.5); sep.font.color.rgb = RGBColor(0xC8, 0xC8, 0xC8)
+            sep.font.name = FONT_CN
+        r = p.add_run(); r.text = s
+        r.font.size = Pt(5.5); r.font.name = FONT_CN
+        r.font.bold = (i == active)
+        r.font.color.rgb = NAVY if i == active else LGREY
+    put(slide, W - 1.05, CRUMB_Y, 0.85, 0.18, f"{entity}  ◀ ⌂ ▶", size=5.5,
+        color=LGREY, align=PP_ALIGN.RIGHT)
+
+
+# ── from layout ──
+def footer(slide, W, H, page):
+    """底：KPMG 字標 + 版權 + 初稿/頁碼（對 scan）。"""
+    kb = _tb(slide, MARGIN - 0.23, H - 0.34, 0.7, 0.22)
+    kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
+    kr.font.size = Pt(11); kr.font.bold = True; kr.font.italic = True
+    kr.font.color.rgb = NAVY; kr.font.name = FONT_NUM
+    put(slide, MARGIN + 0.5, H - 0.30, W - 2.2, 0.2,
+        "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。",
+        size=5, color=LGREY)
+    if page is not None:
+        put(slide, W - 1.15, H - 0.32, 0.95, 0.2, f"初稿　{page}", size=7, bold=True,
+            color=NAVY, align=PP_ALIGN.RIGHT)
+
+
+# ── from layout ──
+MAX_HEAD_H = 1.05
+
+
+# ── from layout ──
+def head_h(headline, W, hsize=8.5):
+    """導語需要嘅高度 + 實際字號（長就自動縮到 MAX_HEAD_H 為止）→ (h, size)。"""
+    if not headline:
+        return 0.06, hsize
+    while hsize > 6.0:
+        h = est_lines(headline, W - 2 * MARGIN, hsize) * hsize * 1.35 / 72.0
+        if h <= MAX_HEAD_H:
+            return h, hsize
+        hsize -= 0.5
+    return MAX_HEAD_H, hsize
+
+
+# ── from layout ──
+def page_head(slide, W, crumb, headline=None, *, hsize=8.5):
+    """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。"""
+    put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=8.5, bold=True, color=NAVY)
+    if not headline:
+        return HEAD_Y + 0.06
+    h, hsize = head_h(headline, W, hsize)
+    box = _tb(slide, MARGIN, HEAD_Y, W - 2 * MARGIN, h)
+    p = box.text_frame.paragraphs[0]
+    r = p.add_run(); r.text = str(headline)
+    r.font.size = Pt(hsize); r.font.bold = True; r.font.color.rgb = NAVY; r.font.name = FONT_CN
+    return HEAD_Y + h + 0.10
+
+
+# ── from layout ──
+def caption_bar(slide, x, y, w, text, *, size=6):
+    """表頂 navy caption bar（重覆表名，對 scan 每張表都有）。"""
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.17))
+    bar.fill.solid(); bar.fill.fore_color.rgb = NAVY
+    bar.line.fill.background(); bar.shadow.inherit = False
+    tf = bar.text_frame
+    tf.margin_top = tf.margin_bottom = Emu(0)
+    tf.margin_left = Emu(36000); tf.margin_right = Emu(18000)
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    p = tf.paragraphs[0]; p.alignment = PP_ALIGN.LEFT
+    r = p.add_run(); r.text = str(text)
+    r.font.size = Pt(size); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = FONT_CN
+    return y + 0.17
+
+
+# ── from layout ──
+def source_note(slide, W, y=None, *, note=None, more=False):
+    """表下：資料來源（左）+（下頁待續）（右）。"""
+    y = CONTENT_BOTTOM if y is None else y
+    put(slide, MARGIN, y, W - 2.0, 0.16,
+        note or "資料來源：管理層提供之項目投資計劃及執行報告資料，畢馬威分析", size=6, color=GREY)
+    if more:
+        put(slide, W - MARGIN - 1.2, y, 1.2, 0.16, "（下頁待續）", size=6, color=GREY,
+            align=PP_ALIGN.RIGHT)
+
+
+# ── from layout ──
+def _borders(cell):
+    """幼灰格線；插喺 tcPr 最前（OOXML schema：ln* 要喺 fill 之前，否則 PowerPoint 會要求修復）。"""
+    tcPr = cell._tc.get_or_add_tcPr()
+    for tag in ("a:lnB", "a:lnT", "a:lnR", "a:lnL"):        # 反序 insert(0) → 出嚟係 L,R,T,B
+        ln = tcPr.makeelement(qn(tag), {"w": "3175", "cap": "flat"})
+        fill = ln.makeelement(qn("a:solidFill"), {})
+        clr = fill.makeelement(qn("a:srgbClr"), {"val": BORDER})
+        fill.append(clr); ln.append(fill)
+        tcPr.insert(0, ln)
+
+
+# ── from layout ──
+def set_cell(cell, text, *, size=6, bold=False, fill=None, align=PP_ALIGN.RIGHT,
+             color=None, wrap=True):
+    cell.margin_left = cell.margin_right = Emu(18000)
+    cell.margin_top = cell.margin_bottom = Emu(9000)
+    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = fill if fill is not None else WHITE
+    tf = cell.text_frame; tf.word_wrap = wrap
+    p = tf.paragraphs[0]; p.alignment = align
+    txt = "" if text is None else str(text)
+    if color is None:
+        color = NEG_COLOR if (NEG_COLOR is not None and txt.startswith("(")) else INK
+    # ⚠ DrawingML 入面 "\n" 唔係換行（會當空白）→ 一定要用 <a:br/>，否則表頭喺 PowerPoint 會擠成一行
+    for i, seg in enumerate(txt.split("\n")):
+        if i:
+            p.add_line_break()
+        r = p.add_run(); r.text = seg
+        r.font.size = Pt(size); r.font.bold = bold
+        r.font.name = FONT_CN if has_cn(seg) else FONT_NUM
+        r.font.color.rgb = color
+
+
+# ── from layout ──
+ROW_FILL = {"sec": SECFILL, "subtot": SUBTOT, "tot": TOTAL, "data": None}
+
+
+# ── from layout ──
+def header_h(supers, subs, widths, hfont):
+    """表頭需要高度（吋）。"""
+    h = row_h(subs, widths, hfont, pad_in=0.05, min_h=0.20)
+    return (0.17 + h) if supers else h
+
+
+# ── from layout ──
+def fit_rows(rows, widths, font, avail_h, hh):
+    """按【累積高度】切頁 → 保證唔會超出可用高度。rows = [(kind, cells)]。
+    keep=True 嘅 row（範疇 block）盡量唔拆：見 fit_blocks。"""
+    out, cur, used = [], [], 0.0
+    cap = max(avail_h - hh, 0.6)          # guard：導語太長時唔好變 0/負數（會無限開版）
+    for kind, cells in rows:
+        h = row_h(cells, widths, font)
+        if cur and used + h > cap:
+            out.append(cur); cur, used = [], 0.0
+        cur.append((kind, cells)); used += h
+    if cur:
+        out.append(cur)
+    return out or [[]]
+
+
+# ── from layout ──
+def fit_blocks(blocks, widths, font, avail_h, hh):
+    """block = 一個範疇（section + data + 小計）。整個 block 唔拆頁（對 scan：全報告冇「續」）；
+    單一 block 大過一版先逼住切。"""
+    cap = max(avail_h - hh, 0.6)          # guard：同上
+    pages, cur, used = [], [], 0.0
+    for blk in blocks:
+        bh = sum(row_h(c, widths, font) for _, c in blk)
+        if cur and used + bh > cap:
+            pages.append(cur); cur, used = [], 0.0
+        if bh > cap:                                    # 單一範疇爆版 → 逐行切（安全網）
+            for kind, cells in blk:
+                h = row_h(cells, widths, font)
+                if cur and used + h > cap:
+                    pages.append(cur); cur, used = [], 0.0
+                cur.append((kind, cells)); used += h
+            continue
+        cur.extend(blk); used += bh
+    if cur:
+        pages.append(cur)
+    return pages or [[]]
+
+
+# ── from layout ──
+def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=6, hfont=5.5,
+               left_cols=1, fill_h=None, max_row_h=0.34):
+    """畫 navy 表。subs=欄名（可含 \\n）；rows=[(kind, cells)]；widths=相對闊度（會 scale 到 w）。
+    supers=[(label, c0, c1_exclusive)] 兩層表頭。fill_h=想填滿嘅高度（行數少時撐開行高，
+    唔好剩一大橛白位；每行最多 max_row_h）。回 (bottom_y, 實際高度)。"""
+    ncol = len(subs)
+    scale = w / sum(widths)
+    wid = [v * scale for v in widths]
+    nhdr = 2 if supers else 1
+    heights = [row_h(cells, wid, font) for _, cells in rows]
+    hsub = row_h(subs, wid, hfont, pad_in=0.05, min_h=0.20)
+    if fill_h and heights:
+        slack = fill_h - ((0.17 if supers else 0) + hsub + sum(heights))
+        if slack > 0.05:
+            add = min(slack / len(heights), max(0.0, max_row_h - max(heights)))
+            heights = [h + add for h in heights]
+    total_h = (0.17 if supers else 0) + hsub + sum(heights)
+    tbl = slide.shapes.add_table(nhdr + len(rows), ncol, Inches(x), Inches(y),
+                                 Inches(w), Inches(total_h)).table
+    tbl.first_row = False; tbl.horz_banding = False
+    for i, v in enumerate(wid):
+        tbl.columns[i].width = Inches(v)
+    if supers:
+        for c in range(ncol):
+            set_cell(tbl.cell(0, c), "", size=hfont, fill=NAVY, color=WHITE)
+        for label, c0, c1 in supers:
+            if c1 - c0 > 1:
+                tbl.cell(0, c0).merge(tbl.cell(0, c1 - 1))
+            if label:
+                set_cell(tbl.cell(0, c0), label, size=hfont + 0.5, bold=True, fill=NAVY,
+                         color=WHITE, align=PP_ALIGN.CENTER)
+        tbl.rows[0].height = Emu(int(0.17 * 914400))
+    for c, s in enumerate(subs):
+        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True, fill=NAVY, color=WHITE,
+                 align=PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.CENTER)
+    tbl.rows[nhdr - 1].height = Emu(int(hsub * 914400))
+    for ri, (kind, cells) in enumerate(rows, start=nhdr):
+        fill = ROW_FILL.get(kind)
+        bold = kind in ("sec", "subtot", "tot")
+        for c, v in enumerate(cells):
+            al = PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.RIGHT
+            set_cell(tbl.cell(ri, c), v, size=font, bold=bold, fill=fill, align=al)
+        tbl.rows[ri].height = Emu(int(heights[ri - nhdr] * 914400))
+    for row in tbl.rows:
+        for cell in row.cells:
+            _borders(cell)
+    return y + total_h, total_h
+
+
+# ── from layout ──
+def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
+    """scan 敘述格式：navy 粗體小標題一行 + 下面 body 段落（唔用 ■ bullet）。
+    items = [(head, body)]；head 可為空。"""
+    tf = box.text_frame; tf.word_wrap = True
+    first = True
+    for head, body in items:
+        if head:
+            p = tf.paragraphs[0] if first else tf.add_paragraph()
+            p.space_before = Pt(0 if first else gap); p.space_after = Pt(1)
+            r = p.add_run(); r.text = str(head)
+            r.font.size = Pt(head_size); r.font.bold = True
+            r.font.color.rgb = NAVY; r.font.name = FONT_CN
+            first = False
+        if body:
+            p = tf.paragraphs[0] if first else tf.add_paragraph()
+            p.space_before = Pt(0 if first else (0 if head else gap)); p.space_after = Pt(1)
+            r = p.add_run(); r.text = str(body)
+            r.font.size = Pt(body_size); r.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+            r.font.name = FONT_CN
+            first = False
+
+
+# ── from layout ──
+def prose_box(slide, x, y, w, h, items, **kw):
+    box = _tb(slide, x, y, w, h)
+    prose(box, items, **kw)
+    return box
+
+
+# ── from layout ──
+def est_prose_h(items, w, head_size=7, body_size=6.5, gap=6):
+    """估敘述高度（吋）→ 用嚟分頁，唔會爆版。"""
+    h = 0.0
+    for head, body in items:
+        if head:
+            h += est_lines(head, w, head_size) * head_size * 1.3 / 72.0 + gap / 72.0
+        if body:
+            h += est_lines(body, w, body_size) * body_size * 1.35 / 72.0 + 2 / 72.0
+    return h
+
+
+# ── from layout ──
+def fit_prose(items, w, avail_h, **kw):
+    """按估算高度切頁 → [[items]]。"""
+    pages, cur, used = [], [], 0.0
+    avail_h = max(avail_h, 0.6)           # guard
+    for it in items:
+        ih = est_prose_h([it], w, **kw)
+        if cur and used + ih > avail_h:
+            pages.append(cur); cur, used = [], 0.0
+        cur.append(it); used += ih
+    if cur:
+        pages.append(cur)
+    return pages or [[]]
+
+
+# ── from layout ──
+def dark_slide(prs):
+    slide = blank(prs)
+    W, H = size_of(prs)
+    rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
+    rect.fill.solid(); rect.fill.fore_color.rgb = DARK
+    rect.line.fill.background(); rect.shadow.inherit = False
+    kb = _tb(slide, 0.55, 0.35, 2.2, 0.4)
+    kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
+    kr.font.size = Pt(20); kr.font.bold = True; kr.font.italic = True
+    kr.font.color.rgb = WHITE; kr.font.name = FONT_NUM
+    return slide, W, H
 
 
 # ── from render_review_table_pptx ──
@@ -50,43 +542,25 @@ GROUP_LABEL = {"G1": "項目基本信息", "G2": "投資金額的潛在調整事
 
 
 # ── from render_review_table_pptx ──
-BLUE = RGBColor(0x00, 0x33, 0x8D)
-
-
-# ── from render_review_table_pptx ──
-LBLUE = RGBColor(0xD9, 0xE1, 0xF2)
-
-
-# ── from render_review_table_pptx ──
-GREY = RGBColor(0xE7, 0xE6, 0xE6)
-
-
-# ── from render_review_table_pptx ──
-WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-
-
-# ── from render_review_table_pptx ──
-RED = RGBColor(0xC0, 0x00, 0x00)
-
-
-# ── from render_review_table_pptx ──
-GROUP_FILL = {"G1": RGBColor(0x2E, 0x9B, 0xD6), "G2": RGBColor(0x9D, 0xC3, 0xE6),
-              "G3": RGBColor(0x1F, 0x38, 0x64)}
-
-
-# ── from render_review_table_pptx ──
-GROUP_TEXT = {"G1": WHITE, "G2": RGBColor(0x1F, 0x38, 0x64), "G3": WHITE}
-
-
-# ── from render_review_table_pptx ──
-ROWS_PER_SLIDE = 24
-
-
-# ── from render_review_table_pptx ──
 YEAR_TITLE = {
-    "報告年25": "MGM 2025年度投資計劃單個項目審查結果匯總表",
-    "報告年24": "MGM 2024年度投資計劃單個項目截至2025年末的審查結果匯總表",
-    "報告年23": "MGM 2023年度投資計劃單個項目截至2025年末的審查結果匯總表",
+    "報告年25": "{e} 2025年度投資計劃單個項目審查結果匯總表",
+    "報告年24": "{e} 2024年度投資計劃單個項目截至2025年末的審查結果匯總表",
+    "報告年23": "{e} 2023年度投資計劃單個項目截至2025年末的審查結果匯總表",
+}
+
+
+# ── from render_review_table_pptx ──
+SHORT = {
+    "項目序號": "項目\n序號", "項目名稱": "項目名稱",
+    "計劃投資金額": "計劃\n投資金額", "報告投資金額": "報告\n投資金額", "投資計劃完成率": "投資計劃\n完成率",
+    "一般支持性部門的人工成本": "一般支持\n人工成本", "其他日常營運支出調整": "其他日常\n營運調整",
+    "超出可計入範圍的內部資源支出": "超出可計入\n內部資源", "酒店客房改造支出": "酒店客房\n改造",
+    "不符合“吸引外國客源”定義的相關投資支出": "不符吸引\n外國客源",
+    "未完全實現投資目的的投資支出": "未完全\n實現目的",
+    "投資計劃獲批前發生且未被認可的投資支出": "獲批前\n未認可",
+    "潛在調整合計": "潛在調整\n合計", "調整後投資金額": "調整後\n投資金額",
+    "潛在調整後投資計劃完成率": "潛在調整後\n完成率",
+    "設施建設/資本性支出": "設施建設/\n資本性", "活動舉辦/營運性支出": "活動舉辦/\n營運性",
 }
 
 
@@ -125,25 +599,6 @@ def row_kind(seq: str) -> str:
 
 
 # ── from render_review_table_pptx ──
-def _set(cell, text, *, size=7, bold=False, align=PP_ALIGN.RIGHT, color=None, fill=None):
-    cell.margin_left = cell.margin_right = Emu(18000)
-    cell.margin_top = cell.margin_bottom = Emu(9000)
-    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-    if fill is not None:
-        cell.fill.solid(); cell.fill.fore_color.rgb = fill
-    tf = cell.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.alignment = align
-    r = p.add_run(); r.text = "" if text is None else str(text)
-    f = r.font
-    f.size = Pt(size); f.bold = bold
-    f.name = "微软雅黑"
-    if color is not None:
-        f.color.rgb = color
-
-
-# ── from render_review_table_pptx ──
 def col_group(c):
     if c in G1:
         return "G1"
@@ -153,84 +608,73 @@ def col_group(c):
 
 
 # ── from render_review_table_pptx ──
-def render_sheet(prs, sheet_name, df, cols):
-    n = len(df)
-    pages = [(i, min(i + ROWS_PER_SLIDE, n)) for i in range(0, n, ROWS_PER_SLIDE)] or [(0, 0)]
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    # 欄寬：項目序號窄、名闊、數字中
-    def cw(c):
-        if c == "項目序號":
-            return 0.62
-        if c == "項目名稱":
-            return 1.7
-        return 0.66
-    widths = [cw(c) for c in cols]
-    total_w = sum(widths)
-    left = 0.4
-    slide_w = prs.slide_width / 914400.0
-    scale = min(1.0, (slide_w - 0.8) / total_w)
-    widths = [w * scale for w in widths]
-
-    for pi, (a, b) in enumerate(pages):
-        slide = prs.slides.add_slide(blank)
-        # 標題
-        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(slide_w - 0.8), Inches(0.4))
-        _set_title(tb, f"{YEAR_TITLE.get(sheet_name, sheet_name)}（{pi+1}/{len(pages)}）")
-        sub = df.iloc[a:b]
-        nrow = 2 + len(sub)     # 2 header rows
-        ncol = len(cols)
-        gtab = slide.shapes.add_table(nrow, ncol, Inches(left), Inches(0.75),
-                                      Inches(sum(widths)), Inches(0.3 * nrow)).table
-        for ci, w in enumerate(widths):
-            gtab.columns[ci].width = Inches(w)
-        # header row0：group 合併（3 色）
-        ci = 0
-        while ci < ncol:
-            g = col_group(cols[ci])
-            cj = ci
-            while cj + 1 < ncol and col_group(cols[cj + 1]) == g:
-                cj += 1
-            if cj > ci:
-                gtab.cell(0, ci).merge(gtab.cell(0, cj))
-            _set(gtab.cell(0, ci), GROUP_LABEL[g], size=8, bold=True,
-                 align=PP_ALIGN.CENTER, color=GROUP_TEXT[g], fill=GROUP_FILL[g])
-            ci = cj + 1
-        # header row1：欄名（跟欄組色）
-        for ci, c in enumerate(cols):
-            g = col_group(c)
-            _set(gtab.cell(1, ci), c, size=6.5, bold=True, align=PP_ALIGN.CENTER,
-                 color=GROUP_TEXT[g], fill=GROUP_FILL[g])
-        # data rows
-        for ri, (_, row) in enumerate(sub.iterrows(), start=2):
-            kind = row_kind(row["項目序號"])
-            for ci, c in enumerate(cols):
-                v = row.get(c, "")
-                if c in TEXT_COLS:
-                    txt, al = ("" if v is None else str(v)), (PP_ALIGN.LEFT)
-                elif c in RATE_COLS:
-                    txt, al = fmt_pct(v), PP_ALIGN.RIGHT
-                else:
-                    txt, al = fmt_money(v), PP_ALIGN.RIGHT
-                fill = LBLUE if kind == "section" else (GREY if kind == "subtotal" else None)
-                bold = kind in ("section", "subtotal")
-                color = RED if (txt.startswith("(") ) else None
-                if kind == "section" and ci == 0:
-                    # section 標題橫跨全行
-                    gtab.cell(ri, 0).merge(gtab.cell(ri, ncol - 1))
-                    _set(gtab.cell(ri, 0), txt, size=7, bold=True, align=PP_ALIGN.LEFT, fill=LBLUE)
-                    break
-                _set(gtab.cell(ri, ci), txt, size=6.5, bold=bold,
-                     align=al, color=color, fill=fill)
-        print(f"    {sheet_name} 第 {pi+1}/{len(pages)} 頁：{b-a} 行 × {ncol} 欄")
+def _blocks(df, cols):
+    """df → 逐【範疇】block：[(kind, cells)]。kind = sec / data / subtot / tot。
+    scan 每個範疇有自己嘅小計、全份報告冇「續」→ 分頁時整個 block 唔拆。
+    ⚠ 範疇／小計標籤要擺【項目名稱】欄（闊），唔可以留喺「項目序號」窄欄 —— 否則 wrap 5 行撐爆表。"""
+    lab_c = cols.index("項目名稱") if "項目名稱" in cols else 0
+    out, cur = [], []
+    for _, row in df.iterrows():
+        seq = str(row["項目序號"])
+        kind = row_kind(seq)
+        if kind == "section":
+            if cur:
+                out.append(cur)
+            cells = [""] * len(cols); cells[lab_c] = seq
+            cur = [("sec", cells)]
+            continue
+        cells = [("" if row.get(c, "") is None else str(row.get(c, ""))) if c in TEXT_COLS
+                 else (fmt_pct(row.get(c, "")) if c in RATE_COLS else fmt_money(row.get(c, "")))
+                 for c in cols]
+        k = "tot" if seq.endswith("合計") else ("subtot" if kind == "subtotal" else "data")
+        if k != "data":                       # 小計／合計：標籤搬去項目名稱欄
+            cells[lab_c] = seq; cells[0] = ""
+        cur.append((k, cells))
+    if cur:
+        out.append(cur)
+    return out
 
 
 # ── from render_review_table_pptx ──
-def _set_title(tb, text):
-    tf = tb.text_frame; tf.word_wrap = True
-    p = tf.paragraphs[0]
-    r = p.add_run(); r.text = text
-    r.font.size = Pt(13); r.font.bold = True
-    r.font.color.rgb = BLUE; r.font.name = "微软雅黑"
+def render_sheet(prs, sheet_name, df, cols, *, ent_up="MGM", sec=3, crumb=None, page_cb=None):
+    """單個項目審查結果匯總表（對 scan slide 46-63）：navy 2 層表頭、逐範疇 block 唔拆頁、
+    按【累積高度】分頁（唔會超出版面）、表頂 caption bar、表底 資料來源／（下頁待續）。"""
+    ncol = len(cols)
+    W, H = size_of(prs)
+    tw = W - 2 * MARGIN
+    title = YEAR_TITLE.get(sheet_name, sheet_name).format(e=ent_up)
+    subs = [SHORT.get(c, c) for c in cols]
+    # 欄寬（相對）：序號窄、名闊、其餘等闊
+    widths = [0.45 if c == "項目序號" else (2.0 if c == "項目名稱" else 0.62) for c in cols]
+    wid = [w * tw / sum(widths) for w in widths]
+    # super header（3 大組）
+    supers, ci = [], 0
+    while ci < ncol:
+        g = col_group(cols[ci]); cj = ci
+        while cj + 1 < ncol and col_group(cols[cj + 1]) == g:
+            cj += 1
+        supers.append((GROUP_LABEL[g], ci, cj + 1)); ci = cj + 1
+    font = 5.8 if ncol > 16 else 6.3
+    yr = "20" + (sheet_name[-2:] if sheet_name[-2:].isdigit() else "25")
+    head = (f"下表匯總了我們在審查{ent_up} {yr}年度投資計劃各項目投資執行情況時，識別出的各項目"
+            f"投資支出涉及的潛在調整事項，以及相關的影響金額。")
+    probe = HEAD_Y + head_h(head, W)[0] + 0.10
+    avail = CONTENT_BOTTOM - probe - 0.24 - 0.17          # 減 caption bar
+    hh = header_h(supers, subs, wid, font - 0.5)
+    pages = fit_blocks(_blocks(df, cols), wid, font, avail, hh)
+    for pi, chunk in enumerate(pages):
+        suffix = f"（{pi+1}/{len(pages)}）"
+        slide = blank(prs)
+        breadcrumb(slide, W, sec, ent_up)
+        footer(slide, W, H, len(prs.slides._sldIdLst))
+        top = page_head(slide, W, (crumb or "其他信息  |  單個項目審查結果匯總") + suffix, head)
+        top = caption_bar(slide, MARGIN, top, tw, title + suffix)
+        draw_table(slide, MARGIN, top, tw, subs, chunk, widths, supers=supers,
+                     font=font, hfont=font - 0.5, left_cols=2,
+                     fill_h=CONTENT_BOTTOM - top - 0.24)
+        source_note(slide, W, note="註：金額單位為萬澳門元；括號表示調減。",
+                      more=(pi < len(pages) - 1))
+        print(f"    {sheet_name} 第 {pi+1}/{len(pages)} 頁：{len(chunk)} 行 × {ncol} 欄")
 
 
 # ── from build_narrative ──
@@ -1528,31 +1972,23 @@ except ImportError:
 
 
 # ── from make_report ──
-HDR = RGBColor(0x00, 0x33, 0x8D)
+HDR = NAVY
 
 
 # ── from make_report ──
-SEC = RGBColor(0xD9, 0xE1, 0xF2)
+SEC = SECFILL
 
 
 # ── from make_report ──
-SUB = RGBColor(0xE7, 0xE6, 0xE6)
+SUB = SUBTOT
 
 
 # ── from make_report ──
-TOT = RGBColor(0xBD, 0xD7, 0xEE)
+TOT = TOTAL
 
 
 # ── from make_report ──
-DARK = RGBColor(0x17, 0x17, 0x1C)
-
-
-# ── from make_report ──
-LIGHT = RGBColor(0xFF, 0xFF, 0xFF)
-
-
-# ── from make_report ──
-CYAN = RGBColor(0x00, 0xB0, 0xD8)
+LIGHT = WHITE
 
 
 # ── from make_report ──
@@ -1725,47 +2161,33 @@ def _dump_pptx_text(prs, entity):
 
 
 # ── from make_report ──
-SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
-            "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
+ENT_UP = "MGM"
+
+
+# ── from make_report ──
+def _page(prs, section_idx=0, crumb=None, headline=None):
+    """開一版內容頁 = breadcrumb + footer(+頁碼) + 灰標題 + navy 導語。
+    回 (slide, W, H, top_y)：top_y = 內容可以由邊開始。"""
+    slide = blank(prs)
+    W, H = size_of(prs)
+    breadcrumb(slide, W, section_idx, ENT_UP)
+    footer(slide, W, H, len(prs.slides._sldIdLst))
+    top = page_head(slide, W, crumb, headline) if crumb else 0.5
+    return slide, W, H, top
 
 
 # ── from make_report ──
 def _furniture(prs, slide, section_idx=0):
-    """報告版面 furniture：頂 nav tabs（當前 section 加粗 navy）+ 底 KPMG copyright + 初稿 + 頁碼。"""
-    slide_w = prs.slide_width / 914400.0
-    slide_h = prs.slide_height / 914400.0
-    grey = RGBColor(0x8C, 0x8C, 0x8C)
-    x = 0.5
-    for i, s in enumerate(SECTIONS):
-        w = len(s) * 0.088 + 0.15
-        tb = slide.shapes.add_textbox(Inches(x), Inches(0.04), Inches(w), Inches(0.2))
-        r = tb.text_frame.paragraphs[0].add_run(); r.text = s
-        r.font.size = Pt(6.5); r.font.name = "微软雅黑"
-        r.font.bold = (i == section_idx)
-        r.font.color.rgb = HDR if i == section_idx else grey
-        x += w + 0.1
-    ft = slide.shapes.add_textbox(Inches(0.5), Inches(slide_h - 0.34), Inches(slide_w - 1.6), Inches(0.28))
-    fr = ft.text_frame.paragraphs[0].add_run()
-    fr.text = "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。"
-    fr.font.size = Pt(6); fr.font.color.rgb = grey; fr.font.name = "微软雅黑"
-    pg = slide.shapes.add_textbox(Inches(slide_w - 1.05), Inches(slide_h - 0.34), Inches(0.9), Inches(0.28))
-    pr = pg.text_frame.paragraphs[0].add_run()
-    pr.text = f"初稿　{len(prs.slides._sldIdLst)}"
-    pr.font.size = Pt(8); pr.font.bold = True; pr.font.color.rgb = HDR; pr.font.name = "微软雅黑"
+    """（保留舊 API）頂 nav tabs + 底 KPMG copyright + 初稿 + 頁碼。"""
+    W, H = size_of(prs)
+    breadcrumb(slide, W, section_idx, ENT_UP)
+    footer(slide, W, H, len(prs.slides._sldIdLst))
 
 
 # ── from make_report ──
 def _dark_slide(prs):
-    """新增一版深黑底（封面/分隔共用），回 (slide, w, h)。"""
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    slide = prs.slides.add_slide(blank)
-    rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
-    rect.fill.solid(); rect.fill.fore_color.rgb = DARK; rect.line.fill.background()
-    kb = slide.shapes.add_textbox(Inches(0.55), Inches(0.35), Inches(2.2), Inches(0.4))
-    kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
-    kr.font.size = Pt(20); kr.font.bold = True; kr.font.italic = True
-    kr.font.color.rgb = LIGHT; kr.font.name = "Arial"
-    return slide, prs.slide_width / 914400.0, prs.slide_height / 914400.0
+    """新增一版深底（封面/分隔共用），回 (slide, w, h)。"""
+    return dark_slide(prs)
 
 
 # ── from make_report ──
@@ -1870,148 +2292,189 @@ def _find(dirp, entity, ext, prefer=None):
 
 
 # ── from make_report ──
-def _draw_table(slide, df, x, y, max_w, font=7):
-    """喺 slide (x,y) 畫 navy 表（單 chunk，caller 自行分頁）。max_w=可用闊(吋)。"""
-    cols = list(df.columns)
-    grouped = any("·" in c for c in cols)
-    ncol = len(cols)
-    hrows = 2 if grouped else 1
-    widths = [1.9 if c in ("範疇", "項目名稱", "潛在調整事項") else
-              (2.6 if c == "主要涉及項目" else 0.92) for c in cols]
-    scale = min(1.0, max_w / sum(widths))
-    widths = [w * scale for w in widths]
+def _cell_txt(c, v):
+    """跟欄名格式化：率→%，數字→千分位（負數括號），其餘原文。"""
+    if "率" in str(c):
+        return fmt_pct(v)
+    if _is_num(v):
+        return fmt_money(v)
+    return "" if v is None else str(v)
 
-    def hdr(cell, text, align=PP_ALIGN.CENTER):
-        _set(cell, text, size=font, bold=True, align=align, color=WHITE, fill=HDR)
-    t = slide.shapes.add_table(hrows + len(df), ncol, Inches(x), Inches(y),
-                               Inches(sum(widths)), Inches(0.3 * (hrows + len(df)))).table
-    for ci, w in enumerate(widths):
-        t.columns[ci].width = Inches(w)
+
+# ── from make_report ──
+def _df_table(df, first_label=None):
+    """DataFrame → (subs, rows, widths, supers)：認 `大組·細名` 做兩層表頭，
+    第一欄空 = 範疇 section 行，尾『小計/合計/總計』= shaded。
+    第一欄表頭：範疇表用「（萬澳門元）」（跟 scan 角位放單位），其餘用返欄名。"""
+    cols = list(df.columns)
+    if first_label is None:
+        first_label = "（萬澳門元）" if cols[0] == "範疇" else cols[0]
+    grouped = any("·" in c for c in cols)
+    widths = [2.0 if c in ("範疇", "項目名稱", "潛在調整事項") else
+              (2.8 if c == "主要涉及項目" else 0.95) for c in cols]
+    subs = [first_label] + [(c.split("·")[1] if "·" in c else c) for c in cols[1:]]
+    supers = None
     if grouped:
-        groups = [c.split("·")[0] if "·" in c else c for c in cols]
-        t.cell(0, 0).merge(t.cell(1, 0)); hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
-        ci = 1
-        while ci < ncol:
-            gg = groups[ci]; cj = ci
-            while cj + 1 < ncol and groups[cj + 1] == gg:
+        groups = [""] + [(c.split("·")[0] if "·" in c else "") for c in cols[1:]]
+        supers, ci = [], 1
+        while ci < len(cols):
+            cj = ci
+            while cj + 1 < len(cols) and groups[cj + 1] == groups[ci]:
                 cj += 1
-            if cj > ci:
-                t.cell(0, ci).merge(t.cell(0, cj))
-            hdr(t.cell(0, ci), gg)
-            ci = cj + 1
-        for ci, c in enumerate(cols[1:], start=1):
-            hdr(t.cell(1, ci), c.split("·")[1] if "·" in c else c)
-    else:
-        hdr(t.cell(0, 0), "萬澳門元", PP_ALIGN.LEFT)
-        for ci, c in enumerate(cols[1:], start=1):
-            hdr(t.cell(0, ci), c)
-    for ri, (_, row) in enumerate(df.iterrows(), start=hrows):
+            supers.append((groups[ci], ci, cj + 1)); ci = cj + 1
+        supers.insert(0, ("", 0, 1))
+    rows = []
+    for _, row in df.iterrows():
         first = str(row[cols[0]]).strip()
         if all(str(row[c]).strip() == "" for c in cols[1:]):
-            for ci in range(ncol):
-                _set(t.cell(ri, ci), first if ci == 0 else "", size=font, bold=True,
-                       align=PP_ALIGN.LEFT, fill=SEC)
-            continue
-        is_tot = first.endswith("總計")
-        is_sub = is_tot or first.endswith(("小計", "合計"))
-        fill = TOT if is_tot else (SUB if is_sub else None)
-        for ci, c in enumerate(cols):
-            v = row[c]
-            if ci == 0:
-                txt, al = first, PP_ALIGN.LEFT
-            elif "率" in c:
-                txt, al = fmt_pct(v), PP_ALIGN.RIGHT
-            elif _is_num(v):
-                txt, al = fmt_money(v), PP_ALIGN.RIGHT
-            else:
-                txt, al = ("" if v is None else str(v)), PP_ALIGN.LEFT
-            _set(t.cell(ri, ci), txt, size=font, bold=is_sub, align=al,
-                   color=(RED if txt.startswith("(") else None), fill=fill)
+            rows.append(("sec", [first] + [""] * (len(cols) - 1))); continue
+        kind = ("tot" if first.endswith("總計") else
+                "subtot" if first.endswith(("小計", "合計")) else "data")
+        rows.append((kind, [first] + [_cell_txt(c, row[c]) for c in cols[1:]]))
+    return subs, rows, widths, supers
+
+
+# ── from make_report ──
+def _draw_table(slide, df, x, y, max_w, font=6.5):
+    """喺 slide (x,y) 畫 navy 表（單 chunk，caller 自行分頁）。max_w=可用闊(吋)。"""
+    subs, rows, widths, supers = _df_table(df)
+    return draw_table(slide, x, y, max_w, subs, rows, widths, supers=supers,
+                        font=font, hfont=font - 0.5)
 
 
 # ── from make_report ──
 def _bullets_into(box, bullets, size=8):
-    tf = box.text_frame; tf.word_wrap = True
-    for i, (head, body) in enumerate(bullets):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.space_after = Pt(6)
-        rm = p.add_run(); rm.text = "■ "; rm.font.size = Pt(size); rm.font.color.rgb = HDR
-        if head:
-            rh = p.add_run(); rh.text = head
-            rh.font.bold = True; rh.font.size = Pt(size); rh.font.color.rgb = HDR
-            rh.font.name = "微软雅黑"
-        rt = p.add_run(); rt.text = body
-        rt.font.size = Pt(size); rt.font.name = "微软雅黑"
+    """（保留舊 API）scan 敘述格式：navy 粗體小標題 + body 段落。"""
+    prose(box, bullets, head_size=size - 1, body_size=size - 1.5)
 
 
 # ── from make_report ──
-def render_overview_page(prs, subtitle, headline, table_df, bullets):
-    """報告概述式 2 欄版：頂 subtitle + navy headline，左 表，右 敘述。"""
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    slide_w = prs.slide_width / 914400.0
-    slide = prs.slides.add_slide(blank)
-    _furniture(prs, slide, 0)
-    st = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.24))
-    sp = st.text_frame.paragraphs[0]; sr = sp.add_run(); sr.text = subtitle
-    sr.font.size = Pt(9); sr.font.color.rgb = RGBColor(0x60, 0x60, 0x60); sr.font.name = "微软雅黑"
-    if headline:
-        hb = slide.shapes.add_textbox(Inches(0.4), Inches(0.56), Inches(slide_w - 0.8), Inches(1.0))
-        htf = hb.text_frame; htf.word_wrap = True
-        hr = htf.paragraphs[0].add_run(); hr.text = headline
-        hr.font.bold = True; hr.font.size = Pt(11); hr.font.color.rgb = HDR; hr.font.name = "微软雅黑"
-    top = 1.5 if headline else 0.6
-    left_w = 5.5
+def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, table_name=None,
+                         note=None):
+    """報告概述式 2 欄版（對 scan slide 10/15）：crumb + navy 導語，左 表，右 敘述。"""
+    slide, W, H, top = _page(prs, sec, crumb, headline)
+    left_w = W * 0.60
+    tbl_bot = top
     if table_df is not None and not table_df.empty:
-        _draw_table(slide, table_df, 0.4, top, left_w, font=6.5)
-    rx = 0.4 + left_w + 0.2
-    box = slide.shapes.add_textbox(Inches(rx), Inches(top), Inches(slide_w - rx - 0.3), Inches(6.6 - top))
-    _bullets_into(box, bullets, size=8)
+        if table_name:
+            top = caption_bar(slide, MARGIN, top, left_w, table_name)
+        subs, rows, widths, supers = _df_table(table_df)
+        wid = [w * left_w / sum(widths) for w in widths]
+        avail = CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
+        hh = header_h(supers, subs, wid, 5.5)
+        font = 6.0
+        while font > 4.2 and sum(row_h(c, wid, font) for _, c in rows) > avail - hh:
+            font -= 0.25
+        tbl_bot, _ = draw_table(slide, MARGIN, top, left_w, subs, rows, widths,
+                                  supers=supers, font=font, hfont=max(4.5, font - 0.5),
+                                  fill_h=avail)
+    if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
+        put(slide, MARGIN, min(tbl_bot + 0.06, CONTENT_BOTTOM - 0.30), left_w, 0.3,
+              note, size=5, italic=True, color=GREY)
+    rx = MARGIN + left_w + 0.22
+    prose_box(slide, rx, top - 0.02, W - rx - MARGIN, CONTENT_BOTTOM - top, bullets)
+    source_note(slide, W)
 
 
 # ── from make_report ──
-def render_generic(prs, title, df):
-    """單張表（範疇/項目 + 數字欄；·=2-row group header），自行分頁。"""
-    n = len(df); ROWS = 28
-    pages = [(i, min(i + ROWS, n)) for i in range(0, n, ROWS)] or [(0, 0)]
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    slide_w = prs.slide_width / 914400.0
-    for pi, (a, b) in enumerate(pages):
-        slide = prs.slides.add_slide(blank)
-        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
-        _set_title(tb, f"{title}（{pi+1}/{len(pages)}）" if len(pages) > 1 else title)
-        _draw_table(slide, df.iloc[a:b], 0.4, 0.72, slide_w - 0.8, font=7)
-
-
-# ── from make_report ──
-def _finding_body(box, find, mgmt, grey):
-    """body 文字框：KPMG分析發現 / 管理層解釋 兩段，label 加粗（跟原報告用字，唔加報告冇嘅 label 欄）。"""
-    tf = box.text_frame; tf.word_wrap = True
-    tf.margin_left = tf.margin_right = Emu(45000)
-    tf.margin_top = tf.margin_bottom = Emu(27000)
-    first = True
-    for label, text, col in [("KPMG分析發現", find, None), ("管理層解釋", mgmt, grey)]:
-        if not text:
+def _total_line(df):
+    """由表自己嘅『總計』行砌一句機械導語（避免「淨得個表冇文字」）。"""
+    cols = list(df.columns)
+    tot = df[df[cols[0]].astype(str).str.strip().str.endswith("總計")]
+    if tot.empty:
+        return ""
+    r = tot.iloc[0]
+    parts = []
+    for c in cols[1:]:
+        v = r[c]
+        if not _is_num(v) or float(v) == 0:
             continue
-        p = tf.paragraphs[0] if first else tf.add_paragraph()
-        first = False
-        rl = p.add_run(); rl.text = label + "："
-        rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "微软雅黑"
-        rl.font.color.rgb = HDR if col is None else col
-        rt = p.add_run(); rt.text = str(text)[:300]
-        rt.font.size = Pt(8); rt.font.name = "微软雅黑"
-        if col is not None:
-            rt.font.color.rgb = col
+        lab = c.replace("·", "－")
+        parts.append(f"{lab} {_cell_txt(c, v)}")
+    return "；".join(parts[:6]) + "（單位：萬澳門元，除完成率外）。" if parts else ""
+
+
+# ── from make_report ──
+def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=None):
+    """單張表（範疇/項目 + 數字欄；·=2-row group header）。逐頁：crumb + 導語 + caption bar
+    + 表 + 資料來源，按【累積高度】分頁（唔會超出版面）。"""
+    if df is None or df.empty:
+        return
+    subs, rows, widths, supers = _df_table(df)
+    W, H = size_of(prs)
+    tw = W - 2 * MARGIN
+    wid = [w * tw / sum(widths) for w in widths]
+    head = headline or _total_line(df)
+    crumb = crumb or title
+    # 先用一版試高度（導語行數會食掉可用高）
+    probe_top = HEAD_Y + head_h(head, W)[0] + 0.10
+    avail = CONTENT_BOTTOM - probe_top - 0.24
+    hh = header_h(supers, subs, wid, 5.5)
+    pages = fit_rows(rows, wid, 6.5, avail, hh)
+    for pi, chunk in enumerate(pages):
+        suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
+        slide, W, H, top = _page(prs, sec, crumb + suffix, head)
+        top = caption_bar(slide, MARGIN, top, tw, title + suffix)
+        draw_table(slide, MARGIN, top, tw, subs, chunk, widths, supers=supers,
+                     font=6.5, hfont=6, fill_h=CONTENT_BOTTOM - top - 0.28)
+        source_note(slide, W, note=note, more=(pi < len(pages) - 1))
+
+
+# ── from make_report ──
+def _cards(prs, sec, crumb, headline, recs, *, note=None):
+    """逐個項目一張 card（navy 標題條 + 敘述段），按【累積高度】排版分頁 → 填滿版面唔留大白位。
+    recs = [(bar_text, [(label, body)])]。"""
+    W, H = size_of(prs)
+    cw = W - 2 * MARGIN
+    probe = HEAD_Y + head_h(headline, W)[0] + 0.10
+    avail = CONTENT_BOTTOM - probe
+
+    def card_h(items):
+        return 0.24 + est_prose_h(items, cw - 0.12, head_size=7.5, body_size=7.5, gap=3) + 0.14
+    pages, cur, used = [], [], 0.0
+    for rec in recs:
+        h = card_h(rec[1])
+        if cur and used + h > avail:
+            pages.append(cur); cur, used = [], 0.0
+        cur.append(rec); used += min(h, avail)
+    if cur:
+        pages.append(cur)
+    for pi, page in enumerate(pages):
+        suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
+        slide, W, H, y = _page(prs, sec, crumb + suffix, headline)
+        for bar_text, items in page:
+            bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(MARGIN), Inches(y),
+                                         Inches(cw), Inches(0.22))
+            bar.fill.solid(); bar.fill.fore_color.rgb = HDR
+            bar.line.fill.background(); bar.shadow.inherit = False
+            btf = bar.text_frame; btf.word_wrap = True
+            btf.margin_left = Emu(54000); btf.margin_top = btf.margin_bottom = Emu(0)
+            btf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            br = btf.paragraphs[0].add_run(); br.text = bar_text
+            br.font.bold = True; br.font.size = Pt(8)
+            br.font.color.rgb = LIGHT; br.font.name = "微软雅黑"
+            bh = min(est_prose_h(items, cw - 0.12, head_size=7.5, body_size=7.5, gap=3),
+                     CONTENT_BOTTOM - y - 0.26)
+            prose_box(slide, MARGIN + 0.06, y + 0.26, cw - 0.12, bh, items,
+                        head_size=7.5, body_size=7.5, gap=3)
+            y += 0.24 + bh + 0.14
+        source_note(slide, W, note=note, more=(pi < len(pages) - 1))
+
+
+# ── from make_report ──
+def _finding_body(box, find, mgmt, grey=None):
+    """（保留舊 API）KPMG分析發現 / 管理層解釋 兩段。"""
+    prose(box, [(l + "：", t) for l, t in
+                  [("KPMG分析發現", find), ("管理層解釋", mgmt)] if t],
+            head_size=7.5, body_size=7.5, gap=3)
 
 
 # ── from make_report ──
 def render_findings(prs, ent_up, df, narr):
-    """③ 主要發現（slide 28-40）：每 canonical 調整類型 → 受影響項目 card
-    = navy 標題條(項目+金額) + body(KPMG分析發現/管理層解釋 清單抄字)。每頁 2 個項目。"""
+    """③ 主要發現：每 canonical 調整類型 → 受影響項目 card
+    = navy 標題條(項目+金額) + body(KPMG分析發現/管理層解釋 清單抄字)。"""
     d = df.copy()
     d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    slide_w = prs.slide_width / 914400.0
-    grey = RGBColor(0x40, 0x40, 0x40)
     for adj in ADJ7:
         sub = d[(d["_adj"] == adj) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
@@ -2022,31 +2485,18 @@ def render_findings(prs, ent_up, df, narr):
         recs = []
         for _, p in projs.iterrows():
             nr = nlook(narr, p["ng_scope"], p["dicj code"])
-            recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"], p["調整"],
-                         nr.get("KPMG分析發現", ""), nr.get("管理層解釋", "")))
-        pages = [recs[i:i + 2] for i in range(0, len(recs), 2)]
-        for pi, page in enumerate(pages):
-            slide = prs.slides.add_slide(blank)
-            tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
-            _set_title(tb, f"{ent_up} 本年度主要發現 — {adj}"
-                         + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
-            y = 0.8
-            for code, name, rep, adjv, find, mgmt in page:
-                # navy 標題條（項目 + 金額）
-                bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(y),
-                                             Inches(slide_w - 0.8), Inches(0.3))
-                bar.fill.solid(); bar.fill.fore_color.rgb = HDR; bar.line.fill.background()
-                btf = bar.text_frame; btf.word_wrap = True
-                btf.margin_left = Emu(54000); btf.margin_top = btf.margin_bottom = Emu(9000)
-                br = btf.paragraphs[0].add_run()
-                br.text = f"{code}　{name[:32]}　│　報告 {fmt_money(rep)}／潛在調整 {fmt_money(adjv)} 萬澳門元"
-                br.font.bold = True; br.font.size = Pt(9)
-                br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "微软雅黑"
-                # body
-                body = slide.shapes.add_textbox(Inches(0.4), Inches(y + 0.32),
-                                                Inches(slide_w - 0.8), Inches(2.5))
-                _finding_body(body, find, mgmt, grey)
-                y += 3.0
+            items = [(l + "：", t) for l, t in
+                     [("KPMG分析發現", nr.get("KPMG分析發現", "")),
+                      ("管理層解釋", nr.get("管理層解釋", "")),
+                      ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
+            if not items:
+                items = [("", "清單未提供本項目之分析發現，待項目組補充。")]
+            recs.append((f"{p['dicj code']}　{str(p['名稱'])[:34]}　│　報告 "
+                         f"{fmt_money(p['報告'])}／潛在調整 {fmt_money(p['調整'])} 萬澳門元", items))
+        tot = sub["調整_萬"].sum()
+        head = (f"{ent_up} 報告的投資金額中，屬「{adj}」之潛在調減金額合計約{abs(tot):,.0f}萬澳門元，"
+                f"涉及{len(recs)}個投資項目，逐項說明如下：")
+        _cards(prs, 2, f"本年度審查工作的主要發現  |  {adj}", head, recs)
 
 
 # ── from make_report ──
@@ -2062,80 +2512,34 @@ def render_site_visits(prs, ent_up, df, narr, threshold=2000):
         return
     g["_s"] = (g["ng_scope"] != "gaming").astype(int)
     g = g.sort_values(["_s", "報告"], ascending=[True, False])
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    slide_w = prs.slide_width / 914400.0
-    grey = RGBColor(0x40, 0x40, 0x40)
     recs = []
     for _, p in g.iterrows():
         nr = nlook(narr, p["ng_scope"], p["dicj code"])
-        recs.append((str(p["dicj code"]), str(p["名稱"]), p["報告"],
-                     nr.get("實施地點", ""), nr.get("實際投資內容", "")))
-    pages = [recs[i:i + 2] for i in range(0, len(recs), 2)]
-    for pi, page in enumerate(pages):
-        slide = prs.slides.add_slide(blank)
-        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.22), Inches(slide_w - 0.8), Inches(0.4))
-        _set_title(tb, f"{ent_up} 附件二 部分項目的現場走訪情況"
-                     + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
-        y = 0.8
-        for code, name, amt, loc, desc in page:
-            bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(y),
-                                         Inches(slide_w - 0.8), Inches(0.3))
-            bar.fill.solid(); bar.fill.fore_color.rgb = HDR; bar.line.fill.background()
-            btf = bar.text_frame; btf.word_wrap = True
-            btf.margin_left = Emu(54000); btf.margin_top = btf.margin_bottom = Emu(9000)
-            br = btf.paragraphs[0].add_run()
-            br.text = f"{code}　{name[:30]}　│　設施建設（資本性支出）{fmt_money(amt)} 萬澳門元"
-            br.font.bold = True; br.font.size = Pt(9)
-            br.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); br.font.name = "微软雅黑"
-            body = slide.shapes.add_textbox(Inches(0.4), Inches(y + 0.32), Inches(slide_w - 0.8), Inches(2.5))
-            tf = body.text_frame; tf.word_wrap = True
-            tf.margin_left = tf.margin_right = Emu(45000)
-            first = True
-            for label, text, col in [("地點", loc, HDR), ("現場走訪概述", desc, None),
-                                     ("現場走訪圖片", "〔待插入〕", grey)]:
-                if label != "現場走訪圖片" and not text:
-                    continue
-                p0 = tf.paragraphs[0] if first else tf.add_paragraph()
-                first = False
-                rl = p0.add_run(); rl.text = label + "："
-                rl.font.bold = True; rl.font.size = Pt(8); rl.font.name = "微软雅黑"
-                rl.font.color.rgb = HDR if col is None else col
-                rt = p0.add_run(); rt.text = str(text)[:300]
-                rt.font.size = Pt(8); rt.font.name = "微软雅黑"
-                if col is not None and label != "地點":
-                    rt.font.color.rgb = col
-            y += 3.0
+        items = [(l + "：", t) for l, t in
+                 [("實施地點", nr.get("實施地點", "")),
+                  ("現場走訪概述", nr.get("實際投資內容", "")),
+                  ("現場走訪圖片", "〔待插入〕")] if t]
+        recs.append((f"{p['dicj code']}　{str(p['名稱'])[:32]}　│　設施建設（資本性支出）"
+                     f"{fmt_money(p['報告'])} 萬澳門元", items))
+    head = (f"我們就{ent_up}報告投資金額中設施建設（資本性支出）達{threshold:,.0f}萬澳門元或以上之"
+            f"{len(recs)}個投資項目進行了現場走訪，走訪情況如下：")
+    _cards(prs, 5, "附件  |  部分項目的現場走訪情況", head, recs,
+           note="資料來源：現場走訪記錄、管理層提供之項目資料，畢馬威分析")
 
 
 # ── from make_report ──
-def _prose_slide(prs, title, bullets, headline=None):
-    """一版敘述（navy 標題 +（可選）headline 粗體導語 + ■ bullet；bullet=(粗體引子, 內文)）。"""
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    slide_w = prs.slide_width / 914400.0
-    slide = prs.slides.add_slide(blank)
-    _furniture(prs, slide, 0)
-    tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.4))
-    _set_title(tb, title)
-    box = slide.shapes.add_textbox(Inches(0.5), Inches(0.95), Inches(slide_w - 1.0), Inches(5.6))
-    tf = box.text_frame; tf.word_wrap = True
-    started = False
-    if headline:
-        p = tf.paragraphs[0]; p.space_after = Pt(10)
-        r = p.add_run(); r.text = headline
-        r.font.bold = True; r.font.size = Pt(11); r.font.color.rgb = HDR
-        r.font.name = "微软雅黑"
-        started = True
-    for head, body in bullets:
-        p = tf.add_paragraph() if started else tf.paragraphs[0]
-        started = True
-        p.space_after = Pt(8)
-        rm = p.add_run(); rm.text = "■ "; rm.font.size = Pt(10); rm.font.color.rgb = HDR
-        if head:
-            rh = p.add_run(); rh.text = head
-            rh.font.bold = True; rh.font.size = Pt(10); rh.font.color.rgb = HDR
-            rh.font.name = "微软雅黑"
-        rt = p.add_run(); rt.text = body
-        rt.font.size = Pt(10); rt.font.name = "微软雅黑"
+def _prose_slide(prs, title, bullets, headline=None, *, sec=0):
+    """一版敘述（crumb + navy 導語 + 段落），按估算高度自動分頁。"""
+    W, H = size_of(prs)
+    cw = W - 2 * MARGIN
+    probe = HEAD_Y + head_h(headline, W)[0] + 0.10
+    pages = fit_prose(bullets, cw, CONTENT_BOTTOM - probe, head_size=8, body_size=8)
+    for pi, page in enumerate(pages):
+        suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
+        slide, W, H, top = _page(prs, sec, title + suffix, headline)
+        prose_box(slide, MARGIN, top, cw, CONTENT_BOTTOM - top, page,
+                    head_size=8, body_size=8, gap=7)
+        source_note(slide, W, more=(pi < len(pages) - 1))
 
 
 # ── from make_report ──
@@ -2188,6 +2592,25 @@ def _pct(v):
 
 
 # ── from make_report ──
+def _bucket_headline(ent_up, bucket, ov):
+    """②期後概覽導語（由表自己嘅總計行計，自洽）。"""
+    tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+    if tot.empty:
+        return ""
+    r = tot.iloc[0]
+
+    def n(c):
+        v = r.get(c)
+        return float(v) if isinstance(v, (int, float)) and not pd.isna(v) else 0.0
+    rep, a, aft = n("報告投資金額"), n("潛在調整金額"), n("潛在調整後投資金額")
+    yr = bucket[:4]
+    return (f"{ent_up}在2025年度執行報告中申報的「因發生期後事項需作後續調整之{yr}年度博彩／非博彩項目」"
+            f"投資金額為{rep:,.0f}萬澳門元。本次審查工作識別潛在調減金額約{abs(a):,.0f}萬澳門元，"
+            f"經潛在調減後的{yr}年度計劃投資項目在2025年的投資金額約{aft:,.0f}萬澳門元"
+            f"（涉及{int(n('項目數量'))}個投資項目）。")
+
+
+# ── from make_report ──
 def _rate_of(df, name, col):
     r = df[df["範疇"] == name]
     if not len(r) or col not in df.columns:
@@ -2207,31 +2630,36 @@ def _prose_paginated(prs, title, bullets, per):
 
 
 # ── from make_report ──
-def _prose_2col(prs, title, bullets, per=12, subtitle=None):
-    """報告式 2 欄敘述（每頁 per 個 bullet，左右各半）。subtitle=標題下灰色小註。"""
+def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=None):
+    """報告式 2 欄敘述（對 scan slide 16-17：左右兩欄，每欄 navy 小標題 + body）。
+    每頁裝幾多由【估算高度】決定，唔會爆版。"""
     if not bullets:
         return
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    slide_w = prs.slide_width / 914400.0
-    colw = (slide_w - 1.0) / 2 - 0.1
-    top = 0.95 if subtitle else 0.85
-    pages = [bullets[i:i + per] for i in range(0, len(bullets), per)]
-    for pi, page in enumerate(pages):
-        slide = prs.slides.add_slide(blank)
-        _furniture(prs, slide, 0)
-        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.3), Inches(slide_w - 0.8), Inches(0.4))
-        _set_title(tb, title + (f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""))
+    W, H = size_of(prs)
+    colw = (W - 2 * MARGIN - 0.24) / 2
+    probe = HEAD_Y + head_h(headline, W)[0] + 0.10
+    avail = CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
+    half_pages = fit_prose(bullets, colw, avail * 2, head_size=7.5, body_size=7)
+    for pi, page in enumerate(half_pages):
+        suffix = f"（{pi+1}/{len(half_pages)}）" if len(half_pages) > 1 else ""
+        slide, W, H, top = _page(prs, sec, title + suffix, headline)
         if subtitle:
-            sb = slide.shapes.add_textbox(Inches(0.4), Inches(0.68), Inches(slide_w - 0.8), Inches(0.24))
-            sr = sb.text_frame.paragraphs[0].add_run(); sr.text = subtitle
-            sr.font.size = Pt(8); sr.font.italic = True
-            sr.font.color.rgb = RGBColor(0x70, 0x70, 0x70); sr.font.name = "微软雅黑"
-        half = (len(page) + 1) // 2
-        lb = slide.shapes.add_textbox(Inches(0.4), Inches(top), Inches(colw), Inches(6.0 - top + 0.85))
-        _bullets_into(lb, page[:half], size=8)
-        if page[half:]:
-            rb = slide.shapes.add_textbox(Inches(0.4 + colw + 0.2), Inches(top), Inches(colw), Inches(6.0 - top + 0.85))
-            _bullets_into(rb, page[half:], size=8)
+            put(slide, MARGIN, top, W - 2 * MARGIN, 0.18, subtitle, size=6.5,
+                  italic=True, color=GREY)
+            top += 0.20
+        # 逐個 bullet 累積高度，夠一欄就轉去右欄
+        cut, used, lim = len(page), 0.0, CONTENT_BOTTOM - top
+        for i, it in enumerate(page):
+            ih = est_prose_h([it], colw, head_size=7.5, body_size=7)
+            if used + ih > lim:
+                cut = i; break
+            used += ih
+        cut = max(1, cut)
+        prose_box(slide, MARGIN, top, colw, lim, page[:cut], head_size=7.5, body_size=7)
+        if page[cut:]:
+            prose_box(slide, MARGIN + colw + 0.24, top, colw, lim, page[cut:],
+                        head_size=7.5, body_size=7)
+        source_note(slide, W, more=(pi < len(half_pages) - 1))
 
 
 # ── from make_report ──
@@ -2269,7 +2697,16 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
                 else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
         bullets.append((f"{sub}：", body))
-    _prose_2col(prs, f"{ent_up} 按範疇的項目概況", bullets, 12,
+    hi = "—"
+    if "投資計劃完成率" in cats.columns:
+        top = cats[cats["投資計劃完成率"].apply(
+            lambda v: isinstance(v, (int, float)) and not pd.isna(v) and v >= 1.0)]
+        hi = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in
+                      top.sort_values("投資計劃完成率", ascending=False).head(4).iterrows()) or "—"
+    _prose_2col(prs, f"2025年度投資計劃執行情況概述  |  {ent_up} 2025年度投資項目的整體執行概況",
+                bullets, 12, sec=0,
+                headline=(f"{ent_up}的2025年度計劃投資項目涵蓋博彩及非博彩範疇，逐個範疇的投資執行"
+                          f"情況如下；報告投資金額完成率較高的範疇包括{hi}。"),
                 subtitle="若無特別說明，以下為承批公司2025年度投資執行報告的信息")
 
 
@@ -2365,7 +2802,8 @@ def main():
         print(f"✗ 揾唔到 feed {feed}（root 應有 tableau_combined_25.csv）"); return
     qingdan = _find("data/投資項目清單", entity, ".xlsx")
     template = _find("data/reports", entity, ".pptx", prefer=["2025"])
-    ent_up = entity.upper()
+    global ENT_UP
+    ent_up = ENT_UP = entity.upper()
     print(f"entity={ent_up}  feed={feed.name}  清單={qingdan.name if qingdan else '(冇)'}  "
           f"template={template.name if template else '(冇→用 13.33x7.5)'}")
 
@@ -2410,15 +2848,17 @@ def main():
         if template:
             prs.slide_width, prs.slide_height = Presentation(str(template)).slide_width, Presentation(str(template)).slide_height
         else:
-            prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-        print("    無 template → fallback 手砌 formatting")
+            prs.slide_width, prs.slide_height = Inches(SLIDE_W), Inches(SLIDE_H)
+        print(f"    無 template → fallback 手砌 formatting（{prs.slide_width/914400:.2f}x"
+              f"{prs.slide_height/914400:.2f}in）")
 
     sdf = _load(feed, entity)     # 於2025發生 slice（概述 + 金額匯總 共用）
 
     render_cover(prs, entity)       # 封面（報告 p1）
 
     # ① 2025年度投資計劃執行情況概述（報告 slide 8-18）
-    divider(prs, "2025年度投資計劃執行情況概述", "1", [
+    S1 = "2025年度投資計劃執行情況概述"
+    divider(prs, S1, "1", [
         ("1.1  股權架構簡圖及發生投資支出的主體公司", ""),
         ("1.2  2025年度計劃的整體投資支出概況", ""),
         ("1.3  2025年度投資項目的整體執行概況", ""),
@@ -2426,24 +2866,31 @@ def main():
     ])
     ov = overview_by_bucket(sdf, "2025年度投資計劃", plan, cat)
     adj = adjustment_bridge(sdf)
+    NOTE_RATE = ("註：投資計劃完成率 ＝ 報告投資金額 ／ 獲批的計劃投資金額；潛在調整後完成率 ＝ "
+                 "潛在調整後投資金額 ／ 獲批的計劃投資金額。金額單位為萬澳門元。")
     if not ov.empty:      # slide 10-11：表左 + headline/執行敘述右（報告 2 欄式）
         hl, hlb = _headline(ent_up, ov, sdf, plan)
         exb = _exec_bullets(ent_up, ov)
-        render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 2025年度計劃的整體投資支出及執行概況",
-                             hl, ov.fillna(""), hlb + exb)
+        render_overview_page(prs, f"{S1}  |  {ent_up} 2025年度計劃的整體投資支出及執行概況",
+                             hl, ov.fillna(""), hlb + exb, sec=0,
+                             table_name=f"{ent_up} 2025年度的整體投資支出概況", note=NOTE_RATE)
         render_category_overview(prs, ent_up, ov, sdf, narr, llm)   # slide 13-14 逐範疇概況（LLM 優先）
         zit = zero_investment_text(zero_investment_summary(sdf, plan, cat, narr, ent_up), ent_up)
         if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
-            _prose_slide(prs, f"{ent_up} 2025年度計劃申報投資支出為零的項目",
-                         [("", zit[0])] + [("• ", x) for x in zit[1:]])
+            _prose_slide(prs, f"{S1}  |  {ent_up} 2025年度計劃申報投資支出為零的項目",
+                         [("", x) for x in zit[1:]], headline=zit[0], sec=0)
     ahl, ab = _adj_summary(ent_up, adj)      # slide 15：表左 + 匯總敘述右
-    render_overview_page(prs, f"2025年度投資計劃執行情況概述 | {ent_up} 報告投資金額的潛在調整事項匯總",
-                         ahl, adj.fillna(""), ab)
-    _prose_2col(prs, f"{ent_up} 2025年度報告投資金額的潛在調整事項（詳述）",
-                _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6)   # slide 16-17 詳述（LLM 優先）
+    render_overview_page(prs, f"{S1}  |  {ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
+                         ahl, adj.fillna(""), ab, sec=0,
+                         table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
+                         note="註：金額單位為萬澳門元；括號表示調減。")
+    _prose_2col(prs, f"{S1}  |  {ent_up} 2025年度報告投資金額的潛在調整事項（詳述）",
+                _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6, sec=0,
+                headline=ahl)   # slide 16-17 詳述（LLM 優先）
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
-    divider(prs, "過往年度投資計劃在2025年繼續執行的審查跟進", "2", [
+    S2 = "過往年度投資計劃在2025年繼續執行的審查跟進"
+    divider(prs, S2, "2", [
         ("2.1  2024年度投資計劃期後投資金額概覽", ""),
         ("2.2  2024年度投資計劃報告投資金額的潛在調整事項匯總", ""),
         ("2.3  2023年度投資計劃期後投資金額概覽", ""),
@@ -2452,28 +2899,47 @@ def main():
     for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
         ov = overview_by_bucket(sdf, bk, plan, cat)
         if not ov.empty:
-            render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""))
+            render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""), sec=1,
+                           crumb=f"{S2}  |  {bk}金額概覽",
+                           headline=_bucket_headline(ent_up, bk, ov),
+                           note="註：金額單位為萬澳門元；括號表示調減。")
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
-    divider(prs, "本年度審查工作的主要發現", "3")
+    S3 = "本年度審查工作的主要發現"
+    divider(prs, S3, "3")
     fs = finding_summary(sdf)
     if not fs.empty:
-        render_generic(prs, f"{ent_up} 主要發現摘要", fs.fillna(""))
+        render_generic(prs, f"{ent_up} 本年度審查工作的主要發現摘要", fs.fillna(""), sec=2,
+                       crumb=f"{S3}  |  主要發現摘要",
+                       headline=(f"本次審查工作就{ent_up}報告的投資金額識別出{len(fs)}類潛在調整事項，"
+                                 f"合計潛在調減約{abs(pd.to_numeric(fs['調整額合計'], errors='coerce').sum()):,.0f}"
+                                 f"萬澳門元，摘要如下；逐項說明見後頁。"),
+                       note="註：金額單位為萬澳門元；括號表示調減。")
     if narr:      # 逐調整類型 × 項目：金額(feed) + 發現/管理層解釋(清單抄字)
         render_findings(prs, ent_up, sdf, narr)
 
     # ④ 其他信息（報告 slide 42-63）
-    divider(prs, "其他信息", "4")
-    render_generic(prs, f"{ent_up} 2025年度投資計劃及過往年度期後投資於2025年發生的投資金額匯總",
-                   summary_amount(sdf).fillna(""))
+    S4 = "其他信息"
+    divider(prs, S4, "4")
+    render_generic(prs, f"{ent_up} 2025年發生的投資金額匯總",
+                   summary_amount(sdf).fillna(""), sec=3,
+                   crumb=f"{S4}  |  2025年發生的投資金額匯總",
+                   headline=(f"下表匯總{ent_up} 2025年度投資計劃及過往年度計劃期後投資"
+                             f"於2025年發生的投資金額（報告投資金額及潛在調整後投資金額）。"),
+                   note="註：金額單位為萬澳門元。")
     for bk in BUCKET_ORDER:
         fa = facility_activity(sdf, bk)
         if not fa.empty:
-            render_generic(prs, f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額", fa.fillna(""))
+            render_generic(prs, f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額", fa.fillna(""), sec=3,
+                           crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦",
+                           headline=(f"下表按範疇列示{ent_up} {bk}於2025年發生的投資金額，"
+                                     f"區分設施建設（資本性支出）及活動舉辦（營運性支出）。"),
+                           note="註：金額為潛在調整後金額，單位為萬澳門元。")
     for yr in (25, 24, 23):     # 單個項目審查匯總（slide 46-63）
         tab, _ = build_year(df, yr, plan.get(yr) if plan else None)
         if tab is not None and not tab.empty:
-            render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns))
+            render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns),
+                           ent_up=ent_up, sec=3, crumb=f"{S4}  |  單個項目審查結果匯總")
 
     # ⑥ 附件二 現場走訪（slide 93-100）
     if narr:
@@ -2483,12 +2949,12 @@ def main():
     if tmpl:      # template mode：重編 slide 高號，徹底避開 template 殘留 orphan part 撞名 corruption
         _renumber_slides(prs)
 
-    out = Path(f"{entity}_報告數字表.pptx")
+    out = Path(f"{entity}_report_llm.pptx")
     try:
         prs.save(out)
     except PermissionError:      # 舊檔喺 PowerPoint 開住鎖住 → 改名唔 crash
         import time
-        out = Path(f"{entity}_報告數字表_{time.strftime('%H%M%S')}.pptx")
+        out = Path(f"{entity}_report_llm_{time.strftime('%H%M%S')}.pptx")
         prs.save(out)
         print(f"⚠ 原檔開住(鎖住)，改存 → {out.name}（開之前記得閂舊 pptx）")
     print(f"✓ {out.resolve()}  共 {len(list(prs.slides))} 頁（概述 + 主要發現 + 金額匯總 + 設施 + 單項審查）")

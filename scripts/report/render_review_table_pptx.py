@@ -16,6 +16,7 @@ formatting 顏色後補；**尺寸跟原報告**（--template 讀 slide 尺寸�
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import pandas as pd
     from pptx import Presentation
@@ -25,6 +26,8 @@ try:
 except ImportError:
     print("✗ 需要 pandas + python-pptx → pip install pandas python-pptx openpyxl"); sys.exit(1)
 
+import layout as L                       # 版式引擎（bundler 會 inline）
+
 RATE_COLS = {"投資計劃完成率", "潛在調整後投資計劃完成率"}
 TEXT_COLS = {"項目序號", "項目名稱"}
 # 3 欄組（畫 group header 用）
@@ -32,21 +35,23 @@ G1 = ["項目序號", "項目名稱", "計劃投資金額", "報告投資金額"
 G3 = ["調整後投資金額", "潛在調整後投資計劃完成率", "設施建設/資本性支出", "活動舉辦/營運性支出"]
 GROUP_LABEL = {"G1": "項目基本信息", "G2": "投資金額的潛在調整事項", "G3": "潛在調整後投資金額"}
 
-BLUE = RGBColor(0x00, 0x33, 0x8D)        # KPMG 藍（標題）
-LBLUE = RGBColor(0xD9, 0xE1, 0xF2)       # section 淺藍
-GREY = RGBColor(0xE7, 0xE6, 0xE6)        # 小計灰
-WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-RED = RGBColor(0xC0, 0x00, 0x00)
-# 3 色欄組（more or less 跟報告 IMG）：基本信息=青、潛在調整事項=淺藍、潛在調整後=深藍
-GROUP_FILL = {"G1": RGBColor(0x2E, 0x9B, 0xD6), "G2": RGBColor(0x9D, 0xC3, 0xE6),
-              "G3": RGBColor(0x1F, 0x38, 0x64)}
-GROUP_TEXT = {"G1": WHITE, "G2": RGBColor(0x1F, 0x38, 0x64), "G3": WHITE}
-
-ROWS_PER_SLIDE = 24                       # 每頁資料行（含 section/小計），近報告
 YEAR_TITLE = {
-    "報告年25": "MGM 2025年度投資計劃單個項目審查結果匯總表",
-    "報告年24": "MGM 2024年度投資計劃單個項目截至2025年末的審查結果匯總表",
-    "報告年23": "MGM 2023年度投資計劃單個項目截至2025年末的審查結果匯總表",
+    "報告年25": "{e} 2025年度投資計劃單個項目審查結果匯總表",
+    "報告年24": "{e} 2024年度投資計劃單個項目截至2025年末的審查結果匯總表",
+    "報告年23": "{e} 2023年度投資計劃單個項目截至2025年末的審查結果匯總表",
+}
+# 長欄名 → 表頭短名（18 欄要迫入 10.83in，跟 scan 用兩行短標）
+SHORT = {
+    "項目序號": "項目\n序號", "項目名稱": "項目名稱",
+    "計劃投資金額": "計劃\n投資金額", "報告投資金額": "報告\n投資金額", "投資計劃完成率": "投資計劃\n完成率",
+    "一般支持性部門的人工成本": "一般支持\n人工成本", "其他日常營運支出調整": "其他日常\n營運調整",
+    "超出可計入範圍的內部資源支出": "超出可計入\n內部資源", "酒店客房改造支出": "酒店客房\n改造",
+    "不符合“吸引外國客源”定義的相關投資支出": "不符吸引\n外國客源",
+    "未完全實現投資目的的投資支出": "未完全\n實現目的",
+    "投資計劃獲批前發生且未被認可的投資支出": "獲批前\n未認可",
+    "潛在調整合計": "潛在調整\n合計", "調整後投資金額": "調整後\n投資金額",
+    "潛在調整後投資計劃完成率": "潛在調整後\n完成率",
+    "設施建設/資本性支出": "設施建設/\n資本性", "活動舉辦/營運性支出": "活動舉辦/\n營運性",
 }
 
 
@@ -81,24 +86,6 @@ def row_kind(seq: str) -> str:
     return "data"
 
 
-def _set(cell, text, *, size=7, bold=False, align=PP_ALIGN.RIGHT, color=None, fill=None):
-    cell.margin_left = cell.margin_right = Emu(18000)
-    cell.margin_top = cell.margin_bottom = Emu(9000)
-    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-    if fill is not None:
-        cell.fill.solid(); cell.fill.fore_color.rgb = fill
-    tf = cell.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.alignment = align
-    r = p.add_run(); r.text = "" if text is None else str(text)
-    f = r.font
-    f.size = Pt(size); f.bold = bold
-    f.name = "微软雅黑"
-    if color is not None:
-        f.color.rgb = color
-
-
 def col_group(c):
     if c in G1:
         return "G1"
@@ -107,83 +94,72 @@ def col_group(c):
     return "G2"
 
 
-def render_sheet(prs, sheet_name, df, cols):
-    n = len(df)
-    pages = [(i, min(i + ROWS_PER_SLIDE, n)) for i in range(0, n, ROWS_PER_SLIDE)] or [(0, 0)]
-    blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
-    # 欄寬：項目序號窄、名闊、數字中
-    def cw(c):
-        if c == "項目序號":
-            return 0.62
-        if c == "項目名稱":
-            return 1.7
-        return 0.66
-    widths = [cw(c) for c in cols]
-    total_w = sum(widths)
-    left = 0.4
-    slide_w = prs.slide_width / 914400.0
-    scale = min(1.0, (slide_w - 0.8) / total_w)
-    widths = [w * scale for w in widths]
-
-    for pi, (a, b) in enumerate(pages):
-        slide = prs.slides.add_slide(blank)
-        # 標題
-        tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(slide_w - 0.8), Inches(0.4))
-        _set_title(tb, f"{YEAR_TITLE.get(sheet_name, sheet_name)}（{pi+1}/{len(pages)}）")
-        sub = df.iloc[a:b]
-        nrow = 2 + len(sub)     # 2 header rows
-        ncol = len(cols)
-        gtab = slide.shapes.add_table(nrow, ncol, Inches(left), Inches(0.75),
-                                      Inches(sum(widths)), Inches(0.3 * nrow)).table
-        for ci, w in enumerate(widths):
-            gtab.columns[ci].width = Inches(w)
-        # header row0：group 合併（3 色）
-        ci = 0
-        while ci < ncol:
-            g = col_group(cols[ci])
-            cj = ci
-            while cj + 1 < ncol and col_group(cols[cj + 1]) == g:
-                cj += 1
-            if cj > ci:
-                gtab.cell(0, ci).merge(gtab.cell(0, cj))
-            _set(gtab.cell(0, ci), GROUP_LABEL[g], size=8, bold=True,
-                 align=PP_ALIGN.CENTER, color=GROUP_TEXT[g], fill=GROUP_FILL[g])
-            ci = cj + 1
-        # header row1：欄名（跟欄組色）
-        for ci, c in enumerate(cols):
-            g = col_group(c)
-            _set(gtab.cell(1, ci), c, size=6.5, bold=True, align=PP_ALIGN.CENTER,
-                 color=GROUP_TEXT[g], fill=GROUP_FILL[g])
-        # data rows
-        for ri, (_, row) in enumerate(sub.iterrows(), start=2):
-            kind = row_kind(row["項目序號"])
-            for ci, c in enumerate(cols):
-                v = row.get(c, "")
-                if c in TEXT_COLS:
-                    txt, al = ("" if v is None else str(v)), (PP_ALIGN.LEFT)
-                elif c in RATE_COLS:
-                    txt, al = fmt_pct(v), PP_ALIGN.RIGHT
-                else:
-                    txt, al = fmt_money(v), PP_ALIGN.RIGHT
-                fill = LBLUE if kind == "section" else (GREY if kind == "subtotal" else None)
-                bold = kind in ("section", "subtotal")
-                color = RED if (txt.startswith("(") ) else None
-                if kind == "section" and ci == 0:
-                    # section 標題橫跨全行
-                    gtab.cell(ri, 0).merge(gtab.cell(ri, ncol - 1))
-                    _set(gtab.cell(ri, 0), txt, size=7, bold=True, align=PP_ALIGN.LEFT, fill=LBLUE)
-                    break
-                _set(gtab.cell(ri, ci), txt, size=6.5, bold=bold,
-                     align=al, color=color, fill=fill)
-        print(f"    {sheet_name} 第 {pi+1}/{len(pages)} 頁：{b-a} 行 × {ncol} 欄")
+def _blocks(df, cols):
+    """df → 逐【範疇】block：[(kind, cells)]。kind = sec / data / subtot / tot。
+    scan 每個範疇有自己嘅小計、全份報告冇「續」→ 分頁時整個 block 唔拆。
+    ⚠ 範疇／小計標籤要擺【項目名稱】欄（闊），唔可以留喺「項目序號」窄欄 —— 否則 wrap 5 行撐爆表。"""
+    lab_c = cols.index("項目名稱") if "項目名稱" in cols else 0
+    out, cur = [], []
+    for _, row in df.iterrows():
+        seq = str(row["項目序號"])
+        kind = row_kind(seq)
+        if kind == "section":
+            if cur:
+                out.append(cur)
+            cells = [""] * len(cols); cells[lab_c] = seq
+            cur = [("sec", cells)]
+            continue
+        cells = [("" if row.get(c, "") is None else str(row.get(c, ""))) if c in TEXT_COLS
+                 else (fmt_pct(row.get(c, "")) if c in RATE_COLS else fmt_money(row.get(c, "")))
+                 for c in cols]
+        k = "tot" if seq.endswith("合計") else ("subtot" if kind == "subtotal" else "data")
+        if k != "data":                       # 小計／合計：標籤搬去項目名稱欄
+            cells[lab_c] = seq; cells[0] = ""
+        cur.append((k, cells))
+    if cur:
+        out.append(cur)
+    return out
 
 
-def _set_title(tb, text):
-    tf = tb.text_frame; tf.word_wrap = True
-    p = tf.paragraphs[0]
-    r = p.add_run(); r.text = text
-    r.font.size = Pt(13); r.font.bold = True
-    r.font.color.rgb = BLUE; r.font.name = "微软雅黑"
+def render_sheet(prs, sheet_name, df, cols, *, ent_up="MGM", sec=3, crumb=None, page_cb=None):
+    """單個項目審查結果匯總表（對 scan slide 46-63）：navy 2 層表頭、逐範疇 block 唔拆頁、
+    按【累積高度】分頁（唔會超出版面）、表頂 caption bar、表底 資料來源／（下頁待續）。"""
+    ncol = len(cols)
+    W, H = L.size_of(prs)
+    tw = W - 2 * L.MARGIN
+    title = YEAR_TITLE.get(sheet_name, sheet_name).format(e=ent_up)
+    subs = [SHORT.get(c, c) for c in cols]
+    # 欄寬（相對）：序號窄、名闊、其餘等闊
+    widths = [0.45 if c == "項目序號" else (2.0 if c == "項目名稱" else 0.62) for c in cols]
+    wid = [w * tw / sum(widths) for w in widths]
+    # super header（3 大組）
+    supers, ci = [], 0
+    while ci < ncol:
+        g = col_group(cols[ci]); cj = ci
+        while cj + 1 < ncol and col_group(cols[cj + 1]) == g:
+            cj += 1
+        supers.append((GROUP_LABEL[g], ci, cj + 1)); ci = cj + 1
+    font = 5.8 if ncol > 16 else 6.3
+    yr = "20" + (sheet_name[-2:] if sheet_name[-2:].isdigit() else "25")
+    head = (f"下表匯總了我們在審查{ent_up} {yr}年度投資計劃各項目投資執行情況時，識別出的各項目"
+            f"投資支出涉及的潛在調整事項，以及相關的影響金額。")
+    probe = L.HEAD_Y + L.head_h(head, W)[0] + 0.10
+    avail = L.CONTENT_BOTTOM - probe - 0.24 - 0.17          # 減 caption bar
+    hh = L.header_h(supers, subs, wid, font - 0.5)
+    pages = L.fit_blocks(_blocks(df, cols), wid, font, avail, hh)
+    for pi, chunk in enumerate(pages):
+        suffix = f"（{pi+1}/{len(pages)}）"
+        slide = L.blank(prs)
+        L.breadcrumb(slide, W, sec, ent_up)
+        L.footer(slide, W, H, len(prs.slides._sldIdLst))
+        top = L.page_head(slide, W, (crumb or "其他信息  |  單個項目審查結果匯總") + suffix, head)
+        top = L.caption_bar(slide, L.MARGIN, top, tw, title + suffix)
+        L.draw_table(slide, L.MARGIN, top, tw, subs, chunk, widths, supers=supers,
+                     font=font, hfont=font - 0.5, left_cols=2,
+                     fill_h=L.CONTENT_BOTTOM - top - 0.24)
+        L.source_note(slide, W, note="註：金額單位為萬澳門元；括號表示調減。",
+                      more=(pi < len(pages) - 1))
+        print(f"    {sheet_name} 第 {pi+1}/{len(pages)} 頁：{len(chunk)} 行 × {ncol} 欄")
 
 
 def main():
@@ -204,8 +180,8 @@ def main():
         prs.slide_height = ref.slide_height
         print(f"── 跟 template 尺寸: {prs.slide_width/914400:.2f}x{prs.slide_height/914400:.2f}in（fresh 包避免撞名）")
     else:
-        prs.slide_width = Inches(13.333); prs.slide_height = Inches(7.5)
-        print("── 冇 template，用 13.33x7.5in（想跟報告尺寸請 --template 報告.pptx）")
+        prs.slide_width = Inches(L.SLIDE_W); prs.slide_height = Inches(L.SLIDE_H)
+        print(f"── 冇 template，用 {L.SLIDE_W}x{L.SLIDE_H}in（想跟報告尺寸請 --template 報告.pptx）")
 
     for sn, df in sheets.items():
         df = df.fillna("")

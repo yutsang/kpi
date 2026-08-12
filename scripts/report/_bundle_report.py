@@ -13,9 +13,10 @@ WB = SRC.parents[1] / "src" / "kpi" / "lib" / "workbench.py"   # workbench 喺 s
 OUT = SRC / "build_report.py"
 INTERNAL = {"build_project_review_table", "build_summary_tables", "build_overview_tables",
             "build_narrative", "render_review_table_pptx", "biao2", "inspect_biao2",
-            "build_llm_narrative"}
-# 依賴序：被用者先定義（LLM 鏈喺 make_report 之前，因 make_report 用 generate_llm_narrative）
+            "build_llm_narrative", "layout"}
+# 依賴序：被用者先定義（layout 最先，其餘全部用佢；LLM 鏈喺 make_report 之前）
 MODULES = [
+    ("layout", SRC / "layout.py"),
     ("render_review_table_pptx", SRC / "render_review_table_pptx.py"),
     ("build_narrative", SRC / "build_narrative.py"),
     ("build_project_review_table", SRC / "build_project_review_table.py"),
@@ -83,7 +84,7 @@ for mod, path in MODULES:
         body_parts.append(f"# ── from {mod} ──\n{seg}")
 
 assembled = "\n\n\n".join(body_parts + ([main_src] if main_src else []))
-assembled = re.sub(r"\b(B2|IB|B|S|O|N|R)\.", "", assembled)   # de-qualify module aliases
+assembled = re.sub(r"\b(B2|IB|B|S|O|N|R|L)\.", "", assembled)   # de-qualify module aliases
 
 seen_imp, imp_lines = set(), []
 for line in imports:
