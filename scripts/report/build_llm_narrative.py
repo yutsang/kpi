@@ -52,6 +52,41 @@ SYS_CAT = ("你係為承批公司『2025年度投資執行報告』撰寫『按�
            "輸出淨係一段連貫文字（唔好項目符號／開場白／結語），語句要順，忌逐點堆砌。")
 
 
+# 表旁 comment（對 scan p-10~p-13：表左 + 敘述右）。兩種語氣：審查（調整/發現）vs 描述（金額/設施活動）
+SYS_TBL_ADJ = (SYS_ADJ.replace("輸出淨係一段連貫文字（唔好標題/項目符號/開場白/結語），忌冗長。", "")
+               + "你而家寫嘅係【一張報告表格旁邊嘅敘述】：解釋張表講緊乜、關鍵金額同背後原因。"
+               "只可引用表格入面真係有嘅數字，唔可以自己計新數或估數。"
+               "輸出 JSON：{\"段落\":[{\"小標題\":\"…\",\"內容\":\"…\"}]}，2 至 4 段，"
+               "每段小標題 ≤14 字、內容 60-130 字。")
+SYS_TBL_DESC = (SYS_CAT.replace("輸出淨係一段連貫文字（唔好項目符號／開場白／結語），語句要順，忌逐點堆砌。", "")
+                + "你而家寫嘅係【一張報告表格旁邊嘅敘述】：解釋張表講緊乜、邊啲範疇金額最大、"
+                "設施建設同活動舉辦嘅比重點樣。只可引用表格入面真係有嘅數字，唔可以自己計新數或估數。"
+                "輸出 JSON：{\"段落\":[{\"小標題\":\"…\",\"內容\":\"…\"}]}，2 至 4 段，"
+                "每段小標題 ≤14 字、內容 60-130 字。")
+
+
+def tbl_key(kind, arg=""):
+    """表旁 comment 嘅 key（generator 同 make_report 必須用同一個）。"""
+    return f"{kind}|{arg}"
+
+
+def _tbl_text(df, max_rows=40):
+    """DataFrame → 精簡 TSV 餵 LLM（數字原封不動）。"""
+    cols = list(df.columns)
+    lines = ["\t".join(str(c) for c in cols)]
+    for _, r in df.head(max_rows).iterrows():
+        lines.append("\t".join("" if pd.isna(r[c]) else str(r[c]) for c in cols))
+    return "\n".join(lines)
+
+
+def _tbl_prompt(title, df, sources, unit="萬澳門元"):
+    src = ("\n".join(f"- {s}" for s in sources[:6])) if sources else "（無額外資料，只根據表格數字撰寫）"
+    return (f"以下係報告入面一張表，請寫佢【旁邊】嘅敘述。\n\n"
+            f"表名：{title}\n金額單位：{unit}（括號 = 負數／調減，「-」= 零）\n\n"
+            f"【表格內容】\n{_tbl_text(df)}\n\n"
+            f"【其他來源（項目清單／審查底稿表2，用嚟解釋原因，唔好抄佢嘅措辭）】\n{src}")
+
+
 def _adj_prompt(adj_type, amt_wan, projects):
     lines = [f"潛在調整類型：{adj_type}", f"涉及潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元",
              "涉及項目及審查發現（審查底稿表2 為最權威來源，優先採用其跨司裁決及具體內容）："]
@@ -87,8 +122,43 @@ def _cat_prompt(sub, rate_pct, content, reason, b2=""):
             f"完成率原因只用管理層業務解釋，唔好用審計／調整措辭。\n\n{ctx}")
 
 
-def _gen(wb, prompt, effort, sysp):
-    return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
+def _gen(wb, prompt, effort, sysp, want_json=False):
+    if not want_json:
+        return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
+    d = wb.chat_json(prompt, sysp, reasoning_effort=effort)
+    segs = (d or {}).get("段落") or []
+    out = [[str(s.get("小標題", "")).strip(), str(s.get("內容", "")).strip()]
+           for s in segs if isinstance(s, dict) and s.get("內容")]
+    if not out:
+        raise ValueError("LLM 冇回到『段落』")
+    return out
+
+
+def _proj_sources(d, narr, b2, mask, kind="content", n=5):
+    """由 feed 一段 slice 抽 top 項目嘅來源片段（清單 + 表2）→ [str]，餵表旁 comment。"""
+    sub = d[mask]
+    if sub.empty:
+        return []
+    key = "調整_萬" if kind == "finding" else "調整前_萬"
+    top = (sub.groupby(["ng_scope", "dicj code"])
+              .agg(nm=("project", "first"), v=(key, "sum")).reset_index())
+    top = top.reindex(top["v"].abs().sort_values(ascending=False).index).head(n)
+    out = []
+    for _, p in top.iterrows():
+        nr = N.nlook(narr, p["ng_scope"], p["dicj code"])
+        b2t = B2.b2look(b2, p["ng_scope"], p["dicj code"])
+        if kind == "finding":
+            txt = nr.get("KPMG分析發現", "") or b2t
+            mg = nr.get("管理層解釋", "")
+            seg = f"項目「{p['nm']}」（{p['v']:,.0f}萬）：{str(txt)[:300]}"
+            if mg:
+                seg += f"；管理層解釋：{mg[:160]}"
+        else:
+            txt = nr.get("實際投資內容", "") or b2t
+            seg = f"項目「{p['nm']}」（{p['v']:,.0f}萬）：{str(txt)[:300]}"
+        if str(txt).strip():
+            out.append(seg)
+    return out
 
 
 def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
@@ -143,14 +213,51 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                 break
         tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
 
+    # ── 表旁 comment（scan p-10~p-13 表左＋敘述右）：由表格數字 + 清單/表2 來源寫 ──
+    for bk in S.BUCKET_ORDER[1:]:                       # 2024 / 2023 期後概覽
+        ovb = O.overview_by_bucket(df, bk, plan, cat)
+        if ovb.empty:
+            continue
+        src = _proj_sources(d, narr, b2, (d["_bucket"] == bk) &
+                            (pd.to_numeric(d["調整_萬"], errors="coerce") != 0), "finding")
+        tasks.append(("tbl", tbl_key("期後概覽", bk),
+                      _tbl_prompt(f"{(entity or '').upper()} {bk}金額概覽", ovb.fillna(""), src),
+                      "medium", SYS_TBL_ADJ, True))
+    for bk in S.BUCKET_ORDER:                           # 設施建設 vs 活動舉辦
+        fa = S.facility_activity(df, bk)
+        if fa.empty:
+            continue
+        src = _proj_sources(d, narr, b2, d["_bucket"] == bk, "content")
+        tasks.append(("tbl", tbl_key("設施活動", bk),
+                      _tbl_prompt(f"{(entity or '').upper()} {bk}區分設施建設／活動舉辦的投資金額",
+                                  fa.fillna(""), src),
+                      "low", SYS_TBL_DESC, True))
+    amt = S.summary_amount(df)                          # 4.1 金額匯總
+    if not amt.empty:
+        tasks.append(("tbl", tbl_key("金額匯總"),
+                      _tbl_prompt(f"{(entity or '').upper()} 2025年發生的投資金額匯總",
+                                  amt.fillna(""), _proj_sources(d, narr, b2,
+                                                                d["_bucket"] == pb, "content")),
+                      "low", SYS_TBL_DESC, True))
+    fs = O.finding_summary(df)                          # ③ 主要發現摘要
+    if not fs.empty:
+        tasks.append(("tbl", tbl_key("發現摘要"),
+                      _tbl_prompt(f"{(entity or '').upper()} 本年度審查工作的主要發現摘要", fs.fillna(""),
+                                  _proj_sources(d, narr, b2,
+                                                pd.to_numeric(d["調整_萬"], errors="coerce") != 0,
+                                                "finding", n=6)),
+                      "medium", SYS_TBL_ADJ, True))
+
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
-    out = {"adj": {}, "cat": {}}
+    out = {"adj": {}, "cat": {}, "tbl": {}}
     try:                                    # tqdm 進度條（冇裝就照 log 逐個）
         from tqdm import tqdm
     except ImportError:
         tqdm = None
+    tasks = [(t + (False,))[:6] for t in tasks]         # 補齊 want_json（adj/cat = 純文字）
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        fut = {ex.submit(_gen, wb, p, eff, sysp): (kind, key) for kind, key, p, eff, sysp in tasks}
+        fut = {ex.submit(_gen, wb, p, eff, sysp, js): (kind, key)
+               for kind, key, p, eff, sysp, js in tasks}
         it = as_completed(fut)
         bar = tqdm(it, total=len(tasks), desc=f"LLM {entity}", unit="段", ncols=90) if tqdm else it
         for f in bar:
@@ -164,7 +271,8 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
 
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
-    log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])} 段）")
+    log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])}、"
+        f"tbl {len(out['tbl'])} 段）")
     return out
 
 

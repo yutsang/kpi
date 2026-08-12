@@ -1840,6 +1840,47 @@ SYS_CAT = ("你係為承批公司『2025年度投資執行報告』撰寫『按�
 
 
 # ── from build_llm_narrative ──
+SYS_TBL_ADJ = (SYS_ADJ.replace("輸出淨係一段連貫文字（唔好標題/項目符號/開場白/結語），忌冗長。", "")
+               + "你而家寫嘅係【一張報告表格旁邊嘅敘述】：解釋張表講緊乜、關鍵金額同背後原因。"
+               "只可引用表格入面真係有嘅數字，唔可以自己計新數或估數。"
+               "輸出 JSON：{\"段落\":[{\"小標題\":\"…\",\"內容\":\"…\"}]}，2 至 4 段，"
+               "每段小標題 ≤14 字、內容 60-130 字。")
+
+
+# ── from build_llm_narrative ──
+SYS_TBL_DESC = (SYS_CAT.replace("輸出淨係一段連貫文字（唔好項目符號／開場白／結語），語句要順，忌逐點堆砌。", "")
+                + "你而家寫嘅係【一張報告表格旁邊嘅敘述】：解釋張表講緊乜、邊啲範疇金額最大、"
+                "設施建設同活動舉辦嘅比重點樣。只可引用表格入面真係有嘅數字，唔可以自己計新數或估數。"
+                "輸出 JSON：{\"段落\":[{\"小標題\":\"…\",\"內容\":\"…\"}]}，2 至 4 段，"
+                "每段小標題 ≤14 字、內容 60-130 字。")
+
+
+# ── from build_llm_narrative ──
+def tbl_key(kind, arg=""):
+    """表旁 comment 嘅 key（generator 同 make_report 必須用同一個）。"""
+    return f"{kind}|{arg}"
+
+
+# ── from build_llm_narrative ──
+def _tbl_text(df, max_rows=40):
+    """DataFrame → 精簡 TSV 餵 LLM（數字原封不動）。"""
+    cols = list(df.columns)
+    lines = ["\t".join(str(c) for c in cols)]
+    for _, r in df.head(max_rows).iterrows():
+        lines.append("\t".join("" if pd.isna(r[c]) else str(r[c]) for c in cols))
+    return "\n".join(lines)
+
+
+# ── from build_llm_narrative ──
+def _tbl_prompt(title, df, sources, unit="萬澳門元"):
+    src = ("\n".join(f"- {s}" for s in sources[:6])) if sources else "（無額外資料，只根據表格數字撰寫）"
+    return (f"以下係報告入面一張表，請寫佢【旁邊】嘅敘述。\n\n"
+            f"表名：{title}\n金額單位：{unit}（括號 = 負數／調減，「-」= 零）\n\n"
+            f"【表格內容】\n{_tbl_text(df)}\n\n"
+            f"【其他來源（項目清單／審查底稿表2，用嚟解釋原因，唔好抄佢嘅措辭）】\n{src}")
+
+
+# ── from build_llm_narrative ──
 def _adj_prompt(adj_type, amt_wan, projects):
     lines = [f"潛在調整類型：{adj_type}", f"涉及潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元",
              "涉及項目及審查發現（審查底稿表2 為最權威來源，優先採用其跨司裁決及具體內容）："]
@@ -1877,8 +1918,44 @@ def _cat_prompt(sub, rate_pct, content, reason, b2=""):
 
 
 # ── from build_llm_narrative ──
-def _gen(wb, prompt, effort, sysp):
-    return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
+def _gen(wb, prompt, effort, sysp, want_json=False):
+    if not want_json:
+        return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
+    d = wb.chat_json(prompt, sysp, reasoning_effort=effort)
+    segs = (d or {}).get("段落") or []
+    out = [[str(s.get("小標題", "")).strip(), str(s.get("內容", "")).strip()]
+           for s in segs if isinstance(s, dict) and s.get("內容")]
+    if not out:
+        raise ValueError("LLM 冇回到『段落』")
+    return out
+
+
+# ── from build_llm_narrative ──
+def _proj_sources(d, narr, b2, mask, kind="content", n=5):
+    """由 feed 一段 slice 抽 top 項目嘅來源片段（清單 + 表2）→ [str]，餵表旁 comment。"""
+    sub = d[mask]
+    if sub.empty:
+        return []
+    key = "調整_萬" if kind == "finding" else "調整前_萬"
+    top = (sub.groupby(["ng_scope", "dicj code"])
+              .agg(nm=("project", "first"), v=(key, "sum")).reset_index())
+    top = top.reindex(top["v"].abs().sort_values(ascending=False).index).head(n)
+    out = []
+    for _, p in top.iterrows():
+        nr = nlook(narr, p["ng_scope"], p["dicj code"])
+        b2t = b2look(b2, p["ng_scope"], p["dicj code"])
+        if kind == "finding":
+            txt = nr.get("KPMG分析發現", "") or b2t
+            mg = nr.get("管理層解釋", "")
+            seg = f"項目「{p['nm']}」（{p['v']:,.0f}萬）：{str(txt)[:300]}"
+            if mg:
+                seg += f"；管理層解釋：{mg[:160]}"
+        else:
+            txt = nr.get("實際投資內容", "") or b2t
+            seg = f"項目「{p['nm']}」（{p['v']:,.0f}萬）：{str(txt)[:300]}"
+        if str(txt).strip():
+            out.append(seg)
+    return out
 
 
 # ── from build_llm_narrative ──
@@ -1934,14 +2011,51 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                 break
         tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
 
+    # ── 表旁 comment（scan p-10~p-13 表左＋敘述右）：由表格數字 + 清單/表2 來源寫 ──
+    for bk in BUCKET_ORDER[1:]:                       # 2024 / 2023 期後概覽
+        ovb = overview_by_bucket(df, bk, plan, cat)
+        if ovb.empty:
+            continue
+        src = _proj_sources(d, narr, b2, (d["_bucket"] == bk) &
+                            (pd.to_numeric(d["調整_萬"], errors="coerce") != 0), "finding")
+        tasks.append(("tbl", tbl_key("期後概覽", bk),
+                      _tbl_prompt(f"{(entity or '').upper()} {bk}金額概覽", ovb.fillna(""), src),
+                      "medium", SYS_TBL_ADJ, True))
+    for bk in BUCKET_ORDER:                           # 設施建設 vs 活動舉辦
+        fa = facility_activity(df, bk)
+        if fa.empty:
+            continue
+        src = _proj_sources(d, narr, b2, d["_bucket"] == bk, "content")
+        tasks.append(("tbl", tbl_key("設施活動", bk),
+                      _tbl_prompt(f"{(entity or '').upper()} {bk}區分設施建設／活動舉辦的投資金額",
+                                  fa.fillna(""), src),
+                      "low", SYS_TBL_DESC, True))
+    amt = summary_amount(df)                          # 4.1 金額匯總
+    if not amt.empty:
+        tasks.append(("tbl", tbl_key("金額匯總"),
+                      _tbl_prompt(f"{(entity or '').upper()} 2025年發生的投資金額匯總",
+                                  amt.fillna(""), _proj_sources(d, narr, b2,
+                                                                d["_bucket"] == pb, "content")),
+                      "low", SYS_TBL_DESC, True))
+    fs = finding_summary(df)                          # ③ 主要發現摘要
+    if not fs.empty:
+        tasks.append(("tbl", tbl_key("發現摘要"),
+                      _tbl_prompt(f"{(entity or '').upper()} 本年度審查工作的主要發現摘要", fs.fillna(""),
+                                  _proj_sources(d, narr, b2,
+                                                pd.to_numeric(d["調整_萬"], errors="coerce") != 0,
+                                                "finding", n=6)),
+                      "medium", SYS_TBL_ADJ, True))
+
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
-    out = {"adj": {}, "cat": {}}
+    out = {"adj": {}, "cat": {}, "tbl": {}}
     try:                                    # tqdm 進度條（冇裝就照 log 逐個）
         from tqdm import tqdm
     except ImportError:
         tqdm = None
+    tasks = [(t + (False,))[:6] for t in tasks]         # 補齊 want_json（adj/cat = 純文字）
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        fut = {ex.submit(_gen, wb, p, eff, sysp): (kind, key) for kind, key, p, eff, sysp in tasks}
+        fut = {ex.submit(_gen, wb, p, eff, sysp, js): (kind, key)
+               for kind, key, p, eff, sysp, js in tasks}
         it = as_completed(fut)
         bar = tqdm(it, total=len(tasks), desc=f"LLM {entity}", unit="段", ncols=90) if tqdm else it
         for f in bar:
@@ -1955,7 +2069,8 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
 
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
-    log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])} 段）")
+    log(f"✓ {outp.resolve()}（adj {len(out['adj'])}、cat {len(out['cat'])}、"
+        f"tbl {len(out['tbl'])} 段）")
     return out
 
 
@@ -2403,11 +2518,59 @@ def _total_line(df):
 
 
 # ── from make_report ──
-def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=None):
+def _table_bullets(df):
+    """冇 LLM 時嘅機械表旁敘述（由表自己嘅小計/總計行計，自洽）→ [(小標題, 內容)]。"""
+    cols = list(df.columns)
+    first = df[cols[0]].astype(str).str.strip()
+    num = [c for c in cols[1:] if pd.to_numeric(df[c], errors="coerce").notna().any()]
+    if not num:
+        return []
+    out = []
+    tot = df[first.str.endswith("總計")]
+    if not tot.empty:
+        out.append(("整體情況", "全部範疇合計 " +
+                    "；".join(f"{c.replace('·', '－')} {_cell_txt(c, tot.iloc[0][c])}"
+                              for c in num[:5]) + "（單位：萬澳門元，除完成率外）。"))
+    subs = df[first.str.endswith("小計")]
+    if not subs.empty:
+        out.append(("博彩／非博彩分佈", "；".join(
+            f"{r[cols[0]]} " + "、".join(f"{c.replace('·', '－')} {_cell_txt(c, r[c])}"
+                                         for c in num[:3]) for _, r in subs.iterrows()) + "。"))
+    val = next((c for c in num if "報告" in c or "合計" in c), num[0])
+    data = df[~first.str.endswith(("小計", "總計")) &
+              df[cols[1:]].astype(str).apply(lambda r: any(x.strip() for x in r), axis=1)].copy()
+    data["_v"] = pd.to_numeric(data[val], errors="coerce")
+    top = data.sort_values("_v", ascending=False).head(4)
+    if not top.empty:
+        out.append((f"金額最大的範疇（按{val.replace('·', '－')}）", "、".join(
+            f"{r[cols[0]]}（{_cell_txt(val, r[val])}）" for _, r in top.iterrows()) + "。"))
+    return out
+
+
+# ── from make_report ──
+def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=None,
+                   llm=None, tbl_id=None, side=None):
     """單張表（範疇/項目 + 數字欄；·=2-row group header）。逐頁：crumb + 導語 + caption bar
-    + 表 + 資料來源，按【累積高度】分頁（唔會超出版面）。"""
+    + 表 + 資料來源，按【累積高度】分頁（唔會超出版面）。
+
+    side=True → 報告式 2 欄（表左 + 敘述右，對 scan p-10~p-13）。敘述優先用 LLM 寫嘅
+    `llm['tbl'][tbl_id]`，冇就用 _table_bullets 機械生成。欄數少（≤8）而且一版放得落先會用。"""
     if df is None or df.empty:
         return
+    bullets = [tuple(x) for x in ((llm or {}).get("tbl", {}).get(tbl_id) or [])] \
+        or _table_bullets(df)
+    if side is None:
+        side = len(df.columns) <= 8 and bool(bullets)
+    if side and bullets:
+        W, _H = size_of(prs)
+        lw = W * 0.60
+        s2, r2, w2, sp2 = _df_table(df)
+        wid2 = [w * lw / sum(w2) for w in w2]
+        need = header_h(sp2, s2, wid2, 5.0) + sum(row_h(c, wid2, 5.0) for _, c in r2)
+        if need <= CONTENT_BOTTOM - 1.9:              # 一版放得落先用 2 欄，否則落返全闊分頁
+            render_overview_page(prs, (crumb or title), headline or _total_line(df), df,
+                                 bullets, sec=sec, table_name=title, note=note)
+            return
     subs, rows, widths, supers = _df_table(df)
     W, H = size_of(prs)
     tw = W - 2 * MARGIN
@@ -2914,7 +3077,8 @@ def main():
             render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""), sec=1,
                            crumb=f"{S2}  |  {bk}金額概覽",
                            headline=_bucket_headline(ent_up, bk, ov),
-                           note="註：金額單位為萬澳門元；括號表示調減。")
+                           note="註：金額單位為萬澳門元；括號表示調減。",
+                           llm=llm, tbl_id=tbl_key("期後概覽", bk))
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
     S3 = "本年度審查工作的主要發現"
@@ -2926,7 +3090,8 @@ def main():
                        headline=(f"本次審查工作就{ent_up}報告的投資金額識別出{len(fs)}類潛在調整事項，"
                                  f"合計潛在調減約{abs(pd.to_numeric(fs['調整額合計'], errors='coerce').sum()):,.0f}"
                                  f"萬澳門元，摘要如下；逐項說明見後頁。"),
-                       note="註：金額單位為萬澳門元；括號表示調減。")
+                       note="註：金額單位為萬澳門元；括號表示調減。",
+                       llm=llm, tbl_id=tbl_key("發現摘要"))
     if narr:      # 逐調整類型 × 項目：金額(feed) + 發現/管理層解釋(清單抄字)
         render_findings(prs, ent_up, sdf, narr)
 
@@ -2938,7 +3103,7 @@ def main():
                    crumb=f"{S4}  |  2025年發生的投資金額匯總",
                    headline=(f"下表匯總{ent_up} 2025年度投資計劃及過往年度計劃期後投資"
                              f"於2025年發生的投資金額（報告投資金額及潛在調整後投資金額）。"),
-                   note="註：金額單位為萬澳門元。")
+                   note="註：金額單位為萬澳門元。", llm=llm, tbl_id=tbl_key("金額匯總"))
     for bk in BUCKET_ORDER:
         fa = facility_activity(sdf, bk)
         if not fa.empty:
@@ -2946,7 +3111,8 @@ def main():
                            crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦",
                            headline=(f"下表按範疇列示{ent_up} {bk}於2025年發生的投資金額，"
                                      f"區分設施建設（資本性支出）及活動舉辦（營運性支出）。"),
-                           note="註：金額為潛在調整後金額，單位為萬澳門元。")
+                           note="註：金額為潛在調整後金額，單位為萬澳門元。",
+                           llm=llm, tbl_id=tbl_key("設施活動", bk))
     for yr in (25, 24, 23):     # 單個項目審查匯總（slide 46-63）
         tab, _ = build_year(df, yr, plan.get(yr) if plan else None)
         if tab is not None and not tab.empty:
