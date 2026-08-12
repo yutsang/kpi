@@ -942,7 +942,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
         return
     numbered = bool(bullets) and len(bullets[0]) == 3      # (no, head, body) = scan 編號清單
     W, H = L.size_of(prs)
-    colw = (W - 2 * L.MARGIN - 0.24) / 2
+    colw = (W - 2 * L.MARGIN - L.COL_GAP) / 2
     probe = L.HEAD_Y + L.head_h(headline, W)[0] + 0.10
     avail = L.CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
     if numbered:
@@ -977,12 +977,12 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
         if numbered:
             L.prose_numbered(L._tb(slide, L.MARGIN, top, colw, lim), page[:cut], size=7)
             if page[cut:]:
-                L.prose_numbered(L._tb(slide, L.MARGIN + colw + 0.24, top, colw, lim),
+                L.prose_numbered(L._tb(slide, L.MARGIN + colw + L.COL_GAP, top, colw, lim),
                                  page[cut:], size=7)
         else:
             L.prose_box(slide, L.MARGIN, top, colw, lim, page[:cut], head_size=7.5, body_size=7)
             if page[cut:]:
-                L.prose_box(slide, L.MARGIN + colw + 0.24, top, colw, lim, page[cut:],
+                L.prose_box(slide, L.MARGIN + colw + L.COL_GAP, top, colw, lim, page[cut:],
                             head_size=7.5, body_size=7)
         L.source_note(slide, W, more=(pi < len(half_pages) - 1))
 

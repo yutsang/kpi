@@ -200,6 +200,42 @@ def audit_feed(entity, out):
                                str(int(s.nunique(dropna=True))), _used(c, USED_FEED), samp]))
 
 
+def find_all(entity, needles, out):
+    """喺 清單 + 表2 嘅【全部 sheet 全部 cell】搵 keyword／數字（例：10年投資預算 1970000）。
+    → 用嚟揾一啲唔喺標準欄嘅數（audit 只掃 Database / 標準表2 sheet）。"""
+    import openpyxl
+    import biao2 as B2
+    import inspect_biao2 as IB
+    pats = [str(n) for n in needles]
+
+    def scan(label, wb):
+        for sn in wb.sheetnames:
+            try:
+                for ri, row in enumerate(wb[sn].iter_rows(values_only=True), 1):
+                    for ci, v in enumerate(row or []):
+                        if v is None:
+                            continue
+                        t = _clean(v)
+                        tn = t.replace(",", "")
+                        if any(p in t or p in tn for p in pats):
+                            ctx = " ⁄ ".join(_clean(x)[:40] for x in (row or [])[max(0, ci-2):ci+3] if x is not None)
+                            out.append(f"HIT | {label} | {sn[:26]} | r{ri} c{ci} | {t[:70]} | …{ctx[:110]}")
+            except Exception as e:
+                out.append(f"# ⚠ {label}｜{sn}: {e}")
+    d = Path(QINGDAN_DIR)
+    for p in (sorted(d.rglob("*.xlsx")) if d.exists() else []):
+        if entity.lower() in p.name.lower() and not p.name.startswith("~$"):
+            scan(f"清單 {p.name[:24]}", openpyxl.load_workbook(p, data_only=True, read_only=True))
+    d = Path(BIAO2_DIR)
+    for p in (sorted(d.rglob("*.xls*")) if d.exists() else []):
+        if p.name.startswith("~$") or not B2._match_entity(p.name, entity.lower()):
+            continue
+        try:
+            scan(f"表2 {p.name[:24]}", IB.load_wb(p))
+        except Exception as e:
+            out.append(f"# ⚠ 開唔到 {p.name}: {e}")
+
+
 def main():
     args = sys.argv[1:]
     entity, maxrows, batch = "mgm", 2500, 900
@@ -210,6 +246,16 @@ def main():
             maxrows = v if flag == "--rows" else maxrows
             batch = v if flag == "--batch" else batch
     entity = entity.lower()
+    needles = []
+    while "--find" in args:
+        i = args.index("--find"); needles.append(args[i + 1]); del args[i:i + 2]
+    if needles:
+        out = [f"# ==== 全域搜尋｜entity={entity}｜keyword={needles} ===="]
+        find_all(entity, needles, out)
+        f = Path(f"{entity}_find.txt"); f.write_text("\n".join(out), encoding="utf-8")
+        print(f"✓ {f.resolve()}（{len(out)-1} 個命中）")
+        print("\n".join(out[:400]))
+        return
     out = [f"# ==== report sources audit｜entity={entity} ====",
            "# 欄位（用 | 分隔，tab 一 paste 就會變空格）：來源 | 檔／sheet | 欄index | 欄名 | "
            "有值行數 | 相異值 | 用咗未 | 樣本",
