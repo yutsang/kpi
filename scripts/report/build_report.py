@@ -1492,15 +1492,22 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
 
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
     out = {"adj": {}, "cat": {}}
+    try:                                    # tqdm 進度條（冇裝就照 log 逐個）
+        from tqdm import tqdm
+    except ImportError:
+        tqdm = None
     with ThreadPoolExecutor(max_workers=workers) as ex:
         fut = {ex.submit(_gen, wb, p, eff, sysp): (kind, key) for kind, key, p, eff, sysp in tasks}
-        for f in as_completed(fut):
+        it = as_completed(fut)
+        bar = tqdm(it, total=len(tasks), desc=f"LLM {entity}", unit="段", ncols=90) if tqdm else it
+        for f in bar:
             kind, key = fut[f]
             try:
                 out[kind][key] = f.result()
-                log(f"  ✓ {kind}｜{key[:22]}")
+                msg = f"  ✓ {kind}｜{key[:22]}"
             except Exception as e:
-                log(f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {e}")
+                msg = f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {e}"
+            tqdm.write(msg) if tqdm else log(msg)   # tqdm.write 唔會撞爛進度條
 
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
