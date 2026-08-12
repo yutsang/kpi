@@ -836,7 +836,7 @@ def main():
         except Exception:
             has_creds = False
         if has_creds:
-            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 3
+            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 8   # default 8（`mgm` 一個 command 就並行）
             biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
             print("  由 feed+清單+表2 即場生成 LLM 敘述…")
             try:
