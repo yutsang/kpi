@@ -467,8 +467,11 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     `llm['tbl'][tbl_id]`，冇就用 _table_bullets 機械生成。欄數少（≤8）而且一版放得落先會用。"""
     if df is None or df.empty:
         return
-    bullets = [tuple(x) for x in ((llm or {}).get("tbl", {}).get(tbl_id) or [])] \
-        or _table_bullets(df)
+    raw = (llm or {}).get("tbl", {}).get(tbl_id) or []
+    if isinstance(raw, dict):                      # 新 shape：{"導語": …, "段落": [[h,b],…]}
+        headline = raw.get("導語") or headline
+        raw = raw.get("段落") or []
+    bullets = [tuple(x) for x in raw] or _table_bullets(df)
     if side is None:
         side = len(df.columns) <= 8 and bool(bullets)
     if side and bullets:
@@ -494,7 +497,7 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     pages = L.fit_rows(rows, wid, 6.5, avail, hh)
     for pi, chunk in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
-        slide, W, H, top = _page(prs, sec, crumb + suffix, head)
+        slide, W, H, top = _page(prs, sec, crumb, (head or "") + suffix)
         top = L.caption_bar(slide, L.MARGIN, top, tw, title + suffix)
         L.draw_table(slide, L.MARGIN, top, tw, subs, chunk, widths, supers=supers,
                      font=6.5, hfont=6, fill_h=L.CONTENT_BOTTOM - top - 0.28)
@@ -521,7 +524,7 @@ def _cards(prs, sec, crumb, headline, recs, *, note=None):
         pages.append(cur)
     for pi, page in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
-        slide, W, H, y = _page(prs, sec, crumb + suffix, headline)
+        slide, W, H, y = _page(prs, sec, crumb, (headline or "") + suffix)
         for bar_text, items in page:
             bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(L.MARGIN), Inches(y),
                                          Inches(cw), Inches(0.22))
@@ -624,7 +627,7 @@ def _prose_slide(prs, title, bullets, headline=None, *, sec=0):
     pages = L.fit_prose(bullets, cw, L.CONTENT_BOTTOM - probe, head_size=8, body_size=8)
     for pi, page in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
-        slide, W, H, top = _page(prs, sec, title + suffix, headline)
+        slide, W, H, top = _page(prs, sec, title, (headline or "") + suffix)
         L.prose_box(slide, L.MARGIN, top, cw, L.CONTENT_BOTTOM - top, page,
                     head_size=8, body_size=8, gap=7)
         L.source_note(slide, W, more=(pi < len(pages) - 1))
@@ -646,8 +649,6 @@ def _headline(ent_up, ov, df, plan):
     rate = r.get("投資計劃完成率")
     after_rate = r.get("潛在調整後投資計劃完成率")
 
-    def yi(x):
-        return f"{x/10000:.1f}"        # 萬 → 億
     d = df.copy()
     d["_adj"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0)
     codes = d["dicj code"].astype(str)
@@ -655,26 +656,66 @@ def _headline(ent_up, ov, df, plan):
     n_plan = len(plan.get(25, {})) if plan else n_impl
     n_zero = max(n_plan - n_impl, 0)
     n_adj = d[d["_adj"] != 0]["dicj code"].nunique()
-    headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{yi(plan_amt)}億澳門元；"
-                f"{ent_up}提交的投資執行報告顯示2025年度投資金額約{yi(report_amt)}億澳門元"
-                f"（投資計劃金額完成率{_pct(rate)}）。本次審查工作識別潛在調減金額約{yi(adj_amt)}億澳門元，"
-                f"經潛在調整後的2025年度投資金額約{yi(after_amt)}億澳門元（經調整後投資計劃金額完成率{_pct(after_rate)}）。")
+    headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{_amt(plan_amt)}；"
+                f"{ent_up}提交的投資執行報告顯示2025年度投資金額約{_amt(report_amt)}"
+                f"（投資計劃金額完成率{_pct(rate)}）。本次審查工作識別潛在調減金額約{_amt(adj_amt)}，"
+                f"經潛在調整後的2025年度投資金額約{_amt(after_amt)}（經調整後投資計劃金額完成率{_pct(after_rate)}）。")
     bullets = [
         ("2025年度獲批的計劃投資金額與報告的投資金額：",
          f"根據{ent_up}提交的2025年度投資計劃方案與投資執行報告，{ent_up}獲批計劃開展{n_plan}個投資項目，"
-         f"計劃投資金額約{yi(plan_amt)}億澳門元。投資執行報告顯示實際開展其中{n_impl}個投資項目"
-         f"（計劃中有{n_zero}個項目未發生投資金額），報告投資金額約{yi(report_amt)}億澳門元，"
+         f"計劃投資金額約{_amt(plan_amt)}。投資執行報告顯示實際開展其中{n_impl}個投資項目"
+         f"（計劃中有{n_zero}個項目未發生投資金額），報告投資金額約{_amt(report_amt)}，"
          f"報告投資計劃金額完成率為{_pct(rate)}。"),
         ("2025年度投資支出金額的潛在調整事項：",
          f"我們在本次審查工作中發現，{ent_up}報告投資金額中存在部分投資支出可能不應確認為2025年度計劃的投資支出"
-         f"（涉及{n_adj}個投資項目，合計約{yi(adj_amt)}億澳門元）。考慮潛在調減事項後，{ent_up} 2025年度投資支出金額"
-         f"約{yi(after_amt)}億澳門元，投資計劃金額完成率應為{_pct(after_rate)}。"),
+         f"（涉及{n_adj}個投資項目，合計約{_amt(adj_amt)}）。考慮潛在調減事項後，{ent_up} 2025年度投資支出金額"
+         f"約{_amt(after_amt)}，投資計劃金額完成率應為{_pct(after_rate)}。"),
     ]
     return headline, bullets
 
 
 def _pct(v):
     return f"{v*100:.1f}%" if isinstance(v, (int, float)) and not pd.isna(v) else "—"
+
+
+# ── 報告用字 helper（逐句對返 scan slide 10/11/15/19/23）────────────────────
+_CN_NUM = "零一二三四五六七八九十"
+
+
+def _cn(n):
+    """1→一、7→七、12→十二（報告寫『存在七大類的調整事項』）。"""
+    n = int(n)
+    if n <= 10:
+        return _CN_NUM[n]
+    if n < 20:
+        return "十" + (_CN_NUM[n - 10] if n > 10 else "")
+    return f"{n}"
+
+
+def _amt(wan):
+    """萬 → 報告用字。scan：≥1億寫『6.4億澳門元』，<1億寫『5,527萬澳門元』。"""
+    try:
+        w = abs(float(wan or 0))
+    except (TypeError, ValueError):
+        return "—"
+    return f"{w/10000:.1f}億澳門元" if w >= 10000 else f"{w:,.0f}萬澳門元"
+
+
+def _cats_of(ov, col="報告投資金額", n=3, scope=None):
+    """由 overview 表攞金額最大嘅幾個範疇名（scan：『主要涉及會議展覽、文化藝術、社區旅遊等…』）。"""
+    if ov is None or ov.empty or col not in ov.columns:
+        return ""
+    d = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))].copy()
+    d["_v"] = pd.to_numeric(d[col], errors="coerce").fillna(0)
+    d = d[d["_v"] > 0].sort_values("_v", ascending=False)
+    named = d[~d["範疇"].astype(str).isin(["其他", "其它"])]      # 「其他」唔好排喺點名範疇最前
+    d = (named if len(named) >= min(n, 2) else d).head(n)
+    return "、".join(str(r["範疇"]) for _, r in d.iterrows())
+
+
+def _pg(i, n):
+    """scan 導語尾有頁碼標記『（1/2）』。"""
+    return f"（{i}/{n}）" if n > 1 else ""
 
 
 def _bucket_headline(ent_up, bucket, ov):
@@ -688,11 +729,12 @@ def _bucket_headline(ent_up, bucket, ov):
         v = r.get(c)
         return float(v) if isinstance(v, (int, float)) and not pd.isna(v) else 0.0
     rep, a, aft = n("報告投資金額"), n("潛在調整金額"), n("潛在調整後投資金額")
-    yr = bucket[:4]
+    yr, npj = bucket[:4], int(n("項目數量"))
+    cats = _cats_of(ov, "報告投資金額", 3)
+    tail = (f"，主要涉及{cats}等非博彩投資範疇的{npj}個項目" if cats else f"，涉及{npj}個投資項目")
     return (f"{ent_up}在2025年度執行報告中申報的「因發生期後事項需作後續調整之{yr}年度博彩／非博彩項目」"
-            f"投資金額為{rep:,.0f}萬澳門元。本次審查工作識別潛在調減金額約{abs(a):,.0f}萬澳門元，"
-            f"經潛在調減後的{yr}年度計劃投資項目在2025年的投資金額約{aft:,.0f}萬澳門元"
-            f"（涉及{int(n('項目數量'))}個投資項目）。")
+            f"投資金額為{_amt(rep)}。本次審查工作識別潛在調減金額約{_amt(a)}，"
+            f"經潛在調減後的{yr}年度計劃投資項目在2025年的投資金額約{_amt(aft)}{tail}。")
 
 
 def _rate_of(df, name, col):
@@ -724,7 +766,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
     half_pages = L.fit_prose(bullets, colw, avail * 2, head_size=7.5, body_size=7)
     for pi, page in enumerate(half_pages):
         suffix = f"（{pi+1}/{len(half_pages)}）" if len(half_pages) > 1 else ""
-        slide, W, H, top = _page(prs, sec, title + suffix, headline)
+        slide, W, H, top = _page(prs, sec, title, (headline or "") + suffix)
         if subtitle:
             L.put(slide, L.MARGIN, top, W - 2 * L.MARGIN, 0.18, subtitle, size=6.5,
                   italic=True, color=L.GREY)
@@ -780,16 +822,22 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
                 else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
         bullets.append((f"{sub}：", body))
-    hi = "—"
-    if "投資計劃完成率" in cats.columns:
-        top = cats[cats["投資計劃完成率"].apply(
-            lambda v: isinstance(v, (int, float)) and not pd.isna(v) and v >= 1.0)]
-        hi = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in
-                      top.sort_values("投資計劃完成率", ascending=False).head(4).iterrows()) or "—"
+    # scan p-06 句式：著重於投入{博彩範疇}等博彩項目，以及{非博彩範疇}等非博彩投資項目 + 前後完成率
+    gm = ov[ov["範疇"].astype(str).str.startswith("博彩") &
+            ~ov["範疇"].astype(str).str.endswith(("小計", "項目"))]
+    ng = ov[~ov["範疇"].astype(str).str.startswith("博彩") &
+            ~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))]
+    g_cats = _cats_of(gm, "報告投資金額", 2) or "博彩娛樂場場地的優化"
+    n_cats = _cats_of(ng, "報告投資金額", 5)
+    g_r, ng_r = _rate_of(ov, "博彩項目小計", "投資計劃完成率"), _rate_of(ov, "非博彩項目小計", "投資計劃完成率")
+    g_a, ng_a = (_rate_of(ov, "博彩項目小計", "潛在調整後投資計劃完成率"),
+                 _rate_of(ov, "非博彩項目小計", "潛在調整後投資計劃完成率"))
+    head = (f"{ent_up}的2025年度計劃投資項目著重於投入{g_cats}等博彩項目，以及{n_cats}等非博彩投資項目。"
+            f"在報告投資金額中，博彩項目的投資計劃金額完成率為{_pct(g_r)}，"
+            f"非博彩項目的投資計劃金額完成率為{_pct(ng_r)}。考慮投資金額的潛在調整後，"
+            f"博彩項目的投資計劃金額完成率為{_pct(g_a)}，非博彩項目的平均完成率為{_pct(ng_a)}。")
     _prose_2col(prs, f"2025年度投資計劃執行情況概述  |  {ent_up} 2025年度投資項目的整體執行概況",
-                bullets, 12, sec=0,
-                headline=(f"{ent_up}的2025年度計劃投資項目涵蓋博彩及非博彩範疇，逐個範疇的投資執行"
-                          f"情況如下；報告投資金額完成率較高的範疇包括{hi}。"),
+                bullets, 12, sec=0, headline=head,
                 subtitle="若無特別說明，以下為承批公司2025年度投資執行報告的信息")
 
 
@@ -855,14 +903,28 @@ def _exec_bullets(ent_up, ov):
     return bullets
 
 
-def _adj_summary(ent_up, adj):
+def _adj_summary(ent_up, adj, ov=None, sdf=None):
     """潛在調整事項匯總（報告 slide 15）→ 回 (headline, bullets)。逐類型金額。
     ⚠ 用 2025計劃 bucket（唔係合計）：報告調整詳述只計 2025年度計劃，期後另有匯總。"""
     pb = S.BUCKET_ORDER[0]      # "2025年度投資計劃"
     tot_row = adj[adj["潛在調整事項"] == "合計"]
     total = tot_row.iloc[0][pb] if len(tot_row) else 0
-    headline = (f"基於各項審查程序，我們認為{ent_up}報告的2025年度投資金額中存在多類潛在調整事項，"
-                f"潛在調減投資金額約{abs(total):,.0f}萬澳門元，主要涉及以下類型：")
+    n_type = sum(1 for _, r in adj.iterrows()
+                 if r["潛在調整事項"] not in ("合計", "跨年及其他調整")
+                 and isinstance(r.get(pb), (int, float)) and abs(r.get(pb, 0)) >= 0.5)
+    n_proj = after = None
+    if sdf is not None:
+        d = sdf[(sdf["_bucket"] == pb) & (pd.to_numeric(sdf["調整_萬"], errors="coerce") != 0)]
+        n_proj = int(d["dicj code"].nunique())
+    if ov is not None and not ov.empty:
+        t = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+        if len(t):
+            after = t.iloc[0].get("潛在調整後投資金額")
+    # scan p-08 句式：存在七大類的調整事項，潛在調減約6.9億澳門元（涉及22個投資項目），經潛在調減後約11.8億澳門元
+    headline = (f"基於我們的各項審查程序，我們認為{ent_up}報告的2025年度投資金額中，"
+                f"存在{_cn(n_type)}大類的調整事項，潛在調減投資金額約{_amt(total)}"
+                + (f"（涉及{n_proj}個投資項目）" if n_proj else "")
+                + (f"，經潛在調減後的2025年度計劃的投資金額約{_amt(after)}。" if after is not None else "。"))
     bullets = []
     for _, r in adj.iterrows():
         name = r["潛在調整事項"]
@@ -962,7 +1024,7 @@ def main():
         if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
             _prose_slide(prs, f"{S1}  |  {ent_up} 2025年度計劃申報投資支出為零的項目",
                          [("", x) for x in zit[1:]], headline=zit[0], sec=0)
-    ahl, ab = _adj_summary(ent_up, adj)      # slide 15：表左 + 匯總敘述右
+    ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：表左 + 匯總敘述右
     render_overview_page(prs, f"{S1}  |  {ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
                          ahl, adj.fillna(""), ab, sec=0,
                          table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",

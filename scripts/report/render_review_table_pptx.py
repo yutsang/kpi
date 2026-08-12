@@ -152,7 +152,7 @@ def render_sheet(prs, sheet_name, df, cols, *, ent_up="MGM", sec=3, crumb=None, 
         slide = L.blank(prs)
         L.breadcrumb(slide, W, sec, ent_up)
         L.footer(slide, W, H, len(prs.slides._sldIdLst))
-        top = L.page_head(slide, W, (crumb or "其他信息  |  單個項目審查結果匯總") + suffix, head)
+        top = L.page_head(slide, W, crumb or "其他信息  |  單個項目審查結果匯總", head + suffix)
         top = L.caption_bar(slide, L.MARGIN, top, tw, title + suffix)
         L.draw_table(slide, L.MARGIN, top, tw, subs, chunk, widths, supers=supers,
                      font=font, hfont=font - 0.5, left_cols=2,
