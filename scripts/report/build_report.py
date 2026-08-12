@@ -1758,17 +1758,22 @@ B2_FIELDS = {
     "承批公司反饋": ["承批公司的反饋意見"],
     "跨司回覆": ["跨司工作組的回覆", "跨司工作組最新反饋意見", "跨司工作組的反饋意見",
                  "跨司工作組主責部門"],
+    # 跨司工作組審閱意見 block：實測 mgm 成欄係空（跨司未填，標題仲係 2026.07.XX）→ 抽到 0 係正常
     "項目分析意見": ["項目分析意見"],
     "建議接納調整後金額": ["建議接納之調整後金額"],
-    "實際情況": ["已投放金額", "截至"],
-    "擬投資內容": ["擬投資金額", "擬落實"],
+    # ⚠ 唔好加「擬投資金額／已投放金額」：嗰啲係【該性質範疇各項目之加總金額】，唔掛喺項目碼上，
+    #   forward-fill 落去會亂咁派。per-project 投資內容一律由清單『實際投資內容』攞。
 }
 
 
 # ── from biao2 ──
 B2_ORDER = ["調整類型", "關注事項", "調整原因", "關注事項金額", "建議調整金額",
             "建議調整後金額", "KPMG分析", "管理層解釋", "承批公司反饋", "跨司回覆",
-            "項目分析意見", "建議接納調整後金額", "實際情況", "擬投資內容"]
+            "項目分析意見", "建議接納調整後金額"]
+
+
+# ── from biao2 ──
+_NUMISH = {"關注事項金額", "建議調整金額", "建議調整後金額", "建議接納調整後金額"}
 
 
 # ── from biao2 ──
@@ -1868,11 +1873,15 @@ def load_biao2_struct(folder, entity, log=lambda *a: None):
                             cur = rec.get(concept, "")
                             if s in cur:
                                 continue
-                            rec[concept] = (cur + "　" + s).strip("　") if cur else s
+                            sep = "／" if concept in _NUMISH else "　"
+                            rec[concept] = (cur + sep + s).strip(sep) if cur else s
                             n_field += 1
             except Exception as e:
                 log(f"  ⚠ {p.name}｜{sn}: {e}")
-    log(f"表2（structured）：{len(files)} 檔 → {len(out)} 個 (gaming,碼)、{n_field} 個欄值")
+    n_all = len(out)
+    out = {k: v for k, v in out.items() if v}      # 冇任何欄值 = 該項目冇 finding，唔留空 key
+    log(f"表2（structured）：{len(files)} 檔 → {len(out)} 個項目有內容"
+        f"（另 {n_all - len(out)} 個碼冇 finding）、{n_field} 個欄值")
     return out
 
 

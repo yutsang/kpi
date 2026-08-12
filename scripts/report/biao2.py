@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-biao2.py — 由「表2」(審查底稿，加密 dicj_kpmg) 逐項目抽 finding 文字，做第 2 個 narrative source
-（配清單一齊餵 LLM）。表2 layout 複雜（每 entity×範疇 一檔，per-project 行，欄浮動），
-用 best-effort：揾 code 欄（項目N / 字母碼）→ 每有 code 嘅行收長文字 cell（關注事項/分析/管理層/跨司）。
+biao2.py — 由「表2」(審查底稿，加密 dicj_kpmg) 逐項目抽 finding，做第 2 個 narrative source
+（配清單一齊餵 LLM）。表2＝最權威嘅調整/發現來源。
+
+★ structured 抽（2026-08-12 起）：表2 有標準兩層表頭 —— group 行 +【下面嗰行】先係 detail
+  表頭（概念名），欄序會浮動 36-38 欄，『項目編號』喺 group 行。所以一律【按欄名認】，
+  唔用固定 index。實測 mgm 7 檔 × 17 sheet 全部 detail 表頭 r6、code 欄 col35。
+  （舊版 load_biao2 係盲抓：見到 ≥30 字 cell 就當 finding，冇 label，已 deprecated。）
 
 key = (gaming, 正規化碼)。gaming 由檔名判：『博監局』檔＝博彩，其餘＝非博彩。
 → 修返「博彩娛樂場」冇內容（清單博彩碼撞號攞唔到，但表2 博監局有）。
 
-用法（module）：from biao2 import load_biao2; b2 = load_biao2("data/表2", "mgm")
-              b2[(True, "19")] → 博彩項目19 嘅 finding 文字 list
+用法：
+    python scripts\\report\\biao2.py data\\表2 --entity mgm      # 逐概念覆蓋率 + 逐項目內容
+    from biao2 import load_biao2_struct, b2rec, b2text
+    b2 = load_biao2_struct("data/表2", "mgm")
+    b2rec(b2, "gaming", "項目19")   → {"關注事項": …, "建議調整金額": …}
+    b2text(b2, "gaming", "項目19")  → 有 label 嘅文字（餵 LLM）
 """
 import re
 import sys
@@ -66,15 +74,18 @@ B2_FIELDS = {
     "承批公司反饋": ["承批公司的反饋意見"],
     "跨司回覆": ["跨司工作組的回覆", "跨司工作組最新反饋意見", "跨司工作組的反饋意見",
                  "跨司工作組主責部門"],
+    # 跨司工作組審閱意見 block：實測 mgm 成欄係空（跨司未填，標題仲係 2026.07.XX）→ 抽到 0 係正常
     "項目分析意見": ["項目分析意見"],
     "建議接納調整後金額": ["建議接納之調整後金額"],
-    "實際情況": ["已投放金額", "截至"],
-    "擬投資內容": ["擬投資金額", "擬落實"],
+    # ⚠ 唔好加「擬投資金額／已投放金額」：嗰啲係【該性質範疇各項目之加總金額】，唔掛喺項目碼上，
+    #   forward-fill 落去會亂咁派。per-project 投資內容一律由清單『實際投資內容』攞。
 }
 # 出 prompt 時嘅次序（最有用擺前）
 B2_ORDER = ["調整類型", "關注事項", "調整原因", "關注事項金額", "建議調整金額",
             "建議調整後金額", "KPMG分析", "管理層解釋", "承批公司反饋", "跨司回覆",
-            "項目分析意見", "建議接納調整後金額", "實際情況", "擬投資內容"]
+            "項目分析意見", "建議接納調整後金額"]
+# 金額類：多值要用「／」分開，唔可以黐埋（27832　26404 睇落似一個數）
+_NUMISH = {"關注事項金額", "建議調整金額", "建議調整後金額", "建議接納調整後金額"}
 _HDR_HINT = [k for ks in B2_FIELDS.values() for k in ks] + ["項目編號", "資料要求", "問題狀態"]
 
 
@@ -168,11 +179,15 @@ def load_biao2_struct(folder, entity, log=lambda *a: None):
                             cur = rec.get(concept, "")
                             if s in cur:
                                 continue
-                            rec[concept] = (cur + "　" + s).strip("　") if cur else s
+                            sep = "／" if concept in _NUMISH else "　"
+                            rec[concept] = (cur + sep + s).strip(sep) if cur else s
                             n_field += 1
             except Exception as e:
                 log(f"  ⚠ {p.name}｜{sn}: {e}")
-    log(f"表2（structured）：{len(files)} 檔 → {len(out)} 個 (gaming,碼)、{n_field} 個欄值")
+    n_all = len(out)
+    out = {k: v for k, v in out.items() if v}      # 冇任何欄值 = 該項目冇 finding，唔留空 key
+    log(f"表2（structured）：{len(files)} 檔 → {len(out)} 個項目有內容"
+        f"（另 {n_all - len(out)} 個碼冇 finding）、{n_field} 個欄值")
     return out
 
 
@@ -280,9 +295,10 @@ def main():
             print(f"   {k:<12} {cnt[k]:>4} 個項目")
     miss = [k for k in B2_ORDER if not cnt.get(k)]
     if miss:
-        print(f"   ⚠ 完全抽唔到：{'、'.join(miss)}")
-    print("\n>>> 頭 6 個項目逐欄內容：")
-    for (g, c), rec in sorted(b2.items())[:6]:
+        print(f"   ○ 0 個項目：{'、'.join(miss)}"
+              f"（『跨司工作組審閱意見』block 源頭仲係空白，唔係抽唔到）")
+    print("\n>>> 頭 6 個【有內容】嘅項目逐欄：")
+    for (g, c), rec in sorted(b2.items(), key=lambda kv: -len(kv[1]))[:6]:
         print(f"\n[{'博彩' if g else '非博彩'} 項目{c}]")
         for k in B2_ORDER:
             if rec.get(k):
