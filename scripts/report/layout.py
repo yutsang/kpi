@@ -123,6 +123,8 @@ def put(slide, x, y, w, h, text, *, size=8, bold=False, color=INK, align=PP_ALIG
     box = _tb(slide, x, y, w, h)
     p = box.text_frame.paragraphs[0]
     p.alignment = align
+    p.font.size = Pt(size)                      # 定死：空段落唔好跌返 Calibri 18
+    p._p.get_or_add_endParaRPr().set("sz", str(int(round(size * 100))))
     r = p.add_run(); r.text = str(text)
     r.font.size = Pt(size); r.font.bold = bold; r.font.italic = italic
     r.font.color.rgb = color
@@ -238,10 +240,21 @@ def set_cell(cell, text, *, size=6, bold=False, fill=None, align=PP_ALIGN.RIGHT,
     txt = "" if text is None else str(text)
     if color is None:
         color = NEG_COLOR if (NEG_COLOR is not None and txt.startswith("(")) else INK
+    # ★ 空格一定要定死字號：PowerPoint 見到「冇 run／空 run」會跌返去 endParaRPr／預設 text
+    #   style（python-pptx fresh deck ＝ Calibri 18pt）→ row 被撐到 ~0.3in，成張表爆版。
+    #   所以：paragraph 層 defRPr + endParaRPr 都寫死，而且空字串索性唔加 run。
+    p.font.size = Pt(size); p.font.bold = bold
+    p.font.name = FONT_CN if has_cn(txt) else FONT_NUM
+    epr = p._p.get_or_add_endParaRPr()
+    epr.set("sz", str(int(round(size * 100))))
+    if not txt:
+        return
     # ⚠ DrawingML 入面 "\n" 唔係換行（會當空白）→ 一定要用 <a:br/>，否則表頭喺 PowerPoint 會擠成一行
     for i, seg in enumerate(txt.split("\n")):
         if i:
             p.add_line_break()
+        if not seg:
+            continue
         r = p.add_run(); r.text = seg
         r.font.size = Pt(size); r.font.bold = bold
         r.font.name = FONT_CN if has_cn(seg) else FONT_NUM
@@ -353,6 +366,8 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
         if head:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             p.space_before = Pt(0 if first else gap); p.space_after = Pt(1)
+            p.font.size = Pt(head_size)
+            p._p.get_or_add_endParaRPr().set("sz", str(int(round(head_size * 100))))
             r = p.add_run(); r.text = str(head)
             r.font.size = Pt(head_size); r.font.bold = True
             r.font.color.rgb = NAVY; r.font.name = FONT_CN
@@ -360,6 +375,8 @@ def prose(box, items, *, head_size=7, body_size=6.5, gap=6):
         if body:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             p.space_before = Pt(0 if first else (0 if head else gap)); p.space_after = Pt(1)
+            p.font.size = Pt(body_size)
+            p._p.get_or_add_endParaRPr().set("sz", str(int(round(body_size * 100))))
             r = p.add_run(); r.text = str(body)
             r.font.size = Pt(body_size); r.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
             r.font.name = FONT_CN

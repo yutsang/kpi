@@ -16,6 +16,7 @@ inspect_pptx.py — 報告 pptx 版面體檢（唔使開 PowerPoint 逐版睇）
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --slide 12 # 淨睇某版 shape 清單
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --render   # 用 PowerPoint 出 PDF/PNG（Mac）
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -174,7 +175,7 @@ def _empty_cols(tbl):
         vals = [tbl.cell(ri, ci).text.strip() for ri in range(hdr_rows, len(tbl.rows))]
         if vals and all(v in ("", "-") for v in vals):
             name = " ".join(tbl.cell(ri, ci).text.strip() for ri in range(hdr_rows)).strip()
-            out.append(name.replace("\n", "") or f"col{ci}")
+            out.append(re.sub(r"[\n\v\x0b]+", "", name) or f"col{ci}")
     return out
 
 
