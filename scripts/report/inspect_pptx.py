@@ -15,6 +15,7 @@ inspect_pptx.py — 報告 pptx 版面體檢（唔使開 PowerPoint 逐版睇）
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx            # 體檢
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --slide 12 # 淨睇某版 shape 清單
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --render   # 用 PowerPoint 出 PDF/PNG（Mac）
+    python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --spec  # 真報告嘅尺寸/字體/配色
 """
 import re
 import subprocess
@@ -518,11 +519,62 @@ def preview(path, dpi=110, only=None):
     print(f"✓ preview PNG → {out}/s-*.png")
 
 
+def spec(path):
+    """dump 一份 pptx 嘅【版式規格】：slide 尺寸、theme 字體／配色、master/layout 名。
+    → 用喺項目組真報告上，就知我哋要對嘅確切數字（user 唔使自己揾）。"""
+    prs = Presentation(str(path))
+    W, H = _in(prs.slide_width), _in(prs.slide_height)
+    print(f"── {Path(path).name}")
+    print(f"slide 尺寸：{W:.4f} x {H:.4f} in  ({prs.slide_width} x {prs.slide_height} EMU)"
+          f"  = {W*2.54:.2f} x {H*2.54:.2f} cm")
+    print(f"（我哋而家用：{L.SLIDE_W} x {L.SLIDE_H} in —— "
+          f"{'一致 ✓' if abs(W-L.SLIDE_W)<0.02 and abs(H-L.SLIDE_H)<0.02 else '★ 唔一致，要改 layout.SLIDE_W/H'}）")
+    for mi, m in enumerate(prs.slide_masters, 1):
+        print(f"\nmaster {mi}：{len(m.slide_layouts)} 個 layout")
+        try:
+            th = m.part.part_related_by(
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme")
+            root = th._element if hasattr(th, "_element") else None
+            import re as _re
+            xml = th.blob.decode("utf-8", "replace") if hasattr(th, "blob") else ""
+            for tag, lab in (("majorFont", "標題字體"), ("minorFont", "內文字體")):
+                m2 = _re.search(tag + r".*?</a:" + tag + ">", xml, _re.S)
+                if m2:
+                    lat = _re.search(r'<a:latin typeface="([^"]*)"', m2.group(0))
+                    ea = _re.search(r'<a:ea typeface="([^"]*)"', m2.group(0))
+                    print(f"  {lab}：latin={lat.group(1) if lat else '?'}"
+                          f"  ea(中文)={ea.group(1) if ea else '?'}")
+            cs = _re.search(r"<a:clrScheme.*?</a:clrScheme>", xml, _re.S)
+            if cs:
+                pairs = _re.findall(r'<a:(dk1|lt1|dk2|lt2|accent[1-6])>.*?'
+                                    r'(?:srgbClr val="([0-9A-Fa-f]{6})"|sysClr[^/]*lastClr="([0-9A-Fa-f]{6})")',
+                                    cs.group(0), _re.S)
+                print("  theme 配色：" + "  ".join(f"{a}=#{(b or c).upper()}" for a, b, c in pairs))
+        except Exception as e:
+            print("  （theme 讀唔到：", e, "）")
+        for lay in m.slide_layouts:
+            print(f"    · {lay.name}")
+    print(f"\n內容 slide：{len(prs.slides._sldIdLst)} 版")
+    for i, sl in enumerate(prs.slides, 1):
+        if i > 3:
+            print("    …（只列頭 3 版）"); break
+        print(f"  [slide {i}] layout={sl.slide_layout.name}")
+        for sh in sl.shapes:
+            sizes = sorted({r.font.size.pt for p in sh.text_frame.paragraphs for r in p.runs
+                            if r.font.size} if sh.has_text_frame else [])
+            names = sorted({r.font.name for p in sh.text_frame.paragraphs for r in p.runs
+                            if r.font.name} if sh.has_text_frame else [])
+            print(f"    {str(sh.shape_type):22s} x={_in(sh.left):5.2f} y={_in(sh.top):5.2f} "
+                  f"w={_in(sh.width):5.2f} h={_in(sh.height):5.2f}  pt={sizes}  font={names}")
+
+
 def main():
     args = [a for a in sys.argv[1:]]
     if not args:
         print(__doc__); return
     path = args[0]
+    if "--spec" in args:
+        spec(path); return
     if "--render" in args:
         render(path); return
     if "--preview" in args:

@@ -1127,6 +1127,7 @@ def build_year(df: pd.DataFrame, year: int, plan: dict | None = None):
                 rows.append({c: row.get(c, "") for c in ALL})
             rows.append(_agg_row(sub, f"{scope_name}—{sub_name} 小計"))
         rows.append(_agg_row(sc, f"{scope_name}合計"))
+    rows.append(_agg_row(tab, "總計"))          # 全表總計（scan 每年表最後一行都有）
 
     out_df = pd.DataFrame(rows, columns=ALL)
     return out_df, other
@@ -2530,7 +2531,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "d456075 2026-08-12 11:17"
+BUILD_STAMP = "474307a 2026-08-12 11:37"
 
 
 # ── from make_report ──
@@ -2946,6 +2947,110 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
 
 
 # ── from make_report ──
+def _cum_table(df, plan):
+    """三年累計表（scan slide 26）→ DataFrame（`·` = 兩層表頭）。
+    每個計劃年 Y：獲批(a)=清單計劃｜2025年前已獲認可(b)=報告年<25 調整後｜2025年期後(c)=報告年25 調整後
+    ｜合計(d=b+c)｜完成率(d/a)。2025計劃冇 b。尾段＝三年累計 Σa｜Σd｜Σd/Σa。"""
+    d = df[df["dicj code"].astype(str).str.match(r"^項目\s*\d")].copy()
+    if d.empty or not plan:
+        return pd.DataFrame()
+    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    d["_g"] = (d["ng_scope"] == "gaming")
+    d["_ry"] = pd.to_numeric(d["報告年"], errors="coerce")
+    d["_af"] = pd.to_numeric(d["調整後_萬"], errors="coerce").fillna(0)
+    d["_ngn"] = d["ng_code"].map(_ngn)
+    d["_go"] = d["_sub"].map(lambda x: GORDER.get(x, 5))
+    order = (d.drop_duplicates(["_g", "_sub"]).sort_values(["_g", "_go", "_ngn", "_sub"],
+             ascending=[False, True, True, True])[["_g", "_sub"]].values.tolist())
+    code_sub = {(bool(r["_g"]), _norm(r["dicj code"])): str(r["_sub"])
+                for _, r in d.drop_duplicates(["_g", "dicj code"]).iterrows()}
+    A = {}
+    for yr in (23, 24, 25):
+        for (gm, code), v in (plan.get(yr, {}) or {}).items():
+            sub = code_sub.get((bool(gm), code))
+            if sub:
+                A[(yr, bool(gm), sub)] = A.get((yr, bool(gm), sub), 0.0) + float(v or 0)
+
+    def _af(yr, gm, sub, pre):
+        m = ((d["_plan_year"] == yr) & (d["_g"] == gm) & (d["_sub"] == sub) &
+             ((d["_ry"] < 25) if pre else (d["_ry"] >= 25)))
+        return round(float(d.loc[m, "_af"].sum()), 1)
+
+    Y3, Y5 = "2023年度投資計劃", "2025年度投資計劃"
+    Y4, CUM = "2024年度投資計劃", "截至2025年末三年累計"
+    cols = ["範疇"]
+    for y in (Y3, Y4):
+        cols += [f"{y}·獲批的計劃投資金額", f"{y}·2025年前已獲認可", f"{y}·2025年期後",
+                 f"{y}·合計", f"{y}·完成率"]
+    cols += [f"{Y5}·獲批的計劃投資金額", f"{Y5}·潛在調整後投資金額", f"{Y5}·完成率"]
+    cols += [f"{CUM}·獲批的計劃投資金額", f"{CUM}·獲認可／潛在調整後投資金額", f"{CUM}·完成率"]
+
+    def line(name, cells):
+        r = {"範疇": name}
+        r.update(dict(zip(cols[1:], cells)))
+        return r
+
+    def calc(items):
+        """items = [(gm, sub)] → 12 個數（同一套公式，逐個範疇同小計/總計共用）。"""
+        out, ta, td = [], 0.0, 0.0
+        for yr, y in ((23, Y3), (24, Y4), (25, Y5)):
+            a = round(sum(A.get((yr, g, sb), 0.0) for g, sb in items), 1)
+            b = round(sum(_af(yr, g, sb, True) for g, sb in items), 1)
+            c = round(sum(_af(yr, g, sb, False) for g, sb in items), 1)
+            out += ([a, b, c, round(b + c, 1), _rate(b + c, a)] if yr != 25
+                    else [a, c, _rate(c, a)])
+            ta += a; td += b + c
+        return out + [round(ta, 1), round(td, 1), _rate(td, ta)]
+
+    rows, all_items = [], []
+    for gm, label in ((True, "博彩項目"), (False, "非博彩項目")):
+        items = [(g, sb) for g, sb in order if g == gm]
+        if not items:
+            continue
+        rows.append({"範疇": label})
+        for g, sb in items:
+            rows.append(line(sb, calc([(g, sb)])))
+        rows.append(line(f"{label}小計", calc(items)))
+        all_items += items
+    rows.append(line("合計", calc(all_items)))
+    return pd.DataFrame(rows, columns=cols)
+
+
+# ── from make_report ──
+def render_cumulative(prs, ent_up, df, plan, cat=None):
+    """2.5 截至2025年末投資金額概覽（scan slide 26）。"""
+    tbl = _cum_table(df, plan)
+    if tbl.empty:
+        return
+    t = tbl[tbl["範疇"].astype(str).str.strip() == "合計"]
+    r = t.iloc[0] if len(t) else None
+
+    def v(c):
+        x = r.get(c) if r is not None else None
+        return float(x) if isinstance(x, (int, float)) and not pd.isna(x) else 0.0
+    CUM = "截至2025年末三年累計"
+    a, dd = v(f"{CUM}·獲批的計劃投資金額"), v(f"{CUM}·獲認可／潛在調整後投資金額")
+    g = tbl[tbl["範疇"].astype(str).str.strip() == "博彩項目小計"]
+    ng = tbl[tbl["範疇"].astype(str).str.strip() == "非博彩項目小計"]
+
+    def sv(x, c):
+        return (float(x.iloc[0][c]) if len(x) and isinstance(x.iloc[0][c], (int, float))
+                and not pd.isna(x.iloc[0][c]) else 0.0)
+    head = (f"截至2025年末，{ent_up}於2023至2025年三年的年度投資計劃累計獲批的計劃投資金額為{_amt(a)}"
+            f"（博彩項目{_amt(sv(g, f'{CUM}·獲批的計劃投資金額'))}和"
+            f"非博彩項目{_amt(sv(ng, f'{CUM}·獲批的計劃投資金額'))}），"
+            f"累計獲認可／潛在調整後投資金額為{_amt(dd)}，"
+            f"累計投資計劃金額完成率為{_pct(_rate(dd, a))}"
+            f"（博彩項目完成率為{_pct(sv(g, f'{CUM}·完成率'))}，"
+            f"非博彩項目完成率為{_pct(sv(ng, f'{CUM}·完成率'))}）。")
+    render_generic(prs, f"{ent_up} 截至2025年末投資金額概覽", tbl.fillna(""), sec=1,
+                   crumb="過往年度投資計劃在2025年繼續執行的審查跟進  |  截至2025年末投資金額概覽",
+                   headline=head, side=False,
+                   note="註：金額單位為萬澳門元。「2025年前已獲認可」＝該年度計劃於2025年之前"
+                        "（即當年及往年審查）已認可之投資金額；「2025年期後」＝於2025年發生之期後投資。")
+
+
+# ── from make_report ──
 def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=None,
                    llm=None, tbl_id=None, side=None):
     """單張表（範疇/項目 + 數字欄；·=2-row group header）。逐頁：crumb + 導語 + caption bar
@@ -3354,10 +3459,24 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
     g_r, ng_r = _rate_of(ov, "博彩項目小計", "投資計劃完成率"), _rate_of(ov, "非博彩項目小計", "投資計劃完成率")
     g_a, ng_a = (_rate_of(ov, "博彩項目小計", "潛在調整後投資計劃完成率"),
                  _rate_of(ov, "非博彩項目小計", "潛在調整後投資計劃完成率"))
+    # scan slide 11 尾句：「博彩項目各範疇…均超過100%，非博彩項目…平均完成率為44.2%，未有達到100%完成率的範疇」
+    def _sub100(d):
+        c = d[d["潛在調整後投資計劃完成率"].apply(
+            lambda v: isinstance(v, (int, float)) and not pd.isna(v))] if \
+            "潛在調整後投資計劃完成率" in d.columns else d.iloc[0:0]
+        return c[c["潛在調整後投資計劃完成率"] < 1.0]
+    g_all100 = "博彩項目各範疇的投資計劃金額完成率均超過100%" if len(_sub100(gm)) == 0 else \
+               f"博彩項目的投資計劃金額完成率為{_pct(g_a)}"
+    ng_lo = _sub100(ng)
+    ng_tail = ("未有達到100%完成率的範疇" if len(ng_lo) == len(ng) and len(ng) else
+               ("未達到100%完成率的範疇包括" +
+                "、".join(f"{r['範疇']}（{_pct(r['潛在調整後投資計劃完成率'])}）"
+                          for _, r in ng_lo.sort_values("潛在調整後投資計劃完成率").head(4).iterrows())
+                if len(ng_lo) else "各範疇的投資計劃金額完成率均超過100%"))
     head = (f"{ent_up}的2025年度計劃投資項目著重於投入{g_cats}等博彩項目，以及{n_cats}等非博彩投資項目。"
             f"在報告投資金額中，博彩項目的投資計劃金額完成率為{_pct(g_r)}，"
             f"非博彩項目的投資計劃金額完成率為{_pct(ng_r)}。考慮投資金額的潛在調整後，"
-            f"博彩項目的投資計劃金額完成率為{_pct(g_a)}，非博彩項目的平均完成率為{_pct(ng_a)}。")
+            f"{g_all100}，非博彩項目的投資計劃金額平均完成率為{_pct(ng_a)}，{ng_tail}。")
     _prose_2col(prs, f"2025年度投資計劃執行情況概述  |  {ent_up} 2025年度投資項目的整體執行概況",
                 bullets, 12, sec=0, headline=head,
                 subtitle="若無特別說明，以下為承批公司2025年度投資執行報告的信息")
@@ -3562,11 +3681,12 @@ def main():
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     S2 = "過往年度投資計劃在2025年繼續執行的審查跟進"
-    divider(prs, S2, "2", [
+    divider(prs, S2, "2", [      # 子項用返報告字眼（scan slide 18）
         ("2.1  2024年度投資計劃期後投資金額概覽", ""),
-        ("2.2  2024年度投資計劃報告投資金額的潛在調整事項匯總", ""),
+        ("2.2  2024年度投資計劃期後報告投資金額的潛在調整事項匯總", ""),
         ("2.3  2023年度投資計劃期後投資金額概覽", ""),
-        ("2.4  2023年度投資計劃報告投資金額的潛在調整事項匯總", ""),
+        ("2.4  2023年度投資計劃期後報告投資金額的潛在調整事項匯總", ""),
+        ("2.5  截至2025年末投資金額概覽", ""),
     ])
     for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
         ov = overview_by_bucket(sdf, bk, plan, cat)
@@ -3577,6 +3697,7 @@ def main():
                            note="註：金額單位為萬澳門元；括號表示調減。",
                            llm=llm, tbl_id=tbl_key("期後概覽", bk))
             render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm)   # 2.2 / 2.4
+    render_cumulative(prs, ent_up, df, plan, cat)      # 2.5 截至2025年末投資金額概覽（scan slide 26）
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
     S3 = "本年度審查工作的主要發現"

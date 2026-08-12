@@ -274,6 +274,7 @@ def build_year(df: pd.DataFrame, year: int, plan: dict | None = None):
                 rows.append({c: row.get(c, "") for c in ALL})
             rows.append(_agg_row(sub, f"{scope_name}—{sub_name} 小計"))
         rows.append(_agg_row(sc, f"{scope_name}合計"))
+    rows.append(_agg_row(tab, "總計"))          # 全表總計（scan 每年表最後一行都有）
 
     out_df = pd.DataFrame(rows, columns=ALL)
     return out_df, other
