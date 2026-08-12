@@ -86,6 +86,15 @@ for mod, path in MODULES:
 assembled = "\n\n\n".join(body_parts + ([main_src] if main_src else []))
 assembled = re.sub(r"\b(B2|IB|B|S|O|N|R|L)\.", "", assembled)   # de-qualify module aliases
 
+import subprocess, time                                       # build 印記：output 一眼睇到跑緊邊版
+try:
+    _sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(SRC),
+                          capture_output=True, text=True).stdout.strip() or "?"
+except Exception:
+    _sha = "?"
+_stamp = f"{_sha} {time.strftime('%Y-%m-%d %H:%M')}"
+assembled = assembled.replace('BUILD_STAMP = "dev"', f'BUILD_STAMP = "{_stamp}"')
+
 seen_imp, imp_lines = set(), []
 for line in imports:
     if line not in seen_imp:

@@ -2530,6 +2530,10 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
+BUILD_STAMP = "d456075 2026-08-12 11:17"
+
+
+# ── from make_report ──
 FEED = "tableau_combined_25.csv"
 
 
@@ -2879,9 +2883,9 @@ def _bucket_adj_table(ov):
     d = ov[[c for c in keep if c in ov.columns]].copy()
     rep = pd.to_numeric(d.get("報告投資金額"), errors="coerce")
     adj = pd.to_numeric(d.get("潛在調整金額"), errors="coerce")
-    d["潛在調整金額佔報告投資金額比例"] = (adj / rep).where(rep.abs() > 0)
-    blank = d["範疇"].astype(str).str.strip().eq("") | rep.isna()
-    d.loc[blank, "潛在調整金額佔報告投資金額比例"] = ""
+    ratio = (adj / rep).where(rep.abs() > 0).astype(object)   # object：section 行要填 ""（避 pandas FutureWarning）
+    ratio[d["範疇"].astype(str).str.strip().eq("") | rep.isna()] = ""
+    d["潛在調整金額佔報告投資金額比例"] = ratio
     return d
 
 
@@ -3468,6 +3472,7 @@ def main():
     template = _find("data/reports", entity, ".pptx", prefer=["2025"])
     global ENT_UP
     ent_up = ENT_UP = entity.upper()
+    print(f"build {BUILD_STAMP}")
     print(f"entity={ent_up}  feed={feed.name}  清單={qingdan.name if qingdan else '(冇)'}  "
           f"template={template.name if template else '(冇→用 13.33x7.5)'}")
 
