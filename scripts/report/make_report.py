@@ -717,6 +717,138 @@ def _cum_table(df, plan, cat=None):
     return pd.DataFrame(rows, columns=cols)
 
 
+def _collect_toc(prs, W, H):
+    """由【已起好嘅版】反推目錄：深色分隔頁 = 章節；內容頁 crumb「章節 | 子題」= 子項。
+    頁碼 = 插入目錄之後嘅位置（+1）。"""
+    ent, last = [], None
+    for i, sl in enumerate(prs.slides, 1):
+        full = any(sh.width / 914400.0 > W - 0.1 and sh.height / 914400.0 > H - 0.1
+                   for sh in sl.shapes)
+        pg = i + 1                                  # 目錄會插喺第 2 版
+        if full:
+            texts = [sh.text_frame.text.strip() for sh in sl.shapes
+                     if sh.has_text_frame and sh.text_frame.text.strip()]
+            no = next((t for t in texts if re.fullmatch(r"\d+\.", t)), "")
+            ttl = next((t for t in texts if len(t) >= 2 and t != "KPMG"
+                        and not re.fullmatch(r"\d+\.", t)), "")
+            if no and ttl:
+                ent.append((no, ttl.split("\n")[0], False, pg)); last = None
+            continue
+        for sh in sl.shapes:
+            if sh.has_text_frame and 0.28 < sh.top / 914400.0 < 0.46 and "  |  " in sh.text_frame.text:
+                sub = sh.text_frame.text.split("  |  ")[-1].strip()
+                sub = re.sub(r"（\d+/\d+）$", "", sub).strip()
+                if sub and sub != last:
+                    ent.append(("", sub, True, pg)); last = sub
+                break
+    return ent
+
+
+def _renumber_footers(prs, W, H):
+    """插咗目錄之後，全份『初稿 N』重編（頁碼喺建版時已寫死）。"""
+    for i, sl in enumerate(prs.slides, 1):
+        for sh in sl.shapes:
+            if not sh.has_text_frame or sh.top / 914400.0 < H - 0.45:
+                continue
+            for para in sh.text_frame.paragraphs:
+                for r in para.runs:
+                    if r.text.startswith("初稿"):
+                        r.text = f"初稿　{i}"
+
+
+def _move_slide(prs, frm, to):
+    """把第 frm 版（0-based）搬去 to。"""
+    lst = prs.slides._sldIdLst
+    ids = list(lst)
+    lst.remove(ids[frm]); lst.insert(to, ids[frm])
+
+
+def render_toc(prs, ent_up, entries):
+    """報告 slide 7 目錄：六大章節 + 子項 + 頁碼（頁碼喺 build 完先知 → 由 caller 傳）。
+    子項多過一版就自動分版。"""
+    avail = L.CONTENT_BOTTOM - (L.HEAD_Y + 0.06) - 0.55
+    pages, cur, used = [], [], 0.0
+    for e in entries:
+        h = 0.30 if e[2] else 0.34
+        if cur and used + h > avail:
+            pages.append(cur); cur, used = [], 0.0
+        cur.append(e); used += h
+    if cur:
+        pages.append(cur)
+    for pi, page in enumerate(pages):
+        _render_toc_page(prs, ent_up, page, _pg(pi + 1, len(pages)))
+
+
+def _render_toc_page(prs, ent_up, entries, suffix=""):
+    slide, W, H, top = _page(prs, 0, f"{ent_up} 2025年年度投資計劃執行情況審查專項工作報告  |  目錄",
+                             None)
+    L.put(slide, L.MARGIN, top, W - 2 * L.MARGIN, 0.35, "目錄" + suffix, size=18, bold=True, color=HDR)
+    y = top + 0.55
+    for no, title, sub, pg in entries:
+        L.put(slide, L.MARGIN, y, 0.6, 0.26, no, size=L.SZ_BODY_HEAD, bold=True, color=HDR)
+        L.put(slide, L.MARGIN + 0.62, y, W - 2 * L.MARGIN - 1.5, 0.26, title,
+              size=L.SZ_BODY_HEAD, bold=not sub, color=HDR if not sub else L.INK)
+        if pg:
+            L.put(slide, W - L.MARGIN - 0.7, y, 0.7, 0.26, str(pg), size=L.SZ_BODY,
+                  color=L.GREY, align=PP_ALIGN.RIGHT)
+        y += 0.30 if sub else 0.34
+    L.source_note(slide, W, note="")
+
+
+def render_visit_summary(prs, ent_up, df, threshold=2000):
+    """報告 slide 71『設施建設項目現場走訪情況匯總』：樣本選取標準 + 樣本量表。
+    全部由 feed 計（capex 項目母體 vs 走訪樣本），冇外部資料都做到。"""
+    cap = df[df["final_capex_opex"] == "Capex"].copy()
+    cap = cap[cap["dicj code"].astype(str).str.match(r"^項目\s*\d")]
+    if cap.empty:
+        return
+    g = cap.groupby(["ng_scope", "dicj code"]).agg(報告=("調整前_萬", "sum")).reset_index()
+    n_all, amt_all = len(g), float(g["報告"].sum())
+    sel = g[g["報告"] >= threshold]
+    n_sel, amt_sel = len(sel), float(sel["報告"].sum())
+    rows = pd.DataFrame([
+        {"項目": "設施建設（資本性支出）項目母體", "項目數量": n_all, "涉及金額": round(amt_all, 1),
+         "佔母體金額比例": 1.0},
+        {"項目": f"現場走訪樣本（單一項目資本性支出 ≥ {threshold:,.0f} 萬澳門元）",
+         "項目數量": n_sel, "涉及金額": round(amt_sel, 1),
+         "佔母體金額比例": (amt_sel / amt_all if amt_all else None)},
+        {"項目": "未列入走訪樣本", "項目數量": n_all - n_sel,
+         "涉及金額": round(amt_all - amt_sel, 1),
+         "佔母體金額比例": ((amt_all - amt_sel) / amt_all if amt_all else None)},
+    ])
+    head = (f"我們在制定本次審查工作範圍時，計劃就{ent_up}報告投資金額中重大的設施建設項目開展現場走訪。"
+            f"我們根據管理層提供的投資項目底層財務明細，就設施建設（資本性支出）項目共{n_all}個"
+            f"（涉及{_amt(amt_all)}）作為母體，選取單一項目資本性支出達{threshold:,.0f}萬澳門元或以上之"
+            f"{n_sel}個項目進行現場走訪，涉及金額{_amt(amt_sel)}，佔母體金額"
+            f"{_pct(amt_sel / amt_all) if amt_all else '—'}。")
+    render_generic(prs, f"{ent_up} 設施建設項目現場走訪情況匯總", rows, sec=3,
+                   crumb="其他信息  |  本次審查工作執行的程序匯總", headline=head, side=False,
+                   note="註：金額單位為萬澳門元；母體為報告投資金額中歸類為設施建設（資本性支出）之項目。")
+
+
+def render_artwork(prs, ent_up, biao2_dir="data/表2", entity="mgm"):
+    """報告 slide 101『藝術品展出情況清單』：表2 附件『藝術品』sheet 逐件列示。"""
+    cols, body = B2.load_artwork(biao2_dir, entity, log=print)
+    if not cols or not body:
+        return
+    KEEP = ["名稱", "類別", "Artist", "購入", "當前位置", "當前狀態", "展出紀錄"]
+    idx = [i for i, c in enumerate(cols) if any(k in c for k in KEEP)]
+    if not idx:
+        idx = list(range(min(7, len(cols))))
+    hdr = ["序號"] + [cols[i][:14] for i in idx]
+    rows = pd.DataFrame([[str(n)] + [body[n - 1][i][:60] for i in idx]
+                         for n in range(1, len(body) + 1)], columns=hdr)
+    st_i = next((i for i, c in enumerate(cols) if "當前狀態" in c), None)
+    shown = sum(1 for r in body if st_i is not None and "展出" in r[st_i]) if st_i is not None else 0
+    head = (f"下表列示{ent_up}已購入之藝術品共{len(body)}件之展出情況"
+            + (f"，其中{shown}件現正展出，{len(body) - shown}件未在展出中" if st_i is not None else "")
+            + "。藝術品之社會價值須透過面向公眾持續展出方能體現，故其展出情況為本次審查"
+              "「未完全實現投資目的的投資支出」之判斷依據。")
+    render_generic(prs, f"{ent_up} 藝術品展出情況清單", rows, sec=5,
+                   crumb="附件  |  藝術品展出情況清單", headline=head, side=False,
+                   note="資料來源：承批公司提供之藝術品清單（審查底稿表2 附件），畢馬威分析")
+
+
 def render_cumulative(prs, ent_up, df, plan, cat=None):
     """2.5 截至2025年末投資金額概覽（scan slide 26）。"""
     tbl = _cum_table(df, plan, cat)
@@ -1433,10 +1565,25 @@ def main():
             R.render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns),
                            ent_up=ent_up, sec=3, crumb=f"{S4}  |  單個項目審查結果匯總")
 
-    # ⑥ 附件二 現場走訪（slide 93-100）
+    render_visit_summary(prs, ent_up, sdf)      # 報告 slide 71 走訪情況匯總（樣本標準+樣本量）
+
+    # ⑥ 附件（slide 93-105）
+    divider(prs, "附件", "6")
     if narr:
-        divider(prs, "附件", "6")
         render_site_visits(prs, ent_up, sdf, narr)
+    render_artwork(prs, ent_up, av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
+                   entity)                      # 報告 slide 101 藝術品展出情況清單
+
+    # 目錄（報告 slide 7）：起完全部版先知頁碼 → 砌好插去第 2 版，再全份重編頁碼
+    _W, _H = L.size_of(prs)
+    toc = _collect_toc(prs, _W, _H)
+    if toc:
+        n0 = len(prs.slides._sldIdLst)
+        render_toc(prs, ent_up, toc)
+        for k in range(len(prs.slides._sldIdLst) - n0):        # 目錄可能多過一版
+            _move_slide(prs, n0 + k, 1 + k)
+        _renumber_footers(prs, _W, _H)
+        print(f"    目錄：{sum(1 for e in toc if not e[2])} 章 / {sum(1 for e in toc if e[2])} 子項")
 
     if tmpl:      # template mode：重編 slide 高號，徹底避開 template 殘留 orphan part 撞名 corruption
         _renumber_slides(prs)

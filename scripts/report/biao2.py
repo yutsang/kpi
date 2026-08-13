@@ -191,6 +191,43 @@ def load_biao2_struct(folder, entity, log=lambda *a: None):
     return out
 
 
+# 藝術品清單（報告 slide 101「藝術品展出情況清單」）：喺表2 附件 sheet，唔跟標準 33 欄
+ART_FIELDS = ["購入時間", "Artwork", "名稱", "類別", "產權歸屬", "Artist",
+              "購入", "添置原因", "展出紀錄", "當前位置", "當前狀態", "未來處置"]
+
+
+def load_artwork(folder, entity, log=lambda *a: None):
+    """表2 附件『藝術品』sheet → (欄名 list, 行 list)。冇就回 (None, [])。"""
+    d = Path(folder)
+    if not d.exists():
+        return None, []
+    for p in sorted(d.rglob("*.xls*")):
+        if p.name.startswith("~$") or not _match_entity(p.name, entity.lower()):
+            continue
+        try:
+            wb = IB.load_wb(p)
+        except Exception:
+            continue
+        for sn in wb.sheetnames:
+            if "藝術品" not in sn and "艺术品" not in sn:
+                continue
+            rows = [r for i, r in enumerate(wb[sn].iter_rows(values_only=True)) if i < 400]
+            hr = next((i for i, r in enumerate(rows[:8])
+                       if sum(1 for v in (r or []) if any(k in _txt(v) for k in ART_FIELDS)) >= 4), None)
+            if hr is None:
+                continue
+            hdr = [_txt(v) for v in rows[hr]]
+            keep = [i for i, h in enumerate(hdr) if h]
+            body = []
+            for r in rows[hr + 1:]:
+                vals = [_txt(r[i]) if i < len(r) else "" for i in keep]
+                if sum(1 for v in vals if v) >= 3:
+                    body.append(vals)
+            log(f"  · 藝術品清單：{p.name}｜{sn} → {len(body)} 件 × {len(keep)} 欄")
+            return [hdr[i] for i in keep], body
+    return None, []
+
+
 def b2rec(b2s, ng_scope, code):
     """由 (ng_scope, code) 攞 structured rec（撞號先試 exact）。"""
     g = (ng_scope == "gaming")
