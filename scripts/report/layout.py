@@ -162,19 +162,19 @@ def blank(prs):
     return prs.slides.add_slide(lay)
 
 
-def _tb(slide, x, y, w, h):
+def _tb(slide, x, y, w, h, wrap=True):
     box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     tf = box.text_frame
-    tf.word_wrap = True
+    tf.word_wrap = wrap
     tf.margin_left = tf.margin_right = Emu(0)
     tf.margin_top = tf.margin_bottom = Emu(0)
     return box
 
 
 def put(slide, x, y, w, h, text, *, size=8, bold=False, color=INK, align=PP_ALIGN.LEFT,
-        italic=False, font=None):
-    """一行/一段文字框。"""
-    box = _tb(slide, x, y, w, h)
+        italic=False, font=None, wrap=True):
+    """一行/一段文字框。wrap=False 用喺一定要一行嘅嘢（breadcrumb 頁籤）。"""
+    box = _tb(slide, x, y, w, h, wrap)
     p = box.text_frame.paragraphs[0]
     p.alignment = align
     p.font.size = Pt(size); p.font.name = FONT_NUM; set_ea(p.font)   # 空段落唔好跌返 theme 預設
@@ -184,18 +184,91 @@ def put(slide, x, y, w, h, text, *, size=8, bold=False, color=INK, align=PP_ALIG
     return box
 
 
+BAND = RGBColor(0xF2, 0xF2, 0xF2)          # breadcrumb 淺灰底（scan 頂部 banner）
+
+
+def _rect(slide, x, y, w, h, fill, line=None):
+    sh = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    sh.fill.solid(); sh.fill.fore_color.rgb = fill
+    if line is None:
+        sh.line.fill.background()
+    else:
+        sh.line.color.rgb = line; sh.line.width = Pt(0.5)
+    sh.shadow.inherit = False
+    return sh
+
+
+def _name(shape, nm):
+    try:
+        shape.name = nm
+    except Exception:      # noqa: BLE001 — 改唔到名只係少咗 hyperlink，唔好炸咗成個 build
+        pass
+
+
 def breadcrumb(slide, W, active=0, entity="MGM"):
-    """頂 nav：六大章節，當前 navy 粗體，其餘灰（對 scan 每版頂部）。"""
-    box = _tb(slide, MARGIN - 0.23, CRUMB_Y, W - 1.6, 0.18)
-    p = box.text_frame.paragraphs[0]
-    for i, s in enumerate(SECTIONS):
+    """頂 nav（對 scan p-23 放大）：白底、頁籤用「｜」分隔，當前頁籤 navy 粗體、其餘淺灰，
+    右邊 entity + ◀ ⌂ ▶ 三粒圓掣。shape 改名做 nav:* ，wire_nav() 事後駁內部 hyperlink。"""
+    x0 = MARGIN - 0.23
+    d, gapc = 0.185, 0.05                                  # 圓掣直徑 / 間距
+    right = W - x0
+    for i, (nm, ch) in enumerate((("next", "▶"), ("home", "⌂"), ("prev", "◀"))):
+        cx = right - d - i * (d + gapc)
+        sh = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(cx), Inches(CRUMB_Y - 0.035),
+                                    Inches(d), Inches(d))
+        sh.fill.solid(); sh.fill.fore_color.rgb = WHITE
+        sh.line.color.rgb = NAVY; sh.line.width = Pt(0.75); sh.shadow.inherit = False
+        _name(sh, f"nav:{nm}")
+        tf = sh.text_frame
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = Emu(0)
+        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
+        r = p.add_run(); r.text = ch
+        setfont(r, 6.0, bold=True, color=NAVY)
+    ex = right - 3 * (d + gapc)                            # entity 靠圓掣左邊
+    put(slide, ex - 0.85, CRUMB_Y, 0.8, 0.18, entity, size=SZ_CRUMB, bold=True,
+        color=INK, align=PP_ALIGN.RIGHT)
+    sep, avail = " ｜ ", (ex - 0.92) - x0
+    # ×1.08：text_w 對粗體中文估細咗少少，唔留鬆位頁籤會撞埋一齊
+    widths = [text_w(t, SZ_CRUMB) * 1.08 / 72.0 for t in SECTIONS]
+    sw = text_w(sep, SZ_CRUMB) / 72.0
+    scale = min(1.0, avail / (sum(widths) + sw * (len(SECTIONS) - 1)))
+    x = x0
+    for i, t in enumerate(SECTIONS):
         if i:
-            sep = p.add_run(); sep.text = "  |  "
-            setfont(sep, SZ_CRUMB, color=RGBColor(0xC8, 0xC8, 0xC8))
-        r = p.add_run(); r.text = s
-        setfont(r, SZ_CRUMB, bold=(i == active), color=NAVY if i == active else LGREY)
-    put(slide, W - 1.05, CRUMB_Y, 0.85, 0.18, f"{entity}  ◀ ⌂ ▶", size=SZ_CRUMB,
-        color=LGREY, align=PP_ALIGN.RIGHT)
+            put(slide, x, CRUMB_Y, sw * scale + 0.03, 0.18, sep, size=SZ_CRUMB * scale,
+                color=LGREY, wrap=False)
+            x += sw * scale
+        w = widths[i] * scale
+        _name(put(slide, x, CRUMB_Y, w + 0.05, 0.18, t, size=SZ_CRUMB * scale, wrap=False,
+                  bold=(i == active), color=NAVY if i == active else LGREY), f"nav:sec{i}")
+        x += w
+
+
+def _hlink(shape, rid):
+    """畀 shape 內所有 run 加內部跳頁 hyperlink（a:hlinkClick + ppaction://hlinksldjump）。
+    hlinkClick 喺 CT_TextCharacterProperties 排 latin/ea 之後 → append 就啱序。"""
+    for p in shape.text_frame.paragraphs:
+        for r in p.runs:
+            rPr = r._r.get_or_add_rPr()
+            h = rPr.makeelement(qn("a:hlinkClick"),
+                                {qn("r:id"): rid, "action": "ppaction://hlinksldjump"})
+            rPr.append(h)
+
+
+def wire_nav(prs, sec_slide=None, home=0):
+    """全部 slide 砌完（連目錄插咗、重排咗）之後至駁：◀/▶ = 上/下頁、⌂ = 目錄、
+    頁籤 = 該章分隔頁。sec_slide = {章 index: slide index}。"""
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    slides = list(prs.slides)
+    n = len(slides)
+    for i, s in enumerate(slides):
+        tgt = {"nav:prev": max(i - 1, 0), "nav:next": min(i + 1, n - 1), "nav:home": home}
+        for k, v in (sec_slide or {}).items():
+            tgt[f"nav:sec{k}"] = v
+        for sh in s.shapes:
+            j = tgt.get(sh.name)
+            if j is None or j == i or not sh.has_text_frame:
+                continue
+            _hlink(sh, s.part.relate_to(slides[j].part, RT.SLIDE))
 
 
 def footer(slide, W, H, page):
@@ -410,6 +483,7 @@ def prose(box, items, *, head_size=SZ_BODY_HEAD, body_size=SZ_BODY, gap=6):
     first = True
     for head, body in items:
         if head:
+            head = str(head).rstrip("：:")        # 項目組：小標題唔應該有冒號
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             p.space_before = Pt(0 if first else gap); p.space_after = Pt(1)
             p.font.size = Pt(head_size); p.font.name = FONT_NUM; set_ea(p.font)
