@@ -177,15 +177,23 @@ def _adj_prompt(adj_type, amt_wan, projects):
             f"最後點出審查建議（通常為建議剔除／調減）。\n\n{ctx}")
 
 
-def _cat_prompt(sub, rate_pct, content, reason, b2=""):
+def _cat_prompt(sub, rate_pct, projects, reason, b2=""):
+    """projects = [(序號, 名稱, 報告金額萬, 實際投資內容)]，按金額大到細。
+    ⚠ 一定要逐個項目【點名】—— 之前只餵一個項目嘅內容去寫成個範疇，讀者分唔清邊句開始
+      講新項目（項目組 2026-08-13 反映）。"""
+    lines = []
+    for code, name, amt, content in projects[:3]:
+        lines.append(f"- {code}「{name}」（報告投資金額 {amt:,.0f} 萬澳門元）：{str(content)[:320]}")
     ctx = (f"投資範疇：{sub}\n投資計劃金額完成率：{rate_pct}\n"
-           f"該範疇實際投資內容（項目清單）：{content[:500]}\n"
-           f"管理層變更原因／業務解釋：{reason[:340]}\n"
+           f"該範疇金額最大嘅投資項目（項目清單）：\n" + "\n".join(lines) + "\n"
+           f"管理層變更原因／業務解釋：{str(reason)[:340]}\n"
            f"表2 補充（只可攞嚟豐富『投資內容』，例如子項目／活動場次／金額明細；"
-           f"切勿抄佢嘅審計措辭或調整理由）：{b2[:700]}")
-    return (f"請為承批公司投資執行報告寫一句『按範疇的項目概況』（約70-140字），"
-            f"格式：「{sub}：主要包括……（實際投資咗啲乜，如有具體子項目／活動場次請寫）。"
-            f"投資計劃金額完成率為{rate_pct}，主要由於……（管理層業務原因）」。"
+           f"切勿抄佢嘅審計措辭或調整理由）：{str(b2)[:700]}")
+    return (f"請為承批公司投資執行報告寫一句『按範疇的項目概況』（約90-160字）。\n"
+            f"★格式：「主要包括{{項目序號}}「{{項目名稱}}」……；{{項目序號}}「{{項目名稱}}」……。"
+            f"投資計劃金額完成率為{rate_pct}，主要由於……（管理層業務原因）」\n"
+            f"★【每個項目必須先寫返項目序號同項目名稱】先講佢做咗乜，項目與項目之間用「；」分開，"
+            f"令讀者一眼睇到邊句係講邊個項目 —— 唔可以將幾個項目嘅內容混埋一齊寫。\n"
             f"完成率原因只用管理層業務解釋，唔好用審計／調整措辭。\n\n{ctx}")
 
 
@@ -278,16 +286,18 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
         if not isinstance(rate, (int, float)) or pd.isna(rate):
             continue
         scope = "gaming" if sub.startswith("博彩") else "non_gaming"
-        content = reason = b2t = ""
+        projs, reason, b2t = [], "", ""
         for _, pp in proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False).iterrows():
             nr = N.nlook(narr, scope, pp["dicj code"])
-            content = content or nr.get("實際投資內容", "")
+            if len(projs) < 3:
+                projs.append((str(pp["dicj code"]), str(nr.get("項目名稱", "") or pp["dicj code"]),
+                              float(pp["調整前_萬"] or 0), nr.get("實際投資內容", "")))
             reason = reason or nr.get("管理層解釋", "")   # 業務原因；唔用 KPMG分析發現（審計腔）
-            if not b2t:
-                b2t = B2.b2text(b2, scope, pp["dicj code"])
-            if content and reason and b2t:
+            b2t = b2t or B2.b2text(b2, scope, pp["dicj code"])
+            if len(projs) >= 3 and reason and b2t:
                 break
-        tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", content, reason, b2t), "low", SYS_CAT))
+        tasks.append(("cat", sub, _cat_prompt(sub, f"{rate*100:.1f}%", projs, reason, b2t),
+                      "low", SYS_CAT))
 
     # ── 表旁 comment（scan p-10~p-13 表左＋敘述右）：由表格數字 + 清單/表2 來源寫 ──
     for bk in S.BUCKET_ORDER[1:]:                       # 2024 / 2023 期後概覽

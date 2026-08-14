@@ -43,7 +43,7 @@ PALETTE = {  # 公司 template theme 實際配色（--spec 讀出，2026-08-12�
     "005EB8": "Medium Blue", "0091DA": "Light Blue",
     "483698": "Violet", "470A68": "Purple", "6D2077": "Light Purple", "00A3A1": "Green",
     "FFFFFF": "White", "EEF1F8": "tint-section", "D9E1F2": "tint-subtotal",
-    "BDD7EE": "tint-total", "BFBFBF": "格線", "222222": "內文", "333333": "內文",
+    "BDD7EE": "tint-total", "BFBFBF": "格線", "F2F2F2": "breadcrumb banner（lt2 派生）", "222222": "內文", "333333": "內文",
     "595959": "註", "8C8C8C": "breadcrumb", "C8C8C8": "分隔", "0C233C": "封面深底",
     "C8C8D0": "分隔頁副題",
 }
@@ -415,6 +415,9 @@ def _runs(tf):
     return out
 
 
+_ATOM = re.compile(r"[0-9A-Za-z]+(?:[.,%/\-][0-9A-Za-z]+)*%?|[\s\S]")
+
+
 def _draw_text(dr, runs, x, y, w, scale, *, align="LEFT", valign_h=None):
     """畫 wrap 文字（逐 run 接住排，中英文分開量度）。回結束 y。"""
     for _al, rs in runs:
@@ -426,24 +429,26 @@ def _draw_text(dr, runs, x, y, w, scale, *, align="LEFT", valign_h=None):
         line, lw = [], 0.0
         maxw = w * 72 * scale
         for text, sz, bold, rgb in rs:
-            for ch in text:
-                if ch == "\t":                       # hanging indent tab
+            # ★ 逐「原子」排：中文一字一原子，但英數/百分比（144.5%）當一整嚿唔可以拆
+            #   （之前逐字拆 → preview 見到「100\n%」、「6\n2.2%」，PowerPoint 其實唔會咁斷）
+            for atom in _ATOM.findall(text):
+                if atom == "\t":                     # hanging indent tab
                     tgt = 0.24 * 72 * scale
                     if lw < tgt:
                         line.append((" ", _font(False, False, max(6, int(round(sz * scale)))), rgb))
                         lw = tgt
                     continue
-                if ch == "\n":                       # <a:br/> 硬換行
+                if atom == "\n":                     # <a:br/> 硬換行
                     _flush(dr, line, x, y, maxw, scale, align)
                     y += lh; line, lw = [], 0.0
                     continue
-                cjk = L._is_cn(ch)
-                f = _font(cjk, bold, max(6, int(round(sz * scale))))
-                cw = f.getlength(ch)
+                f = _font(L._is_cn(atom[0]), bold, max(6, int(round(sz * scale))))
+                cw = f.getlength(atom)
                 if lw + cw > maxw and line:
                     _flush(dr, line, x, y, maxw, scale, align)
                     y += lh; line, lw = [], 0.0
-                line.append((ch, f, rgb)); lw += cw
+                for ch in atom:
+                    line.append((ch, f, rgb)); lw += f.getlength(ch)
         if line:
             _flush(dr, line, x, y, maxw, scale, align)
             y += lh
@@ -512,10 +517,13 @@ def preview(path, dpi=110, only=None):
                 continue
             if sh.shape_type is not None and not sh.has_text_frame:
                 continue
+            oval = str(getattr(sh, "shape_type", "")).startswith("OVAL")
             try:
                 if sh.fill.type is not None and sh.fill.type == 1:
                     fc = sh.fill.fore_color.rgb
-                    dr.rectangle([x, y, x + w, y + h], fill=(fc[0], fc[1], fc[2]))
+                    box, col = [x, y, x + w, y + h], (fc[0], fc[1], fc[2])
+                    (dr.ellipse if oval else dr.rectangle)(box, fill=col,
+                                                          outline=(0, 51, 141) if oval else None)
             except Exception:
                 pass
             if sh.has_text_frame and sh.text_frame.text.strip():

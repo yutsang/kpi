@@ -469,6 +469,24 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
     L.source_note(slide, W)
 
 
+def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, table_name=None,
+                          note=None):
+    """同 render_overview_page，但右邊敘述長就自動分版，【左邊同一個表逐版重複】。
+    對 scan slide 11-14：1.3 四版全部都係左邊 1.2 嗰個整體概況表 + 右邊唔同段落。"""
+    if not bullets:
+        return
+    W, _H = L.size_of(prs)
+    left_w = W * 0.60
+    rx = L.MARGIN + left_w + 0.22
+    colw = W - rx - L.MARGIN
+    top = L.HEAD_Y + L.head_h(f"{headline}（1/9）", W)[0] + 0.10 + (0.20 if table_name else 0)
+    pages = L.fit_prose(bullets, colw, L.CONTENT_BOTTOM - top,
+                        head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
+    for pi, page in enumerate(pages):
+        render_overview_page(prs, crumb, headline + _pg(pi + 1, len(pages)), table_df, page,
+                             sec=sec, table_name=table_name, note=note)
+
+
 def _total_line(df):
     """由表自己嘅『總計』行砌一句機械導語（避免「淨得個表冇文字」）。"""
     cols = list(df.columns)
@@ -542,17 +560,27 @@ def _load_budget(entity):
     return {}
 
 
+def _proj_counts(sdf, plan):
+    """(n_plan, n_impl, n_zero) —— 表尾數量行同 1.2 敘述共用，保證三個數同一母體、自洽。
+    plan25 = 清單 2025 計劃金額 > 0 嘅碼（0 行唔算「獲批開展」，否則出 256 個）；
+    spent  = feed 有報告金額嘅碼。冇清單就退化成 spent（n_zero=0，敘述會略去嗰句）。"""
+    d = sdf[sdf["_bucket"] == S.BUCKET_ORDER[0]]
+    plan25 = {k for k, v in ((plan or {}).get(25, {}) or {}).items()
+              if isinstance(v, (int, float)) and v > 0}
+    spent = {(str(r["ng_scope"]) == "gaming", B._norm(r["dicj code"]))
+             for _, r in d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]
+             .drop_duplicates(["ng_scope", "dicj code"]).iterrows()}
+    if not plan25:
+        return len(spent), len(spent), 0
+    return len(plan25), len(plan25 & spent), max(len(plan25) - len(plan25 & spent), 0)
+
+
 def _overview_extra(ov, plan, sdf, budget, ent_up):
     """1.2 概況表尾段（scan slide 11）：原計劃未實施／已實施項目數量 + 承諾的10年投資預算 + 佔比。
     項目數量計得到；10年預算要 config，冇就唔出嗰兩行。"""
     cols = list(ov.columns)
-    d = sdf[sdf["_bucket"] == S.BUCKET_ORDER[0]]
-    n_impl = int(d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]["dicj code"].nunique())
-    # ⚠ 計劃金額 = 0 嘅行唔算「獲批開展嘅投資項目」（清單有大量 0 行；
-    #   之前 len() 全部照計 → 出 256 個，報告係 95 個）
-    n_plan = sum(1 for v in (plan.get(25, {}) or {}).values()
-                 if isinstance(v, (int, float)) and v > 0) if plan else n_impl
-    rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: max(n_plan - n_impl, 0)},
+    n_plan, n_impl, n_zero = _proj_counts(sdf, plan)
+    rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: n_zero},
             {cols[0]: "投資執行報告中申報已實施的投資項目數量", cols[1]: n_impl}]
     # 10年投資預算：全 cell 搜過清單 + 表2 都冇（2026-08-12 確認），嚟自承批合同。
     # 冇 config 就【照出行、留空】—— 保持報告結構，一眼睇到係待填而唔係漏咗（user 2026-08-12）。
@@ -754,6 +782,21 @@ def _renumber_footers(prs, W, H):
                 for r in para.runs:
                     if r.text.startswith("初稿"):
                         r.text = f"初稿　{i}"
+
+
+def _sec_slides(prs, W, H):
+    """{章 index(0-based): slide index} —— 深色分隔頁上嘅「N.」認章號，供 breadcrumb 頁籤跳頁。"""
+    out = {}
+    for i, sl in enumerate(prs.slides):
+        if not any(sh.width / 914400.0 > W - 0.1 and sh.height / 914400.0 > H - 0.1
+                   for sh in sl.shapes):
+            continue
+        for sh in sl.shapes:
+            m = sh.has_text_frame and re.fullmatch(r"(\d+)\.", sh.text_frame.text.strip())
+            if m:
+                out.setdefault(int(m.group(1)) - 1, i)
+                break
+    return out
 
 
 def _move_slide(prs, frm, to):
@@ -1058,7 +1101,7 @@ def _prose_slide(prs, title, bullets, headline=None, *, sec=0):
         L.source_note(slide, W, more=(pi < len(pages) - 1))
 
 
-def _headline(ent_up, ov, df, plan, n_zero=None):
+def _headline(ent_up, ov, df, plan):
     """slide 10 整體投資支出概況 → 回 (headline 句, bullets)。全 mechanical 由數字生成。"""
     tot = ov[ov["範疇"] == "總計"]
     if not len(tot):
@@ -1076,13 +1119,9 @@ def _headline(ent_up, ov, df, plan, n_zero=None):
 
     d = df.copy()
     d["_adj"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0)
-    codes = d["dicj code"].astype(str)
-    n_impl = d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]["dicj code"].nunique()
-    # ⚠ 計劃金額 = 0 嘅行唔算「獲批開展嘅投資項目」（清單有大量 0 行；
-    #   之前 len() 全部照計 → 出 256 個，報告係 95 個）
-    n_plan = sum(1 for v in (plan.get(25, {}) or {}).values()
-                 if isinstance(v, (int, float)) and v > 0) if plan else n_impl
-    n_zero = max(n_plan - n_impl, 0) if n_zero is None else n_zero
+    # ⚠ 三個數要自洽：計劃(母體) ⊇ 已實施；之前 n_impl 數 feed 全部有支出嘅碼，
+    #   同 n_plan 唔同母體 → 出現「實施 112 > 計劃 89、0 個未發生」（項目組 2026-08-13 指出）
+    n_plan, n_impl, n_zero = _proj_counts(df, plan)
     n_adj = d[d["_adj"] != 0]["dicj code"].nunique()
     headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{_amt(plan_amt)}；"
                 f"{ent_up}提交的投資執行報告顯示2025年度投資金額約{_amt(report_amt)}"
@@ -1092,8 +1131,9 @@ def _headline(ent_up, ov, df, plan, n_zero=None):
         ("2025年度獲批的計劃投資金額與報告的投資金額：",
          f"根據{ent_up}提交的2025年度投資計劃方案與投資執行報告，{ent_up}獲批計劃開展{n_plan}個投資項目，"
          f"計劃投資金額約{_amt(plan_amt)}。投資執行報告顯示實際開展其中{n_impl}個投資項目"
-         f"（計劃中有{n_zero}個項目未發生投資金額），報告投資金額約{_amt(report_amt)}，"
-         f"報告投資計劃金額完成率為{_pct(rate)}。"),
+         # 0 個未發生就唔好寫「計劃中有0個項目未發生投資金額」（項目組 2026-08-13 指出係錯）
+         + (f"（計劃中有{n_zero}個項目未發生投資金額）" if n_zero else "")
+         + f"，報告投資金額約{_amt(report_amt)}，報告投資計劃金額完成率為{_pct(rate)}。"),
         ("2025年度投資支出金額的潛在調整事項：",
          f"我們在本次審查工作中發現，{ent_up}報告投資金額中存在部分投資支出可能不應確認為2025年度計劃的投資支出"
          f"（涉及{n_adj}個投資項目，合計約{_amt(adj_amt)}）。考慮潛在調減事項後，{ent_up} 2025年度投資支出金額"
@@ -1104,6 +1144,11 @@ def _headline(ent_up, ov, df, plan, n_zero=None):
 
 def _pct(v):
     return f"{v*100:.1f}%" if isinstance(v, (int, float)) and not pd.isna(v) else "—"
+
+
+def _trim(s):
+    """剝尾標點 —— 清單／表2 原文多數自帶「。」，接落我哋句式會變「。。」。"""
+    return str(s or "").strip().rstrip("。．.；;，,、 ")
 
 
 # ── 報告用字 helper（逐句對返 scan slide 10/11/15/19/23）────────────────────
@@ -1144,6 +1189,25 @@ def _cats_of(ov, col="報告投資金額", n=3, scope=None):
 def _pg(i, n):
     """scan 導語尾有頁碼標記『（1/2）』。"""
     return f"（{i}/{n}）" if n > 1 else ""
+
+
+def _zero_intro(ent_up, zi):
+    """報告 1.2 頁尾段：未發生投資項目嘅大致介紹（跨年／內部研究／取消），並指去 1.3。"""
+    if not zi:
+        return None
+    n, tot, groups = zi
+    seg = []
+    for kind, txt in (("跨年", "為跨年項目，{e}仍在就以前年度計劃項目進行持續投資，於2025年將投資額"
+                              "作為2023年度計劃或2024年度計劃期後投資金額進行申報"),
+                      ("內部研究", "個項目由於處於內部研究、計劃階段或未收到詳細指引未發生實際支出"),
+                      ("取消", "個項目已取消")):
+        g = groups.get(kind) or []
+        if not g:
+            continue
+        seg.append((f"其中{len(g)}個" if kind == "跨年" else f"{len(g)}") + txt.format(e=ent_up))
+    return ("未發生投資項目的大致介紹",
+            f"{ent_up}於2025年度的投資計劃中有{n}個非博彩項目未產生投資金額，"
+            + "；".join(seg) + "。請見後續「2025年度投資項目的整體執行概況」。")
 
 
 def _bucket_headline(ent_up, bucket, ov):
@@ -1234,8 +1298,9 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
         L.source_note(slide, W, more=(pi < len(half_pages) - 1))
 
 
-def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
-    """slide 13-14 按範疇的項目概況：LLM summary 優先，否則清單「主要包括…完成率X%…」。"""
+def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note=None):
+    """報告 slide 11-14（1.3 整體執行概況）：【左邊照舊擺 1.2 嗰個整體概況表】、右邊逐範疇敘述，
+    敘述長就分版（scan 係 1/4 … 4/4，四版嘅表一模一樣）。LLM summary 優先，否則清單抄字。"""
     if not narr:
         return
     llm_cat = (llm or {}).get("cat", {})
@@ -1263,6 +1328,7 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
                 reason = nr.get("管理層解釋", "")   # 業務原因；唔用 KPMG分析發現（審計腔）
             if content and reason:
                 break
+        content, reason = _trim(content), _trim(reason)   # 清單原文已有句號 → 唔剝就出「。。」
         summ = (content[:90] + "…") if len(content) > 90 else content
         rsn = ("，主要由於" + (reason[:80] + "…" if len(reason) > 80 else reason)) if reason else ""
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
@@ -1296,9 +1362,21 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None):
             f"在報告投資金額中，博彩項目的投資計劃金額完成率為{_pct(g_r)}，"
             f"非博彩項目的投資計劃金額完成率為{_pct(ng_r)}。考慮投資金額的潛在調整後，"
             f"{g_all100}，非博彩項目的投資計劃金額平均完成率為{_pct(ng_a)}，{ng_tail}。")
-    _prose_2col(prs, f"2025年度投資計劃執行情況概述  |  {ent_up} 2025年度投資項目的整體執行概況",
-                bullets, 12, sec=0, headline=head,
-                subtitle="若無特別說明，以下為承批公司2025年度投資執行報告的信息")
+    hi_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in
+                    cats[cats["投資計劃完成率"].apply(
+                        lambda v: isinstance(v, (int, float)) and not pd.isna(v) and v >= 1.0)]
+                    .sort_values("投資計劃完成率", ascending=False).iterrows())
+    lo_s = "、".join(f"{r['範疇']}（{_pct(r['投資計劃完成率'])}）" for _, r in
+                    cats[cats["投資計劃完成率"].apply(
+                        lambda v: isinstance(v, (int, float)) and not pd.isna(v) and v < 0.5)]
+                    .sort_values("投資計劃完成率").iterrows())
+    if hi_s:      # 報告：高/低完成率範疇擺喺 1.3 呢版（唔喺 1.2）
+        bullets.append(("報告投資金額完成率較高的範疇", f"{hi_s}。"))
+    if lo_s:
+        bullets.append(("報告投資金額完成率相對較低的範疇", f"{lo_s}。"))
+    render_overview_pages(prs, "2025年度投資計劃執行情況概述  |  2025年度投資項目的整體執行概況",
+                          head, ovx if ovx is not None else ov, bullets, sec=0, note=note,
+                          table_name=f"{ent_up} 2025年度計劃的整體投資支出概況")
 
 
 def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
@@ -1333,8 +1411,9 @@ def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
                 ruling = nr.get("跨司回覆", "") or nr.get("KPMG回覆", "")
             if reason and ruling:
                 break
-        r2 = (reason[:150] + "…") if len(reason) > 150 else reason
-        rl = ("跨司工作組／KPMG意見：" + (ruling[:90] + "…" if len(ruling) > 90 else ruling)) if ruling else ""
+        reason, ruling = _trim(reason), _trim(ruling)
+        r2 = (reason[:150] + "…" if len(reason) > 150 else reason + "。") if reason else ""
+        rl = ("跨司工作組／KPMG意見：" + (ruling[:90] + "…" if len(ruling) > 90 else ruling + "。")) if ruling else ""
         body = f"主要涉及{names}等項目。{r2}{rl}" if (r2 or rl) else f"主要涉及{names}等項目。"
         bullets.append((no, f"{t}（{_amt(amt)}）：", body))
     return bullets
@@ -1359,10 +1438,7 @@ def _exec_bullets(ent_up, ov):
         ("", f"考慮投資金額的潛在調整後，博彩項目的投資計劃完成率為{_pct(ga)}，"
              f"非博彩項目的平均完成率為{_pct(nga)}。"),
     ]
-    if high_s:      # 冇符合條件就唔好出個空 bullet（原本會印「—。」）
-        bullets.append(("報告投資金額完成率較高的範疇包括：", f"{high_s}。"))
-    if low_s:
-        bullets.append(("報告投資金額完成率相對較低的範疇包括：", f"{low_s}。"))
+    # ⚠ 高/低完成率範疇喺報告係喺【1.3 整體執行概況】嗰版，唔喺 1.2（項目組 2026-08-13）
     return bullets
 
 
@@ -1480,23 +1556,25 @@ def main():
                  "潛在調整後投資金額 ／ 獲批的計劃投資金額。金額單位為萬澳門元。")
     if not ov.empty:      # slide 10-11：表左 + headline/執行敘述右（報告 2 欄式）
         zi = O.zero_investment_summary(sdf, plan, cat, narr, ent_up)
-        hl, hlb = _headline(ent_up, ov, sdf, plan, n_zero=(zi[0] if zi else None))
+        hl, hlb = _headline(ent_up, ov, sdf, plan)
         exb = _exec_bullets(ent_up, ov)
-        render_overview_page(prs, f"{S1}  |  {ent_up} 2025年度計劃的整體投資支出及執行概況",
-                             hl, _overview_extra(ov, plan, sdf, budget, ent_up).fillna(""),
-                             hlb + exb, sec=0,
+        zintro = _zero_intro(ent_up, zi)
+        ovx = _overview_extra(ov, plan, sdf, budget, ent_up).fillna("")
+        render_overview_page(prs, f"{S1}  |  2025年度計劃的整體投資支出概況",
+                             hl, ovx, hlb + exb + ([zintro] if zintro else []), sec=0,
                              table_name=f"{ent_up} 2025年度的整體投資支出概況", note=NOTE_RATE)
-        render_category_overview(prs, ent_up, ov, sdf, narr, llm)   # slide 13-14 逐範疇概況（LLM 優先）
+        # slide 11-14 逐範疇概況（LLM 優先）；表照 1.2 嗰個逐版重複，同 scan 一致
+        render_category_overview(prs, ent_up, ov, sdf, narr, llm, ovx=ovx, note=NOTE_RATE)
         zit = O.zero_investment_text(zi, ent_up)
         if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
-            _prose_slide(prs, f"{S1}  |  {ent_up} 2025年度計劃申報投資支出為零的項目",
+            _prose_slide(prs, f"{S1}  |  2025年度計劃申報投資支出為零的項目",
                          [("", x) for x in zit[1:]], headline=zit[0], sec=0)
     ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：表左 + 匯總敘述右
-    render_overview_page(prs, f"{S1}  |  {ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
+    render_overview_page(prs, f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總",
                          ahl, adj.fillna(""), ab, sec=0,
                          table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
                          note="註：金額單位為萬澳門元；括號表示調減。")
-    _prose_2col(prs, f"{S1}  |  {ent_up} 2025年度報告投資金額的潛在調整事項（詳述）",
+    _prose_2col(prs, f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總（詳述）",
                 _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6, sec=0,
                 headline=ahl)   # slide 16-17 詳述（LLM 優先）
 
@@ -1584,6 +1662,7 @@ def main():
             _move_slide(prs, n0 + k, 1 + k)
         _renumber_footers(prs, _W, _H)
         print(f"    目錄：{sum(1 for e in toc if not e[2])} 章 / {sum(1 for e in toc if e[2])} 子項")
+    L.wire_nav(prs, _sec_slides(prs, _W, _H), home=1 if toc else 0)   # ◀⌂▶ + 頁籤內部跳頁
 
     if tmpl:      # template mode：重編 slide 高號，徹底避開 template 殘留 orphan part 撞名 corruption
         _renumber_slides(prs)
