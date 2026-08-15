@@ -43,7 +43,7 @@ PALETTE = {  # 公司 template theme 實際配色（--spec 讀出，2026-08-12�
     "005EB8": "Medium Blue", "0091DA": "Light Blue",
     "483698": "Violet", "470A68": "Purple", "6D2077": "Light Purple", "00A3A1": "Green",
     "FFFFFF": "White", "EEF1F8": "tint-section", "D9E1F2": "tint-subtotal",
-    "BDD7EE": "tint-total", "BFBFBF": "格線", "000000": "小計/總計橫線", "808080": "欄組虛線", "F2F2F2": "breadcrumb banner（lt2 派生）", "222222": "內文", "333333": "內文",
+    "BDD7EE": "tint-total", "BFBFBF": "格線", "000000": "小計/總計橫線", "1E5C46": "表頭綠（設施/活動欄組）", "808080": "欄組虛線", "F2F2F2": "breadcrumb banner（lt2 派生）", "222222": "內文", "333333": "內文",
     "595959": "註", "8C8C8C": "breadcrumb", "C8C8C8": "分隔", "0C233C": "封面深底",
     "C8C8D0": "分隔頁副題",
 }

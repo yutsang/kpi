@@ -441,9 +441,10 @@ def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
 
 # ── from layout ──
 def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
-    """表頂 navy caption bar（重覆表名，對 scan 每張表都有）。"""
+    """表頂 caption bar（重覆表名，對 scan 每張表都有）。
+    ⚠ 用深色 HDR2 —— IMG_0441 量到 caption 條比表頭嗰排藍【深啲】，唔係同一隻色。"""
     bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.17))
-    bar.fill.solid(); bar.fill.fore_color.rgb = NAVY
+    bar.fill.solid(); bar.fill.fore_color.rgb = HDR2
     bar.line.fill.background(); bar.shadow.inherit = False
     tf = bar.text_frame
     tf.margin_top = tf.margin_bottom = Emu(0)
@@ -471,7 +472,19 @@ RULE = "000000"
 
 
 # ── from layout ──
-TEAL = RGBColor(0x00, 0xA3, 0xA1)
+HDR1 = NAVY
+
+
+# ── from layout ──
+HDR2 = RGBColor(0x0C, 0x23, 0x3C)
+
+
+# ── from layout ──
+HDR3 = RGBColor(0x1E, 0x5C, 0x46)
+
+
+# ── from layout ──
+TEAL = HDR3
 
 
 # ── from layout ──
@@ -498,13 +511,14 @@ def _edge(cell, side, *, w=9525, color=RULE, dash=None):
 
 # ── from layout ──
 def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.RIGHT,
-             color=None, wrap=True):
+             color=None, wrap=True, anchor=MSO_ANCHOR.MIDDLE):
     cell.margin_left = cell.margin_right = Emu(18000)
     cell.margin_top = cell.margin_bottom = Emu(9000)
-    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+    cell.vertical_anchor = anchor
     cell.fill.solid()
     cell.fill.fore_color.rgb = fill if fill is not None else WHITE
     tf = cell.text_frame; tf.word_wrap = wrap
+    tf.clear()          # merge 會把被合併格嘅字搬入 origin → 唔清就會出「萬澳門元萬澳門元」
     p = tf.paragraphs[0]; p.alignment = align
     txt = "" if text is None else str(text)
     if color is None:
@@ -580,7 +594,7 @@ def fit_blocks(blocks, widths, font, avail_h, hh):
 
 # ── from layout ──
 def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, hfont=SZ_TBL_HDR,
-               left_cols=1, fill_h=None, max_row_h=0.26, teal_cols=None):
+               left_cols=1, fill_h=None, max_row_h=0.26, hdr_cols=None):
     """畫 navy 表。subs=欄名（可含 \\n）；rows=[(kind, cells)]；widths=相對闊度（會 scale 到 w）。
     supers=[(label, c0, c1_exclusive)] 兩層表頭。fill_h=想填滿嘅高度（行數少時撐開行高，
     唔好剩一大橛白位；每行最多 max_row_h）。回 (bottom_y, 實際高度)。"""
@@ -601,23 +615,36 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
     tbl.first_row = False; tbl.horz_banding = False
     for i, v in enumerate(wid):
         tbl.columns[i].width = Inches(v)
-    # teal 表頭（IMG_0441 概覽表最右嗰組）——【要 caller 明示】：4.2 表都有「設施建設/活動舉辦」
-    #   欄但係 navy（scan p.24），所以唔可以淨靠欄名估。
-    teal_c = set(teal_cols or ())
+    # 三色欄組——【要 caller 明示】：4.2 表都有「設施建設/活動舉辦」欄但成排 navy（scan p.24），
+    #   所以唔可以淨靠欄名估。hdr_cols = {欄 index: 顏色}，冇指定就 HDR1。
+    hc = dict(hdr_cols or {})
     if supers:
         for c in range(ncol):
-            set_cell(tbl.cell(0, c), "", size=hfont, fill=NAVY, color=WHITE)
+            set_cell(tbl.cell(0, c), "", size=hfont, fill=hc.get(c, HDR1), color=WHITE)
+        # 一個欄組跨住兩隻表頭色（報告：潛在調整後 = 深藍嗰兩欄 + 綠嗰兩欄）→ 拆開兩格，
+        #   個 label 兩邊都寫（同 IMG_0441 一樣，「潛在調整後投資金額」出現兩次）。
         for label, c0, c1 in supers:
-            if c1 - c0 > 1:
-                tbl.cell(0, c0).merge(tbl.cell(0, c1 - 1))
-            hf = TEAL if all(c in teal_c for c in range(c0, c1)) else NAVY
-            set_cell(tbl.cell(0, c0), label or "", size=hfont + 0.5, bold=True, fill=hf,
-                     color=WHITE, align=PP_ALIGN.CENTER)
+            a = c0
+            while a < c1:
+                b = a + 1
+                while b < c1 and hc.get(b, HDR1) == hc.get(a, HDR1):
+                    b += 1
+                if b - a > 1:
+                    tbl.cell(0, a).merge(tbl.cell(0, b - 1))
+                set_cell(tbl.cell(0, a), label or "", size=hfont + 0.5, bold=True,
+                         fill=hc.get(a, HDR1), color=WHITE, align=PP_ALIGN.CENTER)
+                a = b
         tbl.rows[0].height = Emu(int(0.17 * 914400))
     for c, s in enumerate(subs):
-        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True,
-                 fill=TEAL if c in teal_c else NAVY, color=WHITE,
+        # 報告嘅欄名喺表頭【貼底】（wrap 做兩行時尤其明顯）
+        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True, anchor=MSO_ANCHOR.BOTTOM,
+                 fill=hc.get(c, HDR1), color=WHITE,
                  align=PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.CENTER)
+    # 角位：報告係一格（序號欄冇字），單位「萬澳門元」貼住最左
+    if left_cols >= 2 and not str(subs[0]).strip() and str(subs[1]).strip():
+        tbl.cell(nhdr - 1, 0).merge(tbl.cell(nhdr - 1, 1))
+        set_cell(tbl.cell(nhdr - 1, 0), subs[1], size=hfont, bold=True, anchor=MSO_ANCHOR.BOTTOM,
+                 fill=hc.get(0, HDR1), color=WHITE, align=PP_ALIGN.LEFT)
     tbl.rows[nhdr - 1].height = Emu(int(hsub * 914400))
     for ri, (kind, cells) in enumerate(rows, start=nhdr):
         bold = kind in ("sec", "subtot", "tot")
@@ -642,8 +669,7 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
         if kind in ("subtot", "tot"):
             for c in range(ncol):
                 _edge(tbl.cell(ri, c), "T")
-                if kind == "tot" or ri == last:
-                    _edge(tbl.cell(ri, c), "B")
+                _edge(tbl.cell(ri, c), "B")      # 報告：小計同總計【上下都有】幼線
     for ri in range(nhdr, nhdr + len(rows)):
         for c in gsep:
             _edge(tbl.cell(ri, c), "L", w=6350, color="808080", dash="sysDash")
@@ -1677,8 +1703,11 @@ def finding_summary(df):
 
 
 # ── from workbench ──
-_TRANSIENT = ("request is blocked", "429", "too many requests", "rate limit",
-              "service unavailable", "502", "503", "504", "timeout", "timed out")
+_RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504}
+
+
+# ── from workbench ──
+_TRANSIENT = ("too many requests", "rate limit", "timeout", "timed out")
 
 
 # ── from workbench ──
@@ -1687,6 +1716,14 @@ _BACKOFF = (3, 9, 25)
 
 # ── from workbench ──
 _RETRIES = len(_BACKOFF)
+
+
+# ── from workbench ──
+def _retryable(e):
+    sc = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+    if sc is not None:
+        return sc in _RETRY_STATUS
+    return any(k in str(e).lower() for k in _TRANSIENT)
 
 
 # ── from workbench ──
@@ -1853,8 +1890,8 @@ class Workbench:
                 hit = next((p for p in droppable if p in kw and p.replace("_", "") in msg), None)
                 if hit is not None:
                     kw.pop(hit, None); continue
-                # gateway 短暫擋（WAF「request is blocked」／429／5xx）→ 退避重試，唔好即刻放棄
-                if tries < _RETRIES and any(k in msg for k in _TRANSIENT):
+                # 塞車／上游 5xx → 退避重試；401/403 即刻放棄（重試極都一樣）
+                if tries < _RETRIES and _retryable(e):
                     time.sleep(_BACKOFF[tries]); tries += 1; continue
                 raise
         raise RuntimeError("chat 失敗：所有可 drop 參數都試過")
@@ -2672,6 +2709,18 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                                                 "finding", n=6)),
                       "medium", SYS_TBL_ADJ, True))
 
+    # ★ preflight：先試一個最平嘅 call。網關擋／key 唔啱嘅話即刻知，唔使等 60 個 task
+    #   逐個 fail（2026-08-15 白等 10 分鐘）。
+    try:
+        wb.chat("ok", "Reply with the single word: ok", reasoning_effort=None, max_tokens=5)
+    except Exception as e:
+        log(f"  ✗ LLM 連唔到（{type(e).__name__}: {_short_err(e)}）→ 跳過全部 {len(tasks)} 個 summary，"
+            "今次用清單／表2 原文 fallback。")
+        log("    403／blocked = 網關擋：check 係咪喺 KPMG 內網、key 有冇過期、charge code／region 啱唔啱。")
+        out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}, "bkt": {}}
+        outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
+        outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+        return out
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
     out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}, "bkt": {}}
     try:                                    # tqdm 進度條（冇裝就照 log 逐個）
@@ -2852,7 +2901,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 7e6a301 · bundled 2026-08-15 12:13"
+BUILD_STAMP = "base b8ba7b9 · bundled 2026-08-15 12:56"
 
 
 # ── from make_report ──
@@ -3090,7 +3139,7 @@ def _df_table(df, first_label=None):
     第一欄表頭：範疇表用「（萬澳門元）」（跟 scan 角位放單位），其餘用返欄名。"""
     cols = list(df.columns)
     if first_label is None:
-        first_label = ("序號" if cols[0] == "序號" else
+        first_label = ("" if cols[0] == "序號" else       # 報告個角位空白，單位喺隔離格
                        ("萬澳門元" if cols[0] == "範疇" else cols[0]))
     grouped = any("·" in c for c in cols)
     widths = [0.4 if c == "序號" else
@@ -3151,6 +3200,18 @@ _OV_GROUP = {
 
 
 # ── from make_report ──
+def _hdr_cols(subs, supers):
+    """概覽表三色欄組（對 IMG_0441）：設施建設/活動舉辦＝綠、潛在調整後嗰組＝深、其餘＝KPMG Blue。
+    ⚠ 只喺概覽表用；4.2 表同名欄組喺 scan p.24 係成排 navy。"""
+    out = {c: HDR3 for c, v in enumerate(subs) if any(k in str(v) for k in _TEAL_KEYS)}
+    for lab, c0, c1 in (supers or []):
+        if "潛在調整後" in str(lab):
+            for c in range(c0, c1):
+                out.setdefault(c, HDR2)
+    return out
+
+
+# ── from make_report ──
 def _overview_display(ov):
     """概覽表 → 顯示用：範疇前加【序號】（逐 scope 由 1 數起，section/小計/總計留空）+ 兩層表頭。"""
     if ov is None or ov.empty or "範疇" not in ov.columns:
@@ -3182,7 +3243,6 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         if table_name:
             top = caption_bar(slide, MARGIN, top, left_w, table_name)
         subs, rows, widths, supers = _df_table(_overview_display(table_df))
-        teal = [c for c, v in enumerate(subs) if any(k in str(v) for k in _TEAL_KEYS)]
         wid = [w * left_w / sum(widths) for w in widths]
         avail = CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
         hh = header_h(supers, subs, wid, SZ_TBL_HDR)
@@ -3192,7 +3252,7 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         tbl_bot, _ = draw_table(slide, MARGIN, top, left_w, subs, rows, widths,
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
                                   fill_h=avail, left_cols=2,   # 序號 + 範疇 都左對齊（對報告）
-                                  teal_cols=teal)
+                                  hdr_cols=_hdr_cols(subs, supers))
     if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
         put(slide, MARGIN, min(tbl_bot + 0.06, CONTENT_BOTTOM - 0.30), left_w, 0.3,
               note, size=SZ_NOTE - 1, italic=True, color=GREY)

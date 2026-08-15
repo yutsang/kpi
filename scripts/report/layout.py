@@ -313,9 +313,10 @@ def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
 
 
 def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
-    """表頂 navy caption bar（重覆表名，對 scan 每張表都有）。"""
+    """表頂 caption bar（重覆表名，對 scan 每張表都有）。
+    ⚠ 用深色 HDR2 —— IMG_0441 量到 caption 條比表頭嗰排藍【深啲】，唔係同一隻色。"""
     bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.17))
-    bar.fill.solid(); bar.fill.fore_color.rgb = NAVY
+    bar.fill.solid(); bar.fill.fore_color.rgb = HDR2
     bar.line.fill.background(); bar.shadow.inherit = False
     tf = bar.text_frame
     tf.margin_top = tf.margin_bottom = Emu(0)
@@ -342,7 +343,13 @@ def source_note(slide, W, y=None, *, note=None, more=False):
 #   得返：表頭 navy（設施建設/活動舉辦 嗰組 teal）＋ 小計/總計行上下幼橫線
 #   ＋ 欄組之間虛線直線。之前全格線 + sec/小計/總計 3 級藍底 = 自己作，同報告唔同。
 RULE = "000000"          # 小計/總計橫線（報告睇落係黑色幼線）
-TEAL = RGBColor(0x00, 0xA3, 0xA1)          # KPMG Green：設施建設/活動舉辦 欄組表頭
+# ★ 表頭係【三色欄組】（IMG_0441 彩色版逐格量色）——唔係成排同一隻 navy：
+#   HDR1 基本資料 + 報告投資金額 ｜ HDR2 潛在調整後（明顯深啲）｜ HDR3 設施建設/活動舉辦（綠）
+#   HDR3 隻綠係喺相入面目測（相有色偏，量到 #355B4E）→ 有準確 hex 就改呢一行。
+HDR1 = NAVY                                 # #00338D
+HDR2 = RGBColor(0x0C, 0x23, 0x3C)           # accent3 深底
+HDR3 = RGBColor(0x1E, 0x5C, 0x46)           # 深綠
+TEAL = HDR3                                 # 舊名保留
 _TEAL_KEYS = ("設施建設", "活動舉辦", "資本性支出", "營運性支出")
 
 
@@ -364,13 +371,14 @@ def _edge(cell, side, *, w=9525, color=RULE, dash=None):
 
 
 def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.RIGHT,
-             color=None, wrap=True):
+             color=None, wrap=True, anchor=MSO_ANCHOR.MIDDLE):
     cell.margin_left = cell.margin_right = Emu(18000)
     cell.margin_top = cell.margin_bottom = Emu(9000)
-    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+    cell.vertical_anchor = anchor
     cell.fill.solid()
     cell.fill.fore_color.rgb = fill if fill is not None else WHITE
     tf = cell.text_frame; tf.word_wrap = wrap
+    tf.clear()          # merge 會把被合併格嘅字搬入 origin → 唔清就會出「萬澳門元萬澳門元」
     p = tf.paragraphs[0]; p.alignment = align
     txt = "" if text is None else str(text)
     if color is None:
@@ -441,7 +449,7 @@ def fit_blocks(blocks, widths, font, avail_h, hh):
 
 
 def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, hfont=SZ_TBL_HDR,
-               left_cols=1, fill_h=None, max_row_h=0.26, teal_cols=None):
+               left_cols=1, fill_h=None, max_row_h=0.26, hdr_cols=None):
     """畫 navy 表。subs=欄名（可含 \\n）；rows=[(kind, cells)]；widths=相對闊度（會 scale 到 w）。
     supers=[(label, c0, c1_exclusive)] 兩層表頭。fill_h=想填滿嘅高度（行數少時撐開行高，
     唔好剩一大橛白位；每行最多 max_row_h）。回 (bottom_y, 實際高度)。"""
@@ -462,23 +470,36 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
     tbl.first_row = False; tbl.horz_banding = False
     for i, v in enumerate(wid):
         tbl.columns[i].width = Inches(v)
-    # teal 表頭（IMG_0441 概覽表最右嗰組）——【要 caller 明示】：4.2 表都有「設施建設/活動舉辦」
-    #   欄但係 navy（scan p.24），所以唔可以淨靠欄名估。
-    teal_c = set(teal_cols or ())
+    # 三色欄組——【要 caller 明示】：4.2 表都有「設施建設/活動舉辦」欄但成排 navy（scan p.24），
+    #   所以唔可以淨靠欄名估。hdr_cols = {欄 index: 顏色}，冇指定就 HDR1。
+    hc = dict(hdr_cols or {})
     if supers:
         for c in range(ncol):
-            set_cell(tbl.cell(0, c), "", size=hfont, fill=NAVY, color=WHITE)
+            set_cell(tbl.cell(0, c), "", size=hfont, fill=hc.get(c, HDR1), color=WHITE)
+        # 一個欄組跨住兩隻表頭色（報告：潛在調整後 = 深藍嗰兩欄 + 綠嗰兩欄）→ 拆開兩格，
+        #   個 label 兩邊都寫（同 IMG_0441 一樣，「潛在調整後投資金額」出現兩次）。
         for label, c0, c1 in supers:
-            if c1 - c0 > 1:
-                tbl.cell(0, c0).merge(tbl.cell(0, c1 - 1))
-            hf = TEAL if all(c in teal_c for c in range(c0, c1)) else NAVY
-            set_cell(tbl.cell(0, c0), label or "", size=hfont + 0.5, bold=True, fill=hf,
-                     color=WHITE, align=PP_ALIGN.CENTER)
+            a = c0
+            while a < c1:
+                b = a + 1
+                while b < c1 and hc.get(b, HDR1) == hc.get(a, HDR1):
+                    b += 1
+                if b - a > 1:
+                    tbl.cell(0, a).merge(tbl.cell(0, b - 1))
+                set_cell(tbl.cell(0, a), label or "", size=hfont + 0.5, bold=True,
+                         fill=hc.get(a, HDR1), color=WHITE, align=PP_ALIGN.CENTER)
+                a = b
         tbl.rows[0].height = Emu(int(0.17 * 914400))
     for c, s in enumerate(subs):
-        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True,
-                 fill=TEAL if c in teal_c else NAVY, color=WHITE,
+        # 報告嘅欄名喺表頭【貼底】（wrap 做兩行時尤其明顯）
+        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True, anchor=MSO_ANCHOR.BOTTOM,
+                 fill=hc.get(c, HDR1), color=WHITE,
                  align=PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.CENTER)
+    # 角位：報告係一格（序號欄冇字），單位「萬澳門元」貼住最左
+    if left_cols >= 2 and not str(subs[0]).strip() and str(subs[1]).strip():
+        tbl.cell(nhdr - 1, 0).merge(tbl.cell(nhdr - 1, 1))
+        set_cell(tbl.cell(nhdr - 1, 0), subs[1], size=hfont, bold=True, anchor=MSO_ANCHOR.BOTTOM,
+                 fill=hc.get(0, HDR1), color=WHITE, align=PP_ALIGN.LEFT)
     tbl.rows[nhdr - 1].height = Emu(int(hsub * 914400))
     for ri, (kind, cells) in enumerate(rows, start=nhdr):
         bold = kind in ("sec", "subtot", "tot")
@@ -503,8 +524,7 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
         if kind in ("subtot", "tot"):
             for c in range(ncol):
                 _edge(tbl.cell(ri, c), "T")
-                if kind == "tot" or ri == last:
-                    _edge(tbl.cell(ri, c), "B")
+                _edge(tbl.cell(ri, c), "B")      # 報告：小計同總計【上下都有】幼線
     for ri in range(nhdr, nhdr + len(rows)):
         for c in gsep:
             _edge(tbl.cell(ri, c), "L", w=6350, color="808080", dash="sysDash")

@@ -363,6 +363,18 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                                                 "finding", n=6)),
                       "medium", SYS_TBL_ADJ, True))
 
+    # ★ preflight：先試一個最平嘅 call。網關擋／key 唔啱嘅話即刻知，唔使等 60 個 task
+    #   逐個 fail（2026-08-15 白等 10 分鐘）。
+    try:
+        wb.chat("ok", "Reply with the single word: ok", reasoning_effort=None, max_tokens=5)
+    except Exception as e:
+        log(f"  ✗ LLM 連唔到（{type(e).__name__}: {_short_err(e)}）→ 跳過全部 {len(tasks)} 個 summary，"
+            "今次用清單／表2 原文 fallback。")
+        log("    403／blocked = 網關擋：check 係咪喺 KPMG 內網、key 有冇過期、charge code／region 啱唔啱。")
+        out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}, "bkt": {}}
+        outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
+        outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+        return out
     log(f"（{entity}）批 {len(tasks)} 個 summary，workers={workers}…")
     out = {"adj": {}, "cat": {}, "tbl": {}, "proj": {}, "bkt": {}}
     try:                                    # tqdm 進度條（冇裝就照 log 逐個）
