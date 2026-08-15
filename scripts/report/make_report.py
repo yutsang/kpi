@@ -566,26 +566,39 @@ def _load_budget(entity):
     return {}
 
 
-def _proj_counts(sdf, plan):
+def _proj_counts(sdf, plan, ov=None):
     """(n_plan, n_impl, n_zero) —— 表尾數量行同 1.2 敘述共用，保證三個數同一母體、自洽。
-    plan25 = 清單 2025 計劃金額 > 0 嘅碼（0 行唔算「獲批開展」，否則出 256 個）；
-    spent  = feed 有報告金額嘅碼。冇清單就退化成 spent（n_zero=0，敘述會略去嗰句）。"""
+    n_plan 優先攞【概況表自己個「總計」項目數量】，咁「總計 = 已實施 + 未實施」一定成立
+    （項目組 2026-08-15：總計 84 但 79+10 唔等於 84）。冇表就用清單 2025 計劃金額 > 0 嘅碼
+    （0 行唔算「獲批開展」，否則出 256 個）；再冇就退化成 feed 有支出嘅碼（n_zero=0，句子會略去）。"""
     d = sdf[sdf["_bucket"] == S.BUCKET_ORDER[0]]
     plan25 = {k for k, v in ((plan or {}).get(25, {}) or {}).items()
               if isinstance(v, (int, float)) and v > 0}
     spent = {(str(r["ng_scope"]) == "gaming", B._norm(r["dicj code"]))
              for _, r in d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]
              .drop_duplicates(["ng_scope", "dicj code"]).iterrows()}
-    if not plan25:
-        return len(spent), len(spent), 0
-    return len(plan25), len(plan25 & spent), max(len(plan25) - len(plan25 & spent), 0)
+    n_impl = len(plan25 & spent) if plan25 else len(spent)
+    n_plan = _tot_projects(ov) or (len(plan25) if plan25 else len(spent))
+    n_plan = max(n_plan, n_impl)
+    return n_plan, n_impl, n_plan - n_impl
+
+
+def _tot_projects(ov):
+    """概況表「總計」行嘅項目數量（0 = 攞唔到）。"""
+    if ov is None or getattr(ov, "empty", True) or "項目數量" not in getattr(ov, "columns", []):
+        return 0
+    t = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+    if t.empty:
+        return 0
+    v = pd.to_numeric(pd.Series([t.iloc[0]["項目數量"]]), errors="coerce").iloc[0]
+    return int(v) if pd.notna(v) and v > 0 else 0
 
 
 def _overview_extra(ov, plan, sdf, budget, ent_up):
     """1.2 概況表尾段（scan slide 11）：原計劃未實施／已實施項目數量 + 承諾的10年投資預算 + 佔比。
     項目數量計得到；10年預算要 config，冇就唔出嗰兩行。"""
     cols = list(ov.columns)
-    n_plan, n_impl, n_zero = _proj_counts(sdf, plan)
+    n_plan, n_impl, n_zero = _proj_counts(sdf, plan, ov)
     # 報告字眼（IMG_0441）：未實施個數寫括號，表示係計劃總數入面嗰部分
     rows = [{cols[0]: "原計劃中未實施的投資項目數", cols[1]: f"({n_zero})" if n_zero else "-"},
             {cols[0]: "投資執行報告中申報已實施的投資項目數", cols[1]: n_impl}]
@@ -1128,7 +1141,7 @@ def _headline(ent_up, ov, df, plan):
     d["_adj"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0)
     # ⚠ 三個數要自洽：計劃(母體) ⊇ 已實施；之前 n_impl 數 feed 全部有支出嘅碼，
     #   同 n_plan 唔同母體 → 出現「實施 112 > 計劃 89、0 個未發生」（項目組 2026-08-13 指出）
-    n_plan, n_impl, n_zero = _proj_counts(df, plan)
+    n_plan, n_impl, n_zero = _proj_counts(df, plan, ov)
     n_adj = d[d["_adj"] != 0]["dicj code"].nunique()
     headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{_amt(plan_amt)}；"
                 f"{ent_up}提交的投資執行報告顯示2025年度投資金額約{_amt(report_amt)}"
@@ -1515,7 +1528,8 @@ def main():
         except Exception:
             has_creds = False
         if has_creds:
-            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 8   # default 8（`mgm` 一個 command 就並行）
+            # default 4：8 條並行俾公司網關 WAF 全部擋（2026-08-15，60/60「request is blocked」）
+            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 4
             biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
             print("  由 feed+清單+表2 即場生成 LLM 敘述…")
             try:

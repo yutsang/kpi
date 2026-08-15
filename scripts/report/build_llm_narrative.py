@@ -15,6 +15,7 @@ header + charge-code/region）。本 repo 已有 client：src/kpi/lib/workbench.
     # 唔想出網，先驗 config： ... --config
 """
 import json
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -197,6 +198,18 @@ def _cat_prompt(sub, rate_pct, projects, reason, b2=""):
             f"完成率原因只用管理層業務解釋，唔好用審計／調整措辭。\n\n{ctx}")
 
 
+def _short_err(e):
+    """gateway 錯誤成日回一版 HTML → 抽 <h2>/<title> 或者剝晒 tag，最多 120 字。"""
+    t = str(e)
+    m = re.search(r"<h2[^>]*>(.*?)</h2>|<title[^>]*>(.*?)</title>", t, re.S | re.I)
+    if m:
+        t = (m.group(1) or m.group(2) or "").strip()
+    elif "<html" in t.lower():
+        t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:120] + ("…" if len(t) > 120 else "")
+
+
 def _gen(wb, prompt, effort, sysp, want_json=False):
     if not want_json:
         return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
@@ -362,14 +375,23 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                for kind, key, p, eff, sysp, js in tasks}
         it = as_completed(fut)
         bar = tqdm(it, total=len(tasks), desc=f"LLM {entity}", unit="段", ncols=90) if tqdm else it
+        nfail = 0
         for f in bar:
             kind, key = fut[f]
             try:
                 out[kind][key] = f.result()
                 msg = f"  ✓ {kind}｜{key[:22]}"
+                nfail = 0
             except Exception as e:
-                msg = f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {e}"
+                nfail += 1
+                # ⚠ err 可能係成版 HTML（KPMG gateway 擋 request 會回錯誤頁）→ 一定要縮短，
+                #   否則 console 會俾 60 版 HTML 洗晒版（2026-08-15 實際發生過）
+                msg = f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {_short_err(e)}"
             tqdm.write(msg) if tqdm else log(msg)   # tqdm.write 唔會撞爛進度條
+        if nfail and not any(out.values()):
+            log("  ⚠ LLM 全部失敗 → 今次報告用清單／表2 原文 fallback（唔會空白，但用字唔會似報告）。"
+                "\n    常見成因：公司網關擋（並發太多／唔喺 KPMG 網／key 過期）。"
+                "\n    試：build_report.py mgm --workers 2；仲係唔得就唔喺內網 or 換 key。")
 
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -382,7 +404,7 @@ def main():
     args = sys.argv[1:]
     entity = qingdan = model = None
     biao2_dir = "data/表2"
-    workers = 8
+    workers = 4
     cfg_only = "--config" in args
     if cfg_only:
         args.remove("--config")

@@ -30,8 +30,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
+
+# gateway 短暫擋（KPMG Front Door / APIM）→ 退避重試。全部 call 一齊 fail 多數係
+# 併發太多俾 WAF 擋（2026-08-15：workers=8，60 個 call 全部「The request is blocked」）。
+_TRANSIENT = ("request is blocked", "429", "too many requests", "rate limit",
+              "service unavailable", "502", "503", "504", "timeout", "timed out")
+_BACKOFF = (3, 9, 25)
+_RETRIES = len(_BACKOFF)
 
 # code 內置預設（config 冇填先用）─────────────────────────────────────
 DEFAULT_PROVIDER = "azure"
@@ -168,16 +176,20 @@ class Workbench:
             kw["response_format"] = {"type": "json_object"}
 
         droppable = ["reasoning_effort", "temperature", "response_format", "max_tokens"]
-        for _ in range(len(droppable) + 1):
+        tries = 0
+        for _ in range(len(droppable) + 1 + _RETRIES):
             try:
                 resp = cli.chat.completions.create(**kw)
                 return resp.choices[0].message.content or ""
             except Exception as e:
                 msg = str(e).lower().replace("_", "")
                 hit = next((p for p in droppable if p in kw and p.replace("_", "") in msg), None)
-                if hit is None:
-                    raise
-                kw.pop(hit, None)
+                if hit is not None:
+                    kw.pop(hit, None); continue
+                # gateway 短暫擋（WAF「request is blocked」／429／5xx）→ 退避重試，唔好即刻放棄
+                if tries < _RETRIES and any(k in msg for k in _TRANSIENT):
+                    time.sleep(_BACKOFF[tries]); tries += 1; continue
+                raise
         raise RuntimeError("chat 失敗：所有可 drop 參數都試過")
 
     def chat_json(self, user: str, system: str = "You are a helpful assistant. Reply with JSON only.",

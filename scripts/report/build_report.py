@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import json
 import os
+import time
 from typing import Any
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1506,7 +1507,9 @@ def overview_by_bucket(df, bucket, plan, category=None):
     g[["設施", "活動"]] = g[["設施", "活動"]].fillna(0.0)
     g = g.sort_values(idx)
 
-    plan_by_sub = {}
+    # 項目數量：2025計劃表要數【計劃項目】（清單），唔係 feed 出現嘅碼 —— 否則同「已實施/未實施」
+    #   兩行對唔上（項目組 2026-08-15：總計 84 但 79+10≠84）。期後表冇計劃概念，照用 feed。
+    plan_by_sub, n_by_sub, n_by_scope = {}, {}, {}
     if is_py and plan:
         cat = category or {}
         sub_of = {}       # (gaming,碼)→範疇；博彩/非博彩共用項目N 都要留（唔可以 drop 淨 code）
@@ -1525,6 +1528,9 @@ def overview_by_bucket(df, bucket, plan, category=None):
                 sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
+                if v > 0:      # 計劃金額 0 嘅唔算「獲批開展」（清單有大量 0 行）
+                    n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
+                    n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
             elif v:
                 miss += 1
         if miss:
@@ -1540,7 +1546,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
             r["潛在調整後投資計劃完成率"] = _rate(aft, pl)
         return r
 
-    rows = []
+    rows, n_tot = [], 0
     for scope in [0, 1]:
         sc = g[g["_scope"] == scope]
         if sc.empty:
@@ -1548,14 +1554,17 @@ def overview_by_bucket(df, bucket, plan, category=None):
         name = "博彩項目" if scope == 0 else "非博彩項目"
         rows.append({"範疇": name})     # section 標題行（跟報告 IMG_0105：博彩項目 / 非博彩項目）
         for _, row in sc.iterrows():
-            rows.append(mk(row["_sub"], row["項目數量"], plan_by_sub.get(row["_sub"], 0.0),
+            rows.append(mk(row["_sub"], n_by_sub.get(row["_sub"], row["項目數量"]),
+                           plan_by_sub.get(row["_sub"], 0.0),
                            row["報告"], row["調整"], row["後"], row["設施"], row["活動"]))
         # ⚠ 項目數量：小計/總計要用【去重】distinct，唔可以逐範疇加總 ——
         #   一個項目跨兩個範疇會被計兩次（user 2026-08-12 對數揭到）
-        n_sc = d[d["_scope"] == scope]["dicj code"].nunique()
+        n_sc = n_by_scope.get(scope) or d[d["_scope"] == scope]["dicj code"].nunique()
+        n_tot += n_sc                # ⚠ 總計唔可以全表 nunique：博彩「項目19」同非博彩「項目19」
+                                     #   係兩個唔同項目（撞號），全表去重會少計 → 總計 = 兩個 scope 之和
         rows.append(mk(f"{name}小計", n_sc, _plan_tot(plan, yr, scope == 0),
                        sc["報告"].sum(), sc["調整"].sum(), sc["後"].sum(), sc["設施"].sum(), sc["活動"].sum()))
-    rows.append(mk("總計", d["dicj code"].nunique(), _plan_tot(plan, yr, None),
+    rows.append(mk("總計", n_tot, _plan_tot(plan, yr, None),
                    g["報告"].sum(), g["調整"].sum(), g["後"].sum(), g["設施"].sum(), g["活動"].sum()))
     if is_py:
         cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額", "投資計劃完成率",
@@ -1665,6 +1674,19 @@ def finding_summary(df):
                      "涉及項目數": int(sub["dicj code"].nunique()),
                      "主要涉及項目": "、".join(str(p) for p in projs.index[:3])})
     return pd.DataFrame(rows, columns=["潛在調整事項", "調整額合計", "涉及項目數", "主要涉及項目"])
+
+
+# ── from workbench ──
+_TRANSIENT = ("request is blocked", "429", "too many requests", "rate limit",
+              "service unavailable", "502", "503", "504", "timeout", "timed out")
+
+
+# ── from workbench ──
+_BACKOFF = (3, 9, 25)
+
+
+# ── from workbench ──
+_RETRIES = len(_BACKOFF)
 
 
 # ── from workbench ──
@@ -1821,16 +1843,20 @@ class Workbench:
             kw["response_format"] = {"type": "json_object"}
 
         droppable = ["reasoning_effort", "temperature", "response_format", "max_tokens"]
-        for _ in range(len(droppable) + 1):
+        tries = 0
+        for _ in range(len(droppable) + 1 + _RETRIES):
             try:
                 resp = cli.chat.completions.create(**kw)
                 return resp.choices[0].message.content or ""
             except Exception as e:
                 msg = str(e).lower().replace("_", "")
                 hit = next((p for p in droppable if p in kw and p.replace("_", "") in msg), None)
-                if hit is None:
-                    raise
-                kw.pop(hit, None)
+                if hit is not None:
+                    kw.pop(hit, None); continue
+                # gateway 短暫擋（WAF「request is blocked」／429／5xx）→ 退避重試，唔好即刻放棄
+                if tries < _RETRIES and any(k in msg for k in _TRANSIENT):
+                    time.sleep(_BACKOFF[tries]); tries += 1; continue
+                raise
         raise RuntimeError("chat 失敗：所有可 drop 參數都試過")
 
     def chat_json(self, user: str, system: str = "You are a helpful assistant. Reply with JSON only.",
@@ -2478,6 +2504,19 @@ def _cat_prompt(sub, rate_pct, projects, reason, b2=""):
 
 
 # ── from build_llm_narrative ──
+def _short_err(e):
+    """gateway 錯誤成日回一版 HTML → 抽 <h2>/<title> 或者剝晒 tag，最多 120 字。"""
+    t = str(e)
+    m = re.search(r"<h2[^>]*>(.*?)</h2>|<title[^>]*>(.*?)</title>", t, re.S | re.I)
+    if m:
+        t = (m.group(1) or m.group(2) or "").strip()
+    elif "<html" in t.lower():
+        t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:120] + ("…" if len(t) > 120 else "")
+
+
+# ── from build_llm_narrative ──
 def _gen(wb, prompt, effort, sysp, want_json=False):
     if not want_json:
         return wb.chat(prompt, sysp, reasoning_effort=effort).strip()
@@ -2645,14 +2684,23 @@ def generate_llm_narrative(feed_path, entity, qingdan, biao2_dir="data/表2",
                for kind, key, p, eff, sysp, js in tasks}
         it = as_completed(fut)
         bar = tqdm(it, total=len(tasks), desc=f"LLM {entity}", unit="段", ncols=90) if tqdm else it
+        nfail = 0
         for f in bar:
             kind, key = fut[f]
             try:
                 out[kind][key] = f.result()
                 msg = f"  ✓ {kind}｜{key[:22]}"
+                nfail = 0
             except Exception as e:
-                msg = f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {e}"
+                nfail += 1
+                # ⚠ err 可能係成版 HTML（KPMG gateway 擋 request 會回錯誤頁）→ 一定要縮短，
+                #   否則 console 會俾 60 版 HTML 洗晒版（2026-08-15 實際發生過）
+                msg = f"  ⚠ {kind}｜{key[:22]}: {type(e).__name__}: {_short_err(e)}"
             tqdm.write(msg) if tqdm else log(msg)   # tqdm.write 唔會撞爛進度條
+        if nfail and not any(out.values()):
+            log("  ⚠ LLM 全部失敗 → 今次報告用清單／表2 原文 fallback（唔會空白，但用字唔會似報告）。"
+                "\n    常見成因：公司網關擋（並發太多／唔喺 KPMG 網／key 過期）。"
+                "\n    試：build_report.py mgm --workers 2；仲係唔得就唔喺內網 or 換 key。")
 
     outp = Path(out_path) if out_path else Path(f"{entity or 'all'}_llm_narrative.json")
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -2804,7 +2852,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "703aeba 2026-08-15 11:53"
+BUILD_STAMP = "9bc5a37 2026-08-15 12:12"
 
 
 # ── from make_report ──
@@ -3247,19 +3295,33 @@ def _load_budget(entity):
 
 
 # ── from make_report ──
-def _proj_counts(sdf, plan):
+def _proj_counts(sdf, plan, ov=None):
     """(n_plan, n_impl, n_zero) —— 表尾數量行同 1.2 敘述共用，保證三個數同一母體、自洽。
-    plan25 = 清單 2025 計劃金額 > 0 嘅碼（0 行唔算「獲批開展」，否則出 256 個）；
-    spent  = feed 有報告金額嘅碼。冇清單就退化成 spent（n_zero=0，敘述會略去嗰句）。"""
+    n_plan 優先攞【概況表自己個「總計」項目數量】，咁「總計 = 已實施 + 未實施」一定成立
+    （項目組 2026-08-15：總計 84 但 79+10 唔等於 84）。冇表就用清單 2025 計劃金額 > 0 嘅碼
+    （0 行唔算「獲批開展」，否則出 256 個）；再冇就退化成 feed 有支出嘅碼（n_zero=0，句子會略去）。"""
     d = sdf[sdf["_bucket"] == BUCKET_ORDER[0]]
     plan25 = {k for k, v in ((plan or {}).get(25, {}) or {}).items()
               if isinstance(v, (int, float)) and v > 0}
     spent = {(str(r["ng_scope"]) == "gaming", _norm(r["dicj code"]))
              for _, r in d[pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0) != 0]
              .drop_duplicates(["ng_scope", "dicj code"]).iterrows()}
-    if not plan25:
-        return len(spent), len(spent), 0
-    return len(plan25), len(plan25 & spent), max(len(plan25) - len(plan25 & spent), 0)
+    n_impl = len(plan25 & spent) if plan25 else len(spent)
+    n_plan = _tot_projects(ov) or (len(plan25) if plan25 else len(spent))
+    n_plan = max(n_plan, n_impl)
+    return n_plan, n_impl, n_plan - n_impl
+
+
+# ── from make_report ──
+def _tot_projects(ov):
+    """概況表「總計」行嘅項目數量（0 = 攞唔到）。"""
+    if ov is None or getattr(ov, "empty", True) or "項目數量" not in getattr(ov, "columns", []):
+        return 0
+    t = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+    if t.empty:
+        return 0
+    v = pd.to_numeric(pd.Series([t.iloc[0]["項目數量"]]), errors="coerce").iloc[0]
+    return int(v) if pd.notna(v) and v > 0 else 0
 
 
 # ── from make_report ──
@@ -3267,7 +3329,7 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     """1.2 概況表尾段（scan slide 11）：原計劃未實施／已實施項目數量 + 承諾的10年投資預算 + 佔比。
     項目數量計得到；10年預算要 config，冇就唔出嗰兩行。"""
     cols = list(ov.columns)
-    n_plan, n_impl, n_zero = _proj_counts(sdf, plan)
+    n_plan, n_impl, n_zero = _proj_counts(sdf, plan, ov)
     # 報告字眼（IMG_0441）：未實施個數寫括號，表示係計劃總數入面嗰部分
     rows = [{cols[0]: "原計劃中未實施的投資項目數", cols[1]: f"({n_zero})" if n_zero else "-"},
             {cols[0]: "投資執行報告中申報已實施的投資項目數", cols[1]: n_impl}]
@@ -3829,7 +3891,7 @@ def _headline(ent_up, ov, df, plan):
     d["_adj"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0)
     # ⚠ 三個數要自洽：計劃(母體) ⊇ 已實施；之前 n_impl 數 feed 全部有支出嘅碼，
     #   同 n_plan 唔同母體 → 出現「實施 112 > 計劃 89、0 個未發生」（項目組 2026-08-13 指出）
-    n_plan, n_impl, n_zero = _proj_counts(df, plan)
+    n_plan, n_impl, n_zero = _proj_counts(df, plan, ov)
     n_adj = d[d["_adj"] != 0]["dicj code"].nunique()
     headline = (f"{ent_up} 2025年度原獲批計劃開展{n_plan}個投資項目，涉及計劃投資金額約{_amt(plan_amt)}；"
                 f"{ent_up}提交的投資執行報告顯示2025年度投資金額約{_amt(report_amt)}"
@@ -4231,7 +4293,8 @@ def main():
         except Exception:
             has_creds = False
         if has_creds:
-            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 8   # default 8（`mgm` 一個 command 就並行）
+            # default 4：8 條並行俾公司網關 WAF 全部擋（2026-08-15，60/60「request is blocked」）
+            workers = int(av[av.index("--workers") + 1]) if "--workers" in av else 4
             biao2_dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
             print("  由 feed+清單+表2 即場生成 LLM 敘述…")
             try:

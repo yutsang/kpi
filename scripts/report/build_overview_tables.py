@@ -64,7 +64,9 @@ def overview_by_bucket(df, bucket, plan, category=None):
     g[["設施", "活動"]] = g[["設施", "活動"]].fillna(0.0)
     g = g.sort_values(idx)
 
-    plan_by_sub = {}
+    # 項目數量：2025計劃表要數【計劃項目】（清單），唔係 feed 出現嘅碼 —— 否則同「已實施/未實施」
+    #   兩行對唔上（項目組 2026-08-15：總計 84 但 79+10≠84）。期後表冇計劃概念，照用 feed。
+    plan_by_sub, n_by_sub, n_by_scope = {}, {}, {}
     if is_py and plan:
         cat = category or {}
         sub_of = {}       # (gaming,碼)→範疇；博彩/非博彩共用項目N 都要留（唔可以 drop 淨 code）
@@ -83,6 +85,9 @@ def overview_by_bucket(df, bucket, plan, category=None):
                 sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
+                if v > 0:      # 計劃金額 0 嘅唔算「獲批開展」（清單有大量 0 行）
+                    n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
+                    n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
             elif v:
                 miss += 1
         if miss:
@@ -98,7 +103,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
             r["潛在調整後投資計劃完成率"] = _rate(aft, pl)
         return r
 
-    rows = []
+    rows, n_tot = [], 0
     for scope in [0, 1]:
         sc = g[g["_scope"] == scope]
         if sc.empty:
@@ -106,14 +111,17 @@ def overview_by_bucket(df, bucket, plan, category=None):
         name = "博彩項目" if scope == 0 else "非博彩項目"
         rows.append({"範疇": name})     # section 標題行（跟報告 IMG_0105：博彩項目 / 非博彩項目）
         for _, row in sc.iterrows():
-            rows.append(mk(row["_sub"], row["項目數量"], plan_by_sub.get(row["_sub"], 0.0),
+            rows.append(mk(row["_sub"], n_by_sub.get(row["_sub"], row["項目數量"]),
+                           plan_by_sub.get(row["_sub"], 0.0),
                            row["報告"], row["調整"], row["後"], row["設施"], row["活動"]))
         # ⚠ 項目數量：小計/總計要用【去重】distinct，唔可以逐範疇加總 ——
         #   一個項目跨兩個範疇會被計兩次（user 2026-08-12 對數揭到）
-        n_sc = d[d["_scope"] == scope]["dicj code"].nunique()
+        n_sc = n_by_scope.get(scope) or d[d["_scope"] == scope]["dicj code"].nunique()
+        n_tot += n_sc                # ⚠ 總計唔可以全表 nunique：博彩「項目19」同非博彩「項目19」
+                                     #   係兩個唔同項目（撞號），全表去重會少計 → 總計 = 兩個 scope 之和
         rows.append(mk(f"{name}小計", n_sc, _plan_tot(plan, yr, scope == 0),
                        sc["報告"].sum(), sc["調整"].sum(), sc["後"].sum(), sc["設施"].sum(), sc["活動"].sum()))
-    rows.append(mk("總計", d["dicj code"].nunique(), _plan_tot(plan, yr, None),
+    rows.append(mk("總計", n_tot, _plan_tot(plan, yr, None),
                    g["報告"].sum(), g["調整"].sum(), g["後"].sum(), g["設施"].sum(), g["活動"].sum()))
     if is_py:
         cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額", "投資計劃完成率",
