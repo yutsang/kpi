@@ -43,7 +43,7 @@ PALETTE = {  # 公司 template theme 實際配色（--spec 讀出，2026-08-12�
     "005EB8": "Medium Blue", "0091DA": "Light Blue",
     "483698": "Violet", "470A68": "Purple", "6D2077": "Light Purple", "00A3A1": "Green",
     "FFFFFF": "White", "EEF1F8": "tint-section", "D9E1F2": "tint-subtotal",
-    "BDD7EE": "tint-total", "BFBFBF": "格線", "F2F2F2": "breadcrumb banner（lt2 派生）", "222222": "內文", "333333": "內文",
+    "BDD7EE": "tint-total", "BFBFBF": "格線", "000000": "小計/總計橫線", "808080": "欄組虛線", "F2F2F2": "breadcrumb banner（lt2 派生）", "222222": "內文", "333333": "內文",
     "595959": "註", "8C8C8C": "breadcrumb", "C8C8C8": "分隔", "0C233C": "封面深底",
     "C8C8D0": "分隔頁副題",
 }
@@ -416,6 +416,31 @@ def _runs(tf):
 
 
 _ATOM = re.compile(r"[0-9A-Za-z]+(?:[.,%/\-][0-9A-Za-z]+)*%?|[\s\S]")
+_NS_A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def _cell_edges(dr, cell, x0, y0, x1, y1):
+    """照 tcPr 入面真係有嘅 a:lnT/B/L/R 畫線（報告嘅表冇逐格格線，唔可以照畫框）。"""
+    tcPr = cell._tc.find(f"{_NS_A}tcPr")
+    if tcPr is None:
+        return
+    for side, pts in (("T", (x0, y0, x1, y0)), ("B", (x0, y1, x1, y1)),
+                      ("L", (x0, y0, x0, y1)), ("R", (x1, y0, x1, y1))):
+        ln = tcPr.find(f"{_NS_A}ln{side}")
+        if ln is None:
+            continue
+        clr = ln.find(f".//{_NS_A}srgbClr")
+        v = (clr.get("val") if clr is not None else "000000") or "000000"
+        rgb = tuple(int(v[i:i + 2], 16) for i in (0, 2, 4))
+        if ln.find(f"{_NS_A}prstDash") is not None:      # 虛線：畫短 dash
+            n = int(max(abs(pts[2] - pts[0]), abs(pts[3] - pts[1])) // 6) or 1
+            for k in range(0, n, 2):
+                f0, f1 = k / n, min((k + 1) / n, 1.0)
+                dr.line([pts[0] + (pts[2] - pts[0]) * f0, pts[1] + (pts[3] - pts[1]) * f0,
+                         pts[0] + (pts[2] - pts[0]) * f1, pts[1] + (pts[3] - pts[1]) * f1],
+                        fill=rgb, width=1)
+        else:
+            dr.line(list(pts), fill=rgb, width=1)
 
 
 def _draw_text(dr, runs, x, y, w, scale, *, align="LEFT", valign_h=None):
@@ -506,7 +531,8 @@ def preview(path, dpi=110, only=None):
                             fill = (fc[0], fc[1], fc[2])
                         except Exception:
                             fill = (255, 255, 255)
-                        dr.rectangle([cx, cy, cx + cw, cy + rh], fill=fill, outline=(191, 191, 191))
+                        dr.rectangle([cx, cy, cx + cw, cy + rh], fill=fill)
+                        _cell_edges(dr, cell, cx, cy, cx + cw, cy + rh)   # 只畫真係有嘅邊
                         al = str(cell.text_frame.paragraphs[0].alignment or "LEFT")
                         _draw_text(dr, _runs(cell.text_frame), cx + 2, cy + 2,
                                    (cw - 6) / dpi, sc, align=al)
