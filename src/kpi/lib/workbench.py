@@ -34,12 +34,20 @@ import time
 from pathlib import Path
 from typing import Any
 
-# gateway 短暫擋（KPMG Front Door / APIM）→ 退避重試。全部 call 一齊 fail 多數係
-# 併發太多俾 WAF 擋（2026-08-15：workers=8，60 個 call 全部「The request is blocked」）。
-_TRANSIENT = ("request is blocked", "429", "too many requests", "rate limit",
-              "service unavailable", "502", "503", "504", "timeout", "timed out")
+# 重試只針對【真係會自己好返】嘅錯：塞車(429)、上游 5xx、timeout。
+# ⚠ 401/403 唔重試 —— 2026-08-15 實測 gateway 回 403（HTML「Service unavailable」／
+#   「The request is blocked」），重試 3 次 × 60 個 task 白等咗 10 分鐘，結果一樣。
+_RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504}
+_TRANSIENT = ("too many requests", "rate limit", "timeout", "timed out")
 _BACKOFF = (3, 9, 25)
 _RETRIES = len(_BACKOFF)
+
+
+def _retryable(e):
+    sc = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+    if sc is not None:
+        return sc in _RETRY_STATUS
+    return any(k in str(e).lower() for k in _TRANSIENT)
 
 # code 內置預設（config 冇填先用）─────────────────────────────────────
 DEFAULT_PROVIDER = "azure"
@@ -186,8 +194,8 @@ class Workbench:
                 hit = next((p for p in droppable if p in kw and p.replace("_", "") in msg), None)
                 if hit is not None:
                     kw.pop(hit, None); continue
-                # gateway 短暫擋（WAF「request is blocked」／429／5xx）→ 退避重試，唔好即刻放棄
-                if tries < _RETRIES and any(k in msg for k in _TRANSIENT):
+                # 塞車／上游 5xx → 退避重試；401/403 即刻放棄（重試極都一樣）
+                if tries < _RETRIES and _retryable(e):
                     time.sleep(_BACKOFF[tries]); tries += 1; continue
                 raise
         raise RuntimeError("chat 失敗：所有可 drop 參數都試過")

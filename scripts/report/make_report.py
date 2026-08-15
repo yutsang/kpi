@@ -367,7 +367,7 @@ def _df_table(df, first_label=None):
     第一欄表頭：範疇表用「（萬澳門元）」（跟 scan 角位放單位），其餘用返欄名。"""
     cols = list(df.columns)
     if first_label is None:
-        first_label = ("序號" if cols[0] == "序號" else
+        first_label = ("" if cols[0] == "序號" else       # 報告個角位空白，單位喺隔離格
                        ("萬澳門元" if cols[0] == "範疇" else cols[0]))
     grouped = any("·" in c for c in cols)
     widths = [0.4 if c == "序號" else
@@ -426,6 +426,17 @@ _OV_GROUP = {
 }
 
 
+def _hdr_cols(subs, supers):
+    """概覽表三色欄組（對 IMG_0441）：設施建設/活動舉辦＝綠、潛在調整後嗰組＝深、其餘＝KPMG Blue。
+    ⚠ 只喺概覽表用；4.2 表同名欄組喺 scan p.24 係成排 navy。"""
+    out = {c: L.HDR3 for c, v in enumerate(subs) if any(k in str(v) for k in L._TEAL_KEYS)}
+    for lab, c0, c1 in (supers or []):
+        if "潛在調整後" in str(lab):
+            for c in range(c0, c1):
+                out.setdefault(c, L.HDR2)
+    return out
+
+
 def _overview_display(ov):
     """概覽表 → 顯示用：範疇前加【序號】（逐 scope 由 1 數起，section/小計/總計留空）+ 兩層表頭。"""
     if ov is None or ov.empty or "範疇" not in ov.columns:
@@ -456,7 +467,6 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         if table_name:
             top = L.caption_bar(slide, L.MARGIN, top, left_w, table_name)
         subs, rows, widths, supers = _df_table(_overview_display(table_df))
-        teal = [c for c, v in enumerate(subs) if any(k in str(v) for k in L._TEAL_KEYS)]
         wid = [w * left_w / sum(widths) for w in widths]
         avail = L.CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
         hh = L.header_h(supers, subs, wid, L.SZ_TBL_HDR)
@@ -466,7 +476,7 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         tbl_bot, _ = L.draw_table(slide, L.MARGIN, top, left_w, subs, rows, widths,
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
                                   fill_h=avail, left_cols=2,   # 序號 + 範疇 都左對齊（對報告）
-                                  teal_cols=teal)
+                                  hdr_cols=_hdr_cols(subs, supers))
     if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
         L.put(slide, L.MARGIN, min(tbl_bot + 0.06, L.CONTENT_BOTTOM - 0.30), left_w, 0.3,
               note, size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
