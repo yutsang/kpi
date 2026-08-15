@@ -338,15 +338,29 @@ def source_note(slide, W, y=None, *, note=None, more=False):
 
 
 # ── 表格 ─────────────────────────────────────────────────────────────────
-def _borders(cell):
-    """幼灰格線；插喺 tcPr 最前（OOXML schema：ln* 要喺 fill 之前，否則 PowerPoint 會要求修復）。"""
+# ★ 真報告（IMG_0441 彩色版）嘅表：【冇逐格格線、冇 row 底色】。
+#   得返：表頭 navy（設施建設/活動舉辦 嗰組 teal）＋ 小計/總計行上下幼橫線
+#   ＋ 欄組之間虛線直線。之前全格線 + sec/小計/總計 3 級藍底 = 自己作，同報告唔同。
+RULE = "000000"          # 小計/總計橫線（報告睇落係黑色幼線）
+TEAL = RGBColor(0x00, 0xA3, 0xA1)          # KPMG Green：設施建設/活動舉辦 欄組表頭
+_TEAL_KEYS = ("設施建設", "活動舉辦", "資本性支出", "營運性支出")
+
+
+def _edge(cell, side, *, w=9525, color=RULE, dash=None):
+    """畫單一條邊（side ∈ T/B/L/R）。ln* 要插喺 tcPr 最前，否則 PowerPoint 會叫修復。
+    同一邊重覆設就換走舊嗰條。"""
     tcPr = cell._tc.get_or_add_tcPr()
-    for tag in ("a:lnB", "a:lnT", "a:lnR", "a:lnL"):        # 反序 insert(0) → 出嚟係 L,R,T,B
-        ln = tcPr.makeelement(qn(tag), {"w": "3175", "cap": "flat"})
-        fill = ln.makeelement(qn("a:solidFill"), {})
-        clr = fill.makeelement(qn("a:srgbClr"), {"val": BORDER})
-        fill.append(clr); ln.append(fill)
-        tcPr.insert(0, ln)
+    tag = qn(f"a:ln{side}")
+    old = tcPr.find(tag)
+    if old is not None:
+        tcPr.remove(old)
+    ln = tcPr.makeelement(tag, {"w": str(w), "cap": "flat"})
+    fill = ln.makeelement(qn("a:solidFill"), {})
+    clr = fill.makeelement(qn("a:srgbClr"), {"val": color})
+    fill.append(clr); ln.append(fill)
+    if dash:
+        ln.append(ln.makeelement(qn("a:prstDash"), {"val": dash}))
+    tcPr.insert(0, ln)
 
 
 def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.RIGHT,
@@ -380,7 +394,7 @@ def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.R
         setfont(r, size, bold=bold, color=color)
 
 
-ROW_FILL = {"sec": SECFILL, "subtot": SUBTOT, "tot": TOTAL, "data": None}
+ROW_FILL = {"sec": None, "subtot": None, "tot": None, "data": None}   # 報告：body 全白，靠橫線分層
 
 
 def header_h(supers, subs, widths, hfont):
@@ -427,7 +441,7 @@ def fit_blocks(blocks, widths, font, avail_h, hh):
 
 
 def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, hfont=SZ_TBL_HDR,
-               left_cols=1, fill_h=None, max_row_h=0.34):
+               left_cols=1, fill_h=None, max_row_h=0.26, teal_cols=None):
     """畫 navy 表。subs=欄名（可含 \\n）；rows=[(kind, cells)]；widths=相對闊度（會 scale 到 w）。
     supers=[(label, c0, c1_exclusive)] 兩層表頭。fill_h=想填滿嘅高度（行數少時撐開行高，
     唔好剩一大橛白位；每行最多 max_row_h）。回 (bottom_y, 實際高度)。"""
@@ -448,30 +462,52 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
     tbl.first_row = False; tbl.horz_banding = False
     for i, v in enumerate(wid):
         tbl.columns[i].width = Inches(v)
+    # teal 表頭（IMG_0441 概覽表最右嗰組）——【要 caller 明示】：4.2 表都有「設施建設/活動舉辦」
+    #   欄但係 navy（scan p.24），所以唔可以淨靠欄名估。
+    teal_c = set(teal_cols or ())
     if supers:
         for c in range(ncol):
             set_cell(tbl.cell(0, c), "", size=hfont, fill=NAVY, color=WHITE)
         for label, c0, c1 in supers:
             if c1 - c0 > 1:
                 tbl.cell(0, c0).merge(tbl.cell(0, c1 - 1))
-            if label:
-                set_cell(tbl.cell(0, c0), label, size=hfont + 0.5, bold=True, fill=NAVY,
-                         color=WHITE, align=PP_ALIGN.CENTER)
+            hf = TEAL if all(c in teal_c for c in range(c0, c1)) else NAVY
+            set_cell(tbl.cell(0, c0), label or "", size=hfont + 0.5, bold=True, fill=hf,
+                     color=WHITE, align=PP_ALIGN.CENTER)
         tbl.rows[0].height = Emu(int(0.17 * 914400))
     for c, s in enumerate(subs):
-        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True, fill=NAVY, color=WHITE,
+        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True,
+                 fill=TEAL if c in teal_c else NAVY, color=WHITE,
                  align=PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.CENTER)
     tbl.rows[nhdr - 1].height = Emu(int(hsub * 914400))
     for ri, (kind, cells) in enumerate(rows, start=nhdr):
-        fill = ROW_FILL.get(kind)
         bold = kind in ("sec", "subtot", "tot")
+        # 標籤（範疇/小計/總計/表尾說明行）喺報告係【由最左邊起】，唔係縮喺名稱欄：
+        #   序號欄空 + 名稱欄有字 → merge 埋，個 label 先有位唔會 wrap
+        k = 0
+        if left_cols >= 2 and not str(cells[0]).strip() and str(cells[1]).strip():
+            k = 1
+            tbl.cell(ri, 0).merge(tbl.cell(ri, 1))
         for c, v in enumerate(cells):
+            if 0 < c <= k:
+                continue                      # 已 merge 入 col 0
             al = PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.RIGHT
-            set_cell(tbl.cell(ri, c), v, size=font, bold=bold, fill=fill, align=al)
+            set_cell(tbl.cell(ri, c), cells[k] if c == 0 and k else v,
+                     size=font, bold=bold, fill=ROW_FILL.get(kind), align=al)
         tbl.rows[ri].height = Emu(int(heights[ri - nhdr] * 914400))
-    for row in tbl.rows:
-        for cell in row.cells:
-            _borders(cell)
+    # ── 線：只有小計/總計橫線 + 欄組虛線直線（報告冇逐格格線）────────────
+    # 只喺【有名嘅欄組】邊界畫虛線；標籤欄自成一「組」（label=""）唔算
+    gsep = {c0 for _l, c0, _c1 in (supers or []) if c0 > 0 and str(_l).strip()}
+    last = nhdr + len(rows) - 1
+    for ri, (kind, _c) in enumerate(rows, start=nhdr):
+        if kind in ("subtot", "tot"):
+            for c in range(ncol):
+                _edge(tbl.cell(ri, c), "T")
+                if kind == "tot" or ri == last:
+                    _edge(tbl.cell(ri, c), "B")
+    for ri in range(nhdr, nhdr + len(rows)):
+        for c in gsep:
+            _edge(tbl.cell(ri, c), "L", w=6350, color="808080", dash="sysDash")
     return y + total_h, total_h
 
 

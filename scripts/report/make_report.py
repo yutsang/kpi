@@ -368,14 +368,14 @@ def _df_table(df, first_label=None):
     cols = list(df.columns)
     if first_label is None:
         first_label = ("序號" if cols[0] == "序號" else
-                       ("（萬澳門元）" if cols[0] == "範疇" else cols[0]))
+                       ("萬澳門元" if cols[0] == "範疇" else cols[0]))
     grouped = any("·" in c for c in cols)
     widths = [0.4 if c == "序號" else
               (2.0 if c in ("範疇", "項目名稱", "潛在調整事項") else
                (2.8 if c == "主要涉及項目" else 0.95)) for c in cols]
     subs = [first_label] + [(c.split("·")[1] if "·" in c else c) for c in cols[1:]]
     if cols[0] == "序號" and len(cols) > 1 and cols[1] == "範疇":
-        subs[1] = "（萬澳門元）"                      # 單位放範疇欄（跟 scan 角位）
+        subs[1] = "萬澳門元"                          # 單位放範疇欄（跟 scan 角位）
     supers = None
     if grouped:
         groups = [""] + [(c.split("·")[0] if "·" in c else "") for c in cols[1:]]
@@ -387,13 +387,17 @@ def _df_table(df, first_label=None):
             supers.append((groups[ci], ci, cj + 1)); ci = cj + 1
         supers.insert(0, ("", 0, 1))
     rows = []
+    # ⚠ 加咗「序號」欄之後，範疇名喺第 2 欄 → 分類（sec/小計/總計）要睇標籤欄，唔可以睇 cols[0]，
+    #   否則 小計/總計 全部當 data（冇粗體、冇橫線）。
+    li = 1 if (cols[0] == "序號" and len(cols) > 1) else 0
     for _, row in df.iterrows():
-        first = str(row[cols[0]]).strip()
-        if all(str(row[c]).strip() == "" for c in cols[1:]):
-            rows.append(("sec", [first] + [""] * (len(cols) - 1))); continue
-        kind = ("tot" if first.endswith("總計") else
-                "subtot" if first.endswith(("小計", "合計")) else "data")
-        rows.append((kind, [first] + [_cell_txt(c, row[c]) for c in cols[1:]]))
+        cells = [str(row[cols[0]]).strip()] + [_cell_txt(c, row[c]) for c in cols[1:]]
+        lab = (cells[li] or cells[0]).strip()
+        if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
+            rows.append(("sec", cells)); continue
+        kind = ("tot" if lab.endswith("總計") else
+                "subtot" if lab.endswith(("小計", "合計")) else "data")
+        rows.append((kind, cells))
     return subs, rows, widths, supers
 
 
@@ -452,6 +456,7 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         if table_name:
             top = L.caption_bar(slide, L.MARGIN, top, left_w, table_name)
         subs, rows, widths, supers = _df_table(_overview_display(table_df))
+        teal = [c for c, v in enumerate(subs) if any(k in str(v) for k in L._TEAL_KEYS)]
         wid = [w * left_w / sum(widths) for w in widths]
         avail = L.CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
         hh = L.header_h(supers, subs, wid, L.SZ_TBL_HDR)
@@ -460,7 +465,8 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
             font -= 0.25
         tbl_bot, _ = L.draw_table(slide, L.MARGIN, top, left_w, subs, rows, widths,
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
-                                  fill_h=avail)
+                                  fill_h=avail, left_cols=2,   # 序號 + 範疇 都左對齊（對報告）
+                                  teal_cols=teal)
     if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
         L.put(slide, L.MARGIN, min(tbl_bot + 0.06, L.CONTENT_BOTTOM - 0.30), left_w, 0.3,
               note, size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
@@ -580,8 +586,9 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     項目數量計得到；10年預算要 config，冇就唔出嗰兩行。"""
     cols = list(ov.columns)
     n_plan, n_impl, n_zero = _proj_counts(sdf, plan)
-    rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: n_zero},
-            {cols[0]: "投資執行報告中申報已實施的投資項目數量", cols[1]: n_impl}]
+    # 報告字眼（IMG_0441）：未實施個數寫括號，表示係計劃總數入面嗰部分
+    rows = [{cols[0]: "原計劃中未實施的投資項目數", cols[1]: f"({n_zero})" if n_zero else "-"},
+            {cols[0]: "投資執行報告中申報已實施的投資項目數", cols[1]: n_impl}]
     # 10年投資預算：全 cell 搜過清單 + 表2 都冇（2026-08-12 確認），嚟自承批合同。
     # 冇 config 就【照出行、留空】—— 保持報告結構，一眼睇到係待填而唔係漏咗（user 2026-08-12）。
     tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]

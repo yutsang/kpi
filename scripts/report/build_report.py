@@ -466,15 +466,33 @@ def source_note(slide, W, y=None, *, note=None, more=False):
 
 
 # ── from layout ──
-def _borders(cell):
-    """幼灰格線；插喺 tcPr 最前（OOXML schema：ln* 要喺 fill 之前，否則 PowerPoint 會要求修復）。"""
+RULE = "000000"
+
+
+# ── from layout ──
+TEAL = RGBColor(0x00, 0xA3, 0xA1)
+
+
+# ── from layout ──
+_TEAL_KEYS = ("設施建設", "活動舉辦", "資本性支出", "營運性支出")
+
+
+# ── from layout ──
+def _edge(cell, side, *, w=9525, color=RULE, dash=None):
+    """畫單一條邊（side ∈ T/B/L/R）。ln* 要插喺 tcPr 最前，否則 PowerPoint 會叫修復。
+    同一邊重覆設就換走舊嗰條。"""
     tcPr = cell._tc.get_or_add_tcPr()
-    for tag in ("a:lnB", "a:lnT", "a:lnR", "a:lnL"):        # 反序 insert(0) → 出嚟係 L,R,T,B
-        ln = tcPr.makeelement(qn(tag), {"w": "3175", "cap": "flat"})
-        fill = ln.makeelement(qn("a:solidFill"), {})
-        clr = fill.makeelement(qn("a:srgbClr"), {"val": BORDER})
-        fill.append(clr); ln.append(fill)
-        tcPr.insert(0, ln)
+    tag = qn(f"a:ln{side}")
+    old = tcPr.find(tag)
+    if old is not None:
+        tcPr.remove(old)
+    ln = tcPr.makeelement(tag, {"w": str(w), "cap": "flat"})
+    fill = ln.makeelement(qn("a:solidFill"), {})
+    clr = fill.makeelement(qn("a:srgbClr"), {"val": color})
+    fill.append(clr); ln.append(fill)
+    if dash:
+        ln.append(ln.makeelement(qn("a:prstDash"), {"val": dash}))
+    tcPr.insert(0, ln)
 
 
 # ── from layout ──
@@ -510,7 +528,7 @@ def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.R
 
 
 # ── from layout ──
-ROW_FILL = {"sec": SECFILL, "subtot": SUBTOT, "tot": TOTAL, "data": None}
+ROW_FILL = {"sec": None, "subtot": None, "tot": None, "data": None}
 
 
 # ── from layout ──
@@ -561,7 +579,7 @@ def fit_blocks(blocks, widths, font, avail_h, hh):
 
 # ── from layout ──
 def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, hfont=SZ_TBL_HDR,
-               left_cols=1, fill_h=None, max_row_h=0.34):
+               left_cols=1, fill_h=None, max_row_h=0.26, teal_cols=None):
     """畫 navy 表。subs=欄名（可含 \\n）；rows=[(kind, cells)]；widths=相對闊度（會 scale 到 w）。
     supers=[(label, c0, c1_exclusive)] 兩層表頭。fill_h=想填滿嘅高度（行數少時撐開行高，
     唔好剩一大橛白位；每行最多 max_row_h）。回 (bottom_y, 實際高度)。"""
@@ -582,30 +600,52 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
     tbl.first_row = False; tbl.horz_banding = False
     for i, v in enumerate(wid):
         tbl.columns[i].width = Inches(v)
+    # teal 表頭（IMG_0441 概覽表最右嗰組）——【要 caller 明示】：4.2 表都有「設施建設/活動舉辦」
+    #   欄但係 navy（scan p.24），所以唔可以淨靠欄名估。
+    teal_c = set(teal_cols or ())
     if supers:
         for c in range(ncol):
             set_cell(tbl.cell(0, c), "", size=hfont, fill=NAVY, color=WHITE)
         for label, c0, c1 in supers:
             if c1 - c0 > 1:
                 tbl.cell(0, c0).merge(tbl.cell(0, c1 - 1))
-            if label:
-                set_cell(tbl.cell(0, c0), label, size=hfont + 0.5, bold=True, fill=NAVY,
-                         color=WHITE, align=PP_ALIGN.CENTER)
+            hf = TEAL if all(c in teal_c for c in range(c0, c1)) else NAVY
+            set_cell(tbl.cell(0, c0), label or "", size=hfont + 0.5, bold=True, fill=hf,
+                     color=WHITE, align=PP_ALIGN.CENTER)
         tbl.rows[0].height = Emu(int(0.17 * 914400))
     for c, s in enumerate(subs):
-        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True, fill=NAVY, color=WHITE,
+        set_cell(tbl.cell(nhdr - 1, c), s, size=hfont, bold=True,
+                 fill=TEAL if c in teal_c else NAVY, color=WHITE,
                  align=PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.CENTER)
     tbl.rows[nhdr - 1].height = Emu(int(hsub * 914400))
     for ri, (kind, cells) in enumerate(rows, start=nhdr):
-        fill = ROW_FILL.get(kind)
         bold = kind in ("sec", "subtot", "tot")
+        # 標籤（範疇/小計/總計/表尾說明行）喺報告係【由最左邊起】，唔係縮喺名稱欄：
+        #   序號欄空 + 名稱欄有字 → merge 埋，個 label 先有位唔會 wrap
+        k = 0
+        if left_cols >= 2 and not str(cells[0]).strip() and str(cells[1]).strip():
+            k = 1
+            tbl.cell(ri, 0).merge(tbl.cell(ri, 1))
         for c, v in enumerate(cells):
+            if 0 < c <= k:
+                continue                      # 已 merge 入 col 0
             al = PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.RIGHT
-            set_cell(tbl.cell(ri, c), v, size=font, bold=bold, fill=fill, align=al)
+            set_cell(tbl.cell(ri, c), cells[k] if c == 0 and k else v,
+                     size=font, bold=bold, fill=ROW_FILL.get(kind), align=al)
         tbl.rows[ri].height = Emu(int(heights[ri - nhdr] * 914400))
-    for row in tbl.rows:
-        for cell in row.cells:
-            _borders(cell)
+    # ── 線：只有小計/總計橫線 + 欄組虛線直線（報告冇逐格格線）────────────
+    # 只喺【有名嘅欄組】邊界畫虛線；標籤欄自成一「組」（label=""）唔算
+    gsep = {c0 for _l, c0, _c1 in (supers or []) if c0 > 0 and str(_l).strip()}
+    last = nhdr + len(rows) - 1
+    for ri, (kind, _c) in enumerate(rows, start=nhdr):
+        if kind in ("subtot", "tot"):
+            for c in range(ncol):
+                _edge(tbl.cell(ri, c), "T")
+                if kind == "tot" or ri == last:
+                    _edge(tbl.cell(ri, c), "B")
+    for ri in range(nhdr, nhdr + len(rows)):
+        for c in gsep:
+            _edge(tbl.cell(ri, c), "L", w=6350, color="808080", dash="sysDash")
     return y + total_h, total_h
 
 
@@ -2764,7 +2804,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "1c267d0 2026-08-14 11:39"
+BUILD_STAMP = "703aeba 2026-08-15 11:53"
 
 
 # ── from make_report ──
@@ -3003,14 +3043,14 @@ def _df_table(df, first_label=None):
     cols = list(df.columns)
     if first_label is None:
         first_label = ("序號" if cols[0] == "序號" else
-                       ("（萬澳門元）" if cols[0] == "範疇" else cols[0]))
+                       ("萬澳門元" if cols[0] == "範疇" else cols[0]))
     grouped = any("·" in c for c in cols)
     widths = [0.4 if c == "序號" else
               (2.0 if c in ("範疇", "項目名稱", "潛在調整事項") else
                (2.8 if c == "主要涉及項目" else 0.95)) for c in cols]
     subs = [first_label] + [(c.split("·")[1] if "·" in c else c) for c in cols[1:]]
     if cols[0] == "序號" and len(cols) > 1 and cols[1] == "範疇":
-        subs[1] = "（萬澳門元）"                      # 單位放範疇欄（跟 scan 角位）
+        subs[1] = "萬澳門元"                          # 單位放範疇欄（跟 scan 角位）
     supers = None
     if grouped:
         groups = [""] + [(c.split("·")[0] if "·" in c else "") for c in cols[1:]]
@@ -3022,13 +3062,17 @@ def _df_table(df, first_label=None):
             supers.append((groups[ci], ci, cj + 1)); ci = cj + 1
         supers.insert(0, ("", 0, 1))
     rows = []
+    # ⚠ 加咗「序號」欄之後，範疇名喺第 2 欄 → 分類（sec/小計/總計）要睇標籤欄，唔可以睇 cols[0]，
+    #   否則 小計/總計 全部當 data（冇粗體、冇橫線）。
+    li = 1 if (cols[0] == "序號" and len(cols) > 1) else 0
     for _, row in df.iterrows():
-        first = str(row[cols[0]]).strip()
-        if all(str(row[c]).strip() == "" for c in cols[1:]):
-            rows.append(("sec", [first] + [""] * (len(cols) - 1))); continue
-        kind = ("tot" if first.endswith("總計") else
-                "subtot" if first.endswith(("小計", "合計")) else "data")
-        rows.append((kind, [first] + [_cell_txt(c, row[c]) for c in cols[1:]]))
+        cells = [str(row[cols[0]]).strip()] + [_cell_txt(c, row[c]) for c in cols[1:]]
+        lab = (cells[li] or cells[0]).strip()
+        if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
+            rows.append(("sec", cells)); continue
+        kind = ("tot" if lab.endswith("總計") else
+                "subtot" if lab.endswith(("小計", "合計")) else "data")
+        rows.append((kind, cells))
     return subs, rows, widths, supers
 
 
@@ -3090,6 +3134,7 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         if table_name:
             top = caption_bar(slide, MARGIN, top, left_w, table_name)
         subs, rows, widths, supers = _df_table(_overview_display(table_df))
+        teal = [c for c, v in enumerate(subs) if any(k in str(v) for k in _TEAL_KEYS)]
         wid = [w * left_w / sum(widths) for w in widths]
         avail = CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
         hh = header_h(supers, subs, wid, SZ_TBL_HDR)
@@ -3098,7 +3143,8 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
             font -= 0.25
         tbl_bot, _ = draw_table(slide, MARGIN, top, left_w, subs, rows, widths,
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
-                                  fill_h=avail)
+                                  fill_h=avail, left_cols=2,   # 序號 + 範疇 都左對齊（對報告）
+                                  teal_cols=teal)
     if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
         put(slide, MARGIN, min(tbl_bot + 0.06, CONTENT_BOTTOM - 0.30), left_w, 0.3,
               note, size=SZ_NOTE - 1, italic=True, color=GREY)
@@ -3222,8 +3268,9 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     項目數量計得到；10年預算要 config，冇就唔出嗰兩行。"""
     cols = list(ov.columns)
     n_plan, n_impl, n_zero = _proj_counts(sdf, plan)
-    rows = [{cols[0]: "原計劃年末實施但未實施的投資項目數量", cols[1]: n_zero},
-            {cols[0]: "投資執行報告中申報已實施的投資項目數量", cols[1]: n_impl}]
+    # 報告字眼（IMG_0441）：未實施個數寫括號，表示係計劃總數入面嗰部分
+    rows = [{cols[0]: "原計劃中未實施的投資項目數", cols[1]: f"({n_zero})" if n_zero else "-"},
+            {cols[0]: "投資執行報告中申報已實施的投資項目數", cols[1]: n_impl}]
     # 10年投資預算：全 cell 搜過清單 + 表2 都冇（2026-08-12 確認），嚟自承批合同。
     # 冇 config 就【照出行、留空】—— 保持報告結構，一眼睇到係待填而唔係漏咗（user 2026-08-12）。
     tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
