@@ -92,7 +92,9 @@ try:
                           capture_output=True, text=True).stdout.strip() or "?"
 except Exception:
     _sha = "?"
-_stamp = f"{_sha} {time.strftime('%Y-%m-%d %H:%M')}"
+# ⚠ 呢個 sha 係「bundle 嗰刻嘅 HEAD」＝ 呢份 build_report.py 入面嘅 commit 嘅【父】，
+#   唔係佢自己個 commit（bundle 一定早過 commit 一步）。標明 base 免得睇錯版本。
+_stamp = f"base {_sha} · bundled {time.strftime('%Y-%m-%d %H:%M')}"
 assembled = assembled.replace('BUILD_STAMP = "dev"', f'BUILD_STAMP = "{_stamp}"')
 
 seen_imp, imp_lines = set(), []
