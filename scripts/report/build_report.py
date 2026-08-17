@@ -3155,7 +3155,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 72a1440 · bundled 2026-08-17 15:49"
+BUILD_STAMP = "base 78bb7c7 · bundled 2026-08-17 15:54"
 
 
 # ── from make_report ──
@@ -3872,14 +3872,15 @@ def _cum_table(df, plan, cat=None):
              ((d["_ry"] < 25) if pre else (d["_ry"] >= 25)))
         return round(float(d.loc[m, "_af"].sum()), 1)
 
+    # 欄名逐字對 scan p26（之前用咗自己嘅簡寫）
     Y3, Y5 = "2023年度投資計劃", "2025年度投資計劃"
-    Y4, CUM = "2024年度投資計劃", "截至2025年末三年累計"
+    Y4, CUM = "2024年度投資計劃", "截至2025年末三年計劃累計"
     cols = ["範疇"]
     for y in (Y3, Y4):
-        cols += [f"{y}·獲批的計劃投資金額", f"{y}·2025年前已獲認可", f"{y}·2025年期後",
-                 f"{y}·合計", f"{y}·完成率"]
+        cols += [f"{y}·獲批的計劃投資金額", f"{y}·獲認可的投資金額",
+                 f"{y}·潛在調整後的2025年期後投資金額", f"{y}·合計", f"{y}·完成率"]
     cols += [f"{Y5}·獲批的計劃投資金額", f"{Y5}·潛在調整後投資金額", f"{Y5}·完成率"]
-    cols += [f"{CUM}·獲批的計劃投資金額", f"{CUM}·獲認可／潛在調整後投資金額", f"{CUM}·完成率"]
+    cols += [f"{CUM}·獲批的計劃投資金額", f"{CUM}·獲認可/潛在調整後投資金額", f"{CUM}·完成率"]
 
     def line(name, cells):
         r = {"範疇": name}
@@ -3910,6 +3911,42 @@ def _cum_table(df, plan, cat=None):
         all_items += items
     rows.append(line("合計", calc(all_items)))
     return pd.DataFrame(rows, columns=cols)
+
+
+# ── from make_report ──
+def _cum_formula_row(cols):
+    """2.5 表頭下面嗰行斜體公式（逐字對 scan p26）：
+       2023 → a¹ b¹ c¹ d¹=b¹+c¹ d¹/a¹ ｜2024 → a² …｜2025 → a³ d³ d³/a³
+       ｜三年計劃累計 → a=a¹+a²+a³  d=d¹+d²+d³  d/a"""
+    m = {"2023年度投資計劃": ("a¹", "b¹", "c¹", "d¹=b¹+c¹", "d¹/a¹"),
+         "2024年度投資計劃": ("a²", "b²", "c²", "d²=b²+c²", "d²/a²"),
+         "2025年度投資計劃": ("a³", "d³", "d³/a³"),
+         "截至2025年末三年計劃累計": ("a=a¹+a²+a³", "d=d¹+d²+d³", "d/a")}
+    out, seen = [], {}
+    for c in cols:
+        g, _, _sub = str(c).partition("·")
+        if not _sub or g not in m:
+            out.append(""); continue
+        i = seen.get(g, 0); seen[g] = i + 1
+        out.append(m[g][i] if i < len(m[g]) else "")
+    return out
+
+
+# ── from make_report ──
+def _cum_extra(tbl, budget):
+    """2.5 表尾兩行（scan p26）：承諾的10年投資預算 ／ 佔10年投資預算的比例（斜體）。
+    比例只落【金額欄】，完成率欄留空。"""
+    cols = list(tbl.columns)
+    b_all = (budget or {}).get("總計")
+    tot = tbl[tbl["範疇"].astype(str).str.strip() == "合計"]
+    r1 = {cols[0]: "承諾的10年投資預算", cols[1]: b_all if b_all else "-"}
+    r2 = {cols[0]: "佔10年投資預算的比例"}
+    for c in cols[1:]:
+        v = tot.iloc[0][c] if len(tot) else None
+        r2[c] = ("" if str(c).endswith("完成率") else
+                 (_rate(float(v), b_all) if (b_all and isinstance(v, (int, float))
+                                               and not pd.isna(v)) else "-"))
+    return pd.concat([tbl, pd.DataFrame([r1, r2])], ignore_index=True)
 
 
 # ── from make_report ──
@@ -4068,8 +4105,8 @@ def render_artwork(prs, ent_up, biao2_dir="data/表2", entity="mgm"):
 
 
 # ── from make_report ──
-def render_cumulative(prs, ent_up, df, plan, cat=None):
-    """2.5 截至2025年末投資金額概覽（scan slide 26）。"""
+def render_cumulative(prs, ent_up, df, plan, cat=None, budget=None):
+    """2.5 截至2025年末投資金額概覽（scan p26）：4 個年度欄組 + 公式行 + 表尾兩行 10 年預算。"""
     tbl = _cum_table(df, plan, cat)
     if tbl.empty:
         return
@@ -4079,8 +4116,8 @@ def render_cumulative(prs, ent_up, df, plan, cat=None):
     def v(c):
         x = r.get(c) if r is not None else None
         return float(x) if isinstance(x, (int, float)) and not pd.isna(x) else 0.0
-    CUM = "截至2025年末三年累計"
-    a, dd = v(f"{CUM}·獲批的計劃投資金額"), v(f"{CUM}·獲認可／潛在調整後投資金額")
+    CUM = "截至2025年末三年計劃累計"
+    a, dd = v(f"{CUM}·獲批的計劃投資金額"), v(f"{CUM}·獲認可/潛在調整後投資金額")
     g = tbl[tbl["範疇"].astype(str).str.strip() == "博彩項目小計"]
     ng = tbl[tbl["範疇"].astype(str).str.strip() == "非博彩項目小計"]
 
@@ -4090,20 +4127,31 @@ def render_cumulative(prs, ent_up, df, plan, cat=None):
     head = (f"截至2025年末，{ent_up}於2023至2025年三年的年度投資計劃累計獲批的計劃投資金額為{_amt(a)}"
             f"（博彩項目{_amt(sv(g, f'{CUM}·獲批的計劃投資金額'))}和"
             f"非博彩項目{_amt(sv(ng, f'{CUM}·獲批的計劃投資金額'))}），"
-            f"累計獲認可／潛在調整後投資金額為{_amt(dd)}，"
-            f"累計投資計劃金額完成率為{_pct(_rate(dd, a))}"
+            f"累計獲認可/潛在調整後投資金額為{_amt(dd)}"
+            f"（博彩項目{_amt(sv(g, f'{CUM}·獲認可/潛在調整後投資金額'))}和"
+            f"非博彩項目{_amt(sv(ng, f'{CUM}·獲認可/潛在調整後投資金額'))}），"
+            f"累計的投資計劃金額完成率為{_pct(_rate(dd, a))}"
             f"（博彩項目完成率為{_pct(sv(g, f'{CUM}·完成率'))}，"
-            f"非博彩項目完成率為{_pct(sv(ng, f'{CUM}·完成率'))}）。")
-    render_generic(prs, f"{ent_up} 截至2025年末投資金額概覽", tbl.fillna(""), sec=1,
+            f"非博彩項目完成率為{_pct(sv(ng, f'{CUM}·完成率'))}）")
+    b_all = (budget or {}).get("總計")
+    if b_all:      # scan p26 導語尾兩句
+        head += f"，累計獲認可/潛在調整後投資金額佔10年投資預算的{_pct(_rate(dd, b_all))}"
+    # 報告嗰句係「累計…【非博彩】投資金額主要集中在…」→ 只揀非博彩段嗰啲範疇
+    _lab = tbl["範疇"].astype(str).str.strip()
+    _ng = tbl[_lab.eq("非博彩項目").cumsum() > 0] if _lab.eq("非博彩項目").any() else tbl
+    cats = _cats_of(_ng, f"{CUM}·獲認可/潛在調整後投資金額", 4)
+    head += (f"，累計獲認可/潛在調整後非博彩投資金額主要集中在{cats}等範疇。" if cats else "。")
+    render_generic(prs, f"{ent_up} 截至2025年末投資金額概覽",
+                   _cum_extra(tbl, budget).fillna(""), sec=1,
                    crumb="過往年度投資計劃在2025年繼續執行的審查跟進  |  截至2025年末投資金額概覽",
-                   headline=head, side=False,
-                   note="註：金額單位為萬澳門元。「2025年前已獲認可」＝該年度計劃於2025年之前"
-                        "（即當年及往年審查）已認可之投資金額；「2025年期後」＝於2025年發生之期後投資。")
+                   headline=head, side=False, formula=_cum_formula_row,
+                   note="註：金額單位為萬澳門元。「獲認可的投資金額」＝該年度計劃於2025年之前"
+                        "（即當年及往年審查）已認可之投資金額。")
 
 
 # ── from make_report ──
 def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=None,
-                   llm=None, tbl_id=None, side=None):
+                   llm=None, tbl_id=None, side=None, formula=None):
     """單張表（範疇/項目 + 數字欄；·=2-row group header）。逐頁：crumb + 導語 + caption bar
     + 表 + 資料來源，按【累積高度】分頁（唔會超出版面）。
 
@@ -4130,6 +4178,8 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
             return
     df = _overview_display(df) if "範疇" in df.columns and "項目數量" in df.columns else df
     subs, rows, widths, supers = _df_table(df)
+    if formula:      # 表頭下面嗰行斜體公式（2.5 = scan p26；調整表另有 _draw_adj_table）
+        rows = [("formula", formula(list(df.columns)))] + rows
     W, H = size_of(prs)
     tw = W - 2 * MARGIN
     wid = [w * tw / sum(widths) for w in widths]
@@ -4880,7 +4930,7 @@ def main():
                            note="註：金額單位為萬澳門元；括號表示調減。",
                            llm=llm, tbl_id=tbl_key("期後概覽", bk))
             render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm)   # 2.2 / 2.4
-    render_cumulative(prs, ent_up, df, plan, cat)      # 2.5 截至2025年末投資金額概覽（scan slide 26）
+    render_cumulative(prs, ent_up, df, plan, cat, budget)   # 2.5 截至2025年末投資金額概覽（scan p26）
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
     S3 = "本年度審查工作的主要發現"
