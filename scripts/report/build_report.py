@@ -2901,7 +2901,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base b8ba7b9 · bundled 2026-08-15 12:56"
+BUILD_STAMP = "base 40c94c4 · bundled 2026-08-17 11:13"
 
 
 # ── from make_report ──
@@ -3397,14 +3397,16 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     # 冇 config 就【照出行、留空】—— 保持報告結構，一眼睇到係待填而唔係漏咗（user 2026-08-12）。
     tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
     b_all = budget.get("總計") if budget else None
-    rows.append({cols[0]: "承諾的10年投資預算", "報告投資金額": b_all if b_all else ""})
+    # ⚠ 冇 budget 都要填「-」，唔可以留空 —— 成行全空會俾 _df_table 當做【範疇 section 行】
+    #   （→ 變粗體）。「-」亦係報告表示「冇數」嘅寫法。
+    rows.append({cols[0]: "承諾的10年投資預算", "報告投資金額": b_all if b_all else "-"})
     r = {cols[0]: "2025年投資支出佔10年投資預算的完成率"}
     for c in ("報告投資金額", "潛在調整後投資金額"):
         if c in cols and len(tot) and b_all:
             v = pd.to_numeric(pd.Series([tot.iloc[0][c]]), errors="coerce").iloc[0]
             r[c] = _rate(float(v or 0), b_all)
         else:
-            r[c] = ""
+            r[c] = "-"
     rows.append(r)
     return pd.concat([ov, pd.DataFrame(rows)], ignore_index=True) if rows else ov
 
