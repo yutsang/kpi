@@ -373,7 +373,7 @@ def _edge(cell, side, *, w=9525, color=RULE, dash=None):
 
 
 def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.RIGHT,
-             color=None, wrap=True, anchor=MSO_ANCHOR.MIDDLE):
+             color=None, wrap=True, anchor=MSO_ANCHOR.MIDDLE, italic=False):
     cell.margin_left = cell.margin_right = Emu(18000)
     cell.margin_top = cell.margin_bottom = Emu(9000)
     cell.vertical_anchor = anchor
@@ -401,10 +401,10 @@ def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.R
         if not seg:
             continue
         r = p.add_run(); r.text = seg
-        setfont(r, size, bold=bold, color=color)
+        setfont(r, size, bold=bold, italic=italic, color=color)
 
 
-ROW_FILL = {"sec": None, "subtot": None, "tot": None, "data": None}   # 報告：body 全白，靠橫線分層
+ROW_FILL = {"sec": None, "subtot": None, "tot": None, "data": None, "formula": None}   # 報告：body 全白，靠橫線分層
 
 
 def header_h(supers, subs, widths, hfont):
@@ -505,6 +505,12 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
     tbl.rows[nhdr - 1].height = Emu(int(hsub * 914400))
     for ri, (kind, cells) in enumerate(rows, start=nhdr):
         bold = kind in ("sec", "subtot", "tot")
+        if kind == "formula":      # 報告表頭下面嗰行斜體公式（a｜1..7｜b｜c=a+b｜d=b/a）
+            for c, v in enumerate(cells):
+                set_cell(tbl.cell(ri, c), v, size=max(4.5, font - 1.0), italic=True,
+                         color=GREY, align=PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.RIGHT)
+            tbl.rows[ri].height = Emu(int(max(0.14, (font - 1.0) * 1.24 / 72.0 + 0.03) * 914400))
+            continue
         # 標籤（範疇/小計/總計/表尾說明行）喺報告係【由最左邊起】，唔係縮喺名稱欄：
         #   序號欄空 + 名稱欄有字 → merge 埋，個 label 先有位唔會 wrap
         k = 0

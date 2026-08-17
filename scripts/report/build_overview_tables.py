@@ -136,6 +136,76 @@ def overview_by_bucket(df, bucket, plan, category=None):
     return pd.DataFrame(rows)[cols]
 
 
+# 報告 1.4／2.2／2.4 嘅【真身】——對 scan slide 15：範疇 × 七大類調整，12 欄 + 公式行。
+#   我哋之前做成「調整類型 × bucket」4 欄，形狀完全唔同（項目組 2026-08-17 指出）。
+ADJ_SUPER = "投資金額的潛在調整事項"
+ADJ_RESID = "其他調整"          # 落唔到七大類嘅殘差；非零先出（2025 通常係 0，同報告一樣得 7 欄）
+
+
+def adjustment_by_sub(df, bucket):
+    """範疇 × 七大類調整 → DataFrame（`·` = 兩層表頭）。
+       欄：報告投資金額(a) | 七大類(1..7)[+其他] | 潛在調整合計(b) | 潛在調整後投資金額(c=a+b)
+           | 潛在調整金額佔報告投資金額比例(d=b/a)
+    ⚠ b 一定等於【實際調整合計】（含殘差），咁 c=a+b 先會 tie 返概況表個「潛在調整後」。"""
+    d = df[df["_bucket"] == bucket].copy()
+    if d.empty:
+        return pd.DataFrame()
+    d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
+    d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = ADJ_RESID
+    d["_rep"] = pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0.0)
+    d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
+    types = [t for t in B.ADJ7] + ([ADJ_RESID] if abs(d.loc[d["_adj"] == ADJ_RESID, "_chg"].sum()) > 0.5 else [])
+    cols = (["範疇", "報告投資金額"] + [f"{ADJ_SUPER}·{t}" for t in types]
+            + ["潛在調整合計", "潛在調整後投資金額", "潛在調整金額佔報告投資金額比例"])
+
+    def line(name, sub):
+        rep = sub["_rep"].sum()
+        r = {"範疇": name, "報告投資金額": round(rep, 1)}
+        tot = 0.0
+        for t in types:
+            v = sub.loc[sub["_adj"] == t, "_chg"].sum()
+            r[f"{ADJ_SUPER}·{t}"] = round(v, 1); tot += v
+        r["潛在調整合計"] = round(tot, 1)
+        r["潛在調整後投資金額"] = round(rep + tot, 1)
+        r["潛在調整金額佔報告投資金額比例"] = _rate(tot, rep) if abs(rep) > 0.05 else None
+        return r
+
+    rows = []
+    for scope in [0, 1]:
+        sc = d[d["_scope"] == scope]
+        name = "博彩項目" if scope == 0 else "非博彩項目"
+        rows.append({"範疇": name})
+        if not sc.empty:
+            for sub in sc.sort_values(["_go", "_ngn", "_sub"])["_sub"].unique():
+                rows.append(line(sub, sc[sc["_sub"] == sub]))
+        rows.append(line(f"{name}小計", sc))
+    rows.append(line("合計", d))
+    return pd.DataFrame(rows)[cols]
+
+
+def adj_formula_row(cols):
+    """報告表頭下面嗰行斜體公式：a | 1..7 | b | c=a+b | d=b/a（對 scan slide 15）。"""
+    out = []
+    n = 0
+    for c in cols:
+        c = str(c)
+        if c == "範疇":
+            out.append("")
+        elif c == "報告投資金額":
+            out.append("a")
+        elif c.startswith(ADJ_SUPER + "·"):
+            n += 1; out.append(str(n))
+        elif c == "潛在調整合計":
+            out.append("b")
+        elif c == "潛在調整後投資金額":
+            out.append("c=a+b")
+        elif c.endswith("比例"):
+            out.append("d=b/a")
+        else:
+            out.append("")
+    return out
+
+
 def adjustment_bridge(df):
     """S15-17：7 canonical 調整類型 × {2025計劃/2024期後/2023期後/合計}。"""
     d = df.copy()

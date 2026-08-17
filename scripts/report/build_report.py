@@ -520,7 +520,7 @@ def _edge(cell, side, *, w=9525, color=RULE, dash=None):
 
 # ── from layout ──
 def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.RIGHT,
-             color=None, wrap=True, anchor=MSO_ANCHOR.MIDDLE):
+             color=None, wrap=True, anchor=MSO_ANCHOR.MIDDLE, italic=False):
     cell.margin_left = cell.margin_right = Emu(18000)
     cell.margin_top = cell.margin_bottom = Emu(9000)
     cell.vertical_anchor = anchor
@@ -548,11 +548,11 @@ def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.R
         if not seg:
             continue
         r = p.add_run(); r.text = seg
-        setfont(r, size, bold=bold, color=color)
+        setfont(r, size, bold=bold, italic=italic, color=color)
 
 
 # ── from layout ──
-ROW_FILL = {"sec": None, "subtot": None, "tot": None, "data": None}
+ROW_FILL = {"sec": None, "subtot": None, "tot": None, "data": None, "formula": None}
 
 
 # ── from layout ──
@@ -657,6 +657,12 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
     tbl.rows[nhdr - 1].height = Emu(int(hsub * 914400))
     for ri, (kind, cells) in enumerate(rows, start=nhdr):
         bold = kind in ("sec", "subtot", "tot")
+        if kind == "formula":      # 報告表頭下面嗰行斜體公式（a｜1..7｜b｜c=a+b｜d=b/a）
+            for c, v in enumerate(cells):
+                set_cell(tbl.cell(ri, c), v, size=max(4.5, font - 1.0), italic=True,
+                         color=GREY, align=PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.RIGHT)
+            tbl.rows[ri].height = Emu(int(max(0.14, (font - 1.0) * 1.24 / 72.0 + 0.03) * 914400))
+            continue
         # 標籤（範疇/小計/總計/表尾說明行）喺報告係【由最左邊起】，唔係縮喺名稱欄：
         #   序號欄空 + 名稱欄有字 → merge 埋，個 label 先有位唔會 wrap
         k = 0
@@ -1698,6 +1704,80 @@ def overview_by_bucket(df, bucket, plan, category=None):
         cols = ["範疇", "項目數量", "報告投資金額", "潛在調整金額", "潛在調整後投資金額",
                 "設施建設/資本性支出", "活動舉辦/營運性支出"]
     return pd.DataFrame(rows)[cols]
+
+
+# ── from build_overview_tables ──
+ADJ_SUPER = "投資金額的潛在調整事項"
+
+
+# ── from build_overview_tables ──
+ADJ_RESID = "其他調整"
+
+
+# ── from build_overview_tables ──
+def adjustment_by_sub(df, bucket):
+    """範疇 × 七大類調整 → DataFrame（`·` = 兩層表頭）。
+       欄：報告投資金額(a) | 七大類(1..7)[+其他] | 潛在調整合計(b) | 潛在調整後投資金額(c=a+b)
+           | 潛在調整金額佔報告投資金額比例(d=b/a)
+    ⚠ b 一定等於【實際調整合計】（含殘差），咁 c=a+b 先會 tie 返概況表個「潛在調整後」。"""
+    d = df[df["_bucket"] == bucket].copy()
+    if d.empty:
+        return pd.DataFrame()
+    d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
+    d.loc[~d["_adj"].isin(ADJ7), "_adj"] = ADJ_RESID
+    d["_rep"] = pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0.0)
+    d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
+    types = [t for t in ADJ7] + ([ADJ_RESID] if abs(d.loc[d["_adj"] == ADJ_RESID, "_chg"].sum()) > 0.5 else [])
+    cols = (["範疇", "報告投資金額"] + [f"{ADJ_SUPER}·{t}" for t in types]
+            + ["潛在調整合計", "潛在調整後投資金額", "潛在調整金額佔報告投資金額比例"])
+
+    def line(name, sub):
+        rep = sub["_rep"].sum()
+        r = {"範疇": name, "報告投資金額": round(rep, 1)}
+        tot = 0.0
+        for t in types:
+            v = sub.loc[sub["_adj"] == t, "_chg"].sum()
+            r[f"{ADJ_SUPER}·{t}"] = round(v, 1); tot += v
+        r["潛在調整合計"] = round(tot, 1)
+        r["潛在調整後投資金額"] = round(rep + tot, 1)
+        r["潛在調整金額佔報告投資金額比例"] = _rate(tot, rep) if abs(rep) > 0.05 else None
+        return r
+
+    rows = []
+    for scope in [0, 1]:
+        sc = d[d["_scope"] == scope]
+        name = "博彩項目" if scope == 0 else "非博彩項目"
+        rows.append({"範疇": name})
+        if not sc.empty:
+            for sub in sc.sort_values(["_go", "_ngn", "_sub"])["_sub"].unique():
+                rows.append(line(sub, sc[sc["_sub"] == sub]))
+        rows.append(line(f"{name}小計", sc))
+    rows.append(line("合計", d))
+    return pd.DataFrame(rows)[cols]
+
+
+# ── from build_overview_tables ──
+def adj_formula_row(cols):
+    """報告表頭下面嗰行斜體公式：a | 1..7 | b | c=a+b | d=b/a（對 scan slide 15）。"""
+    out = []
+    n = 0
+    for c in cols:
+        c = str(c)
+        if c == "範疇":
+            out.append("")
+        elif c == "報告投資金額":
+            out.append("a")
+        elif c.startswith(ADJ_SUPER + "·"):
+            n += 1; out.append(str(n))
+        elif c == "潛在調整合計":
+            out.append("b")
+        elif c == "潛在調整後投資金額":
+            out.append("c=a+b")
+        elif c.endswith("比例"):
+            out.append("d=b/a")
+        else:
+            out.append("")
+    return out
 
 
 # ── from build_overview_tables ──
@@ -3004,7 +3084,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base a30c437 · bundled 2026-08-17 14:07"
+BUILD_STAMP = "base 0360820 · bundled 2026-08-17 14:25"
 
 
 # ── from make_report ──
@@ -3272,7 +3352,7 @@ def _df_table(df, first_label=None):
         lab = (cells[li] or cells[0]).strip()
         if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
             rows.append(("sec", cells)); continue
-        kind = ("tot" if lab.endswith("總計") else
+        kind = ("tot" if lab in ("總計", "合計") else
                 "subtot" if lab.endswith(("小計", "合計")) else "data")
         rows.append((kind, cells))
     return subs, rows, widths, supers
@@ -3368,6 +3448,17 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
     rx = MARGIN + left_w + 0.22
     prose_box(slide, rx, top - 0.02, W - rx - MARGIN, CONTENT_BOTTOM - top, bullets)
     source_note(slide, W)
+
+
+# ── from make_report ──
+def _draw_adj_table(slide, x, y, w, adjdf, *, font=None):
+    """報告 1.4／2.2／2.4 個表：範疇 × 七大類 + 表頭下面嗰行斜體公式（對 scan slide 15）。"""
+    subs, rows, widths, supers = _df_table(adjdf, first_label="萬澳門元")
+    rows = [("formula", adj_formula_row(list(adjdf.columns)))] + rows
+    f = font or (SZ_TBL_WIDE if len(subs) > 11 else SZ_TBL)
+    return draw_table(slide, x, y, w, subs, rows, widths, supers=supers,
+                        font=f, hfont=max(4.5, f - 0.5), left_cols=1,
+                        fill_h=CONTENT_BOTTOM - y - 0.28, hdr_cols=_hdr_cols(subs, supers))
 
 
 # ── from make_report ──
@@ -3578,16 +3669,15 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     tname = f"{ent_up} {yr}年度投資計劃於2025年申報的期後投資金額的潛在調整"
     W, H = size_of(prs)
     crumb = f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總"
-    tbl = _bucket_adj_table(ov)
-    subs, rows, widths, supers = _df_table(tbl)
+    tbl = adjustment_by_sub(sdf, bk)
+    if tbl.empty:
+        tbl = _bucket_adj_table(ov)
     # ★ 報告（p15）：呢一節係【一整版都係表，冇右邊敘述】；逐類說明另起版、全闊（p22）。
     #   之前做成「表左 + 敘述右」，敘述長就出一版左邊全白嘅續頁 —— 報告冇呢種版。
     tw = W - 2 * MARGIN
     slide, W, H, top = _page(prs, 1, crumb, head)
     t2 = caption_bar(slide, MARGIN, top, tw, tname)
-    draw_table(slide, MARGIN, t2, tw, subs, rows, widths, supers=supers,
-                 font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - t2 - 0.28,
-                 hdr_cols=_hdr_cols(subs, supers))
+    _draw_adj_table(slide, MARGIN, t2, tw, tbl.fillna(""))
     put(slide, MARGIN, CONTENT_BOTTOM - 0.26, tw, 0.3,
           "註：金額單位為萬澳門元；括號表示調減。", size=SZ_NOTE - 1, italic=True, color=GREY)
     source_note(slide, W)
@@ -4579,11 +4669,22 @@ def main():
         if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
             _prose_slide(prs, f"{S1}  |  2025年度計劃申報投資支出為零的項目",
                          [("", x) for x in zit[1:]], headline=zit[0], sec=0)
-    ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：表左 + 匯總敘述右
-    render_overview_page(prs, f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總",
-                         ahl, adj.fillna(""), ab, sec=0,
-                         table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
-                         note="註：金額單位為萬澳門元；括號表示調減。")
+    ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：全闊表 + 敘述另起版
+    adj2 = adjustment_by_sub(sdf, BUCKET_ORDER[0])
+    _c14 = f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總"
+    if not adj2.empty:
+        _sl, _W, _H, _top = _page(prs, 0, _c14, ahl)
+        _tw = _W - 2 * MARGIN
+        _t2 = caption_bar(_sl, MARGIN, _top, _tw,
+                            f"{ent_up} 2025年度投資計劃報告投資金額潛在調整")
+        _draw_adj_table(_sl, MARGIN, _t2, _tw, adj2.fillna(""))
+        put(_sl, MARGIN, CONTENT_BOTTOM - 0.26, _tw, 0.3,
+              "註：金額單位為萬澳門元；括號表示調減。", size=SZ_NOTE - 1, italic=True, color=GREY)
+        source_note(_sl, _W)
+    else:
+        render_overview_page(prs, _c14, ahl, adj.fillna(""), ab, sec=0,
+                             table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
+                             note="註：金額單位為萬澳門元；括號表示調減。")
     _prose_2col(prs, f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總（詳述）",
                 _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6, sec=0,
                 headline=ahl)   # slide 16-17 詳述（LLM 優先）
