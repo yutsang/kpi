@@ -47,6 +47,27 @@ def split_year(yb):
     return (int(m.group(2)) if m.group(2) else spend), spend
 
 
+# 範疇名：報告用嘅正式寫法（我哋 taxonomy 個 label 短啲）。★純 render 層改字，
+#   唔郁 categories.yml／feed，唔會影響任何 groupby／tie（對 IMG_0441 逐字）。
+_SUB_DISPLAY = {
+    "博彩娛樂場優化": "博彩娛樂場場地的優化",
+    "博彩設施設備優化": "博彩設施及設備的優化",
+}
+
+
+def sub_display(s):
+    """單一名 → 報告寫法；「博彩項目—博彩娛樂場優化」呢類 section 標籤都認。"""
+    t = str(s).strip()
+    if t in _SUB_DISPLAY:
+        return _SUB_DISPLAY[t]
+    for sep in ("—", "－", "-"):
+        if sep in t:
+            a, _, b = t.partition(sep)
+            if b.strip() in _SUB_DISPLAY:
+                return f"{a}{sep}{_SUB_DISPLAY[b.strip()]}"
+    return s
+
+
 def sub_of(df):
     """報告 row label「範疇」：博彩用 vertical_label、非博彩用 ng_label。
     feed 已經有物化嘅「範疇」欄就直接用（prep_tableau 出）。"""
