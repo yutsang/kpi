@@ -393,6 +393,8 @@ def _df_table(df, first_label=None):
     li = 1 if (cols[0] == "序號" and len(cols) > 1) else 0
     for _, row in df.iterrows():
         cells = [str(row[cols[0]]).strip()] + [_cell_txt(c, row[c]) for c in cols[1:]]
+        if cols[0] in ("範疇", "序號"):        # 範疇名用報告寫法（render 層）
+            cells[li] = FS.sub_display(cells[li])
         lab = (cells[li] or cells[0]).strip()
         if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
             rows.append(("sec", cells)); continue
@@ -458,6 +460,7 @@ def _overview_display(ov):
         else:
             n += 1; seq.append(str(n))
     d.insert(0, "序號", seq)
+    d["範疇"] = d["範疇"].map(FS.sub_display)          # 報告寫法（render 層，唔影響算數）
     return d.rename(columns={k: v for k, v in _OV_GROUP.items() if k in d.columns})
 
 

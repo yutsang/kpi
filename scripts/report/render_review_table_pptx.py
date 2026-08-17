@@ -27,6 +27,7 @@ except ImportError:
     print("✗ 需要 pandas + python-pptx → pip install pandas python-pptx openpyxl"); sys.exit(1)
 
 import layout as L                       # 版式引擎（bundler 會 inline）
+import feed_schema as FS
 
 RATE_COLS = {"投資計劃完成率", "潛在調整後投資計劃完成率"}
 TEXT_COLS = {"項目序號", "項目名稱"}
@@ -109,7 +110,7 @@ def _blocks(df, cols):
         if kind == "section":
             if cur:
                 out.append(cur)
-            cells = [""] * len(cols); cells[lab_c] = seq
+            cells = [""] * len(cols); cells[lab_c] = FS.sub_display(seq)
             cur = [("sec", cells)]
             continue
         cells = [("" if row.get(c, "") is None else str(row.get(c, ""))) if c in TEXT_COLS
@@ -117,7 +118,7 @@ def _blocks(df, cols):
                  for c in cols]
         k = "tot" if seq.endswith("合計") else ("subtot" if kind == "subtotal" else "data")
         if k != "data":                       # 小計／合計：標籤搬去項目名稱欄
-            cells[lab_c] = seq; cells[0] = ""
+            cells[lab_c] = FS.sub_display(seq); cells[0] = ""
         cur.append((k, cells))
     if cur:
         out.append(cur)

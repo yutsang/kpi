@@ -851,6 +851,27 @@ def split_year(yb):
 
 
 # ── from feed_schema ──
+_SUB_DISPLAY = {
+    "博彩娛樂場優化": "博彩娛樂場場地的優化",
+    "博彩設施設備優化": "博彩設施及設備的優化",
+}
+
+
+# ── from feed_schema ──
+def sub_display(s):
+    """單一名 → 報告寫法；「博彩項目—博彩娛樂場優化」呢類 section 標籤都認。"""
+    t = str(s).strip()
+    if t in _SUB_DISPLAY:
+        return _SUB_DISPLAY[t]
+    for sep in ("—", "－", "-"):
+        if sep in t:
+            a, _, b = t.partition(sep)
+            if b.strip() in _SUB_DISPLAY:
+                return f"{a}{sep}{_SUB_DISPLAY[b.strip()]}"
+    return s
+
+
+# ── from feed_schema ──
 def sub_of(df):
     """報告 row label「範疇」：博彩用 vertical_label、非博彩用 ng_label。
     feed 已經有物化嘅「範疇」欄就直接用（prep_tableau 出）。"""
@@ -994,7 +1015,7 @@ def _blocks(df, cols):
         if kind == "section":
             if cur:
                 out.append(cur)
-            cells = [""] * len(cols); cells[lab_c] = seq
+            cells = [""] * len(cols); cells[lab_c] = sub_display(seq)
             cur = [("sec", cells)]
             continue
         cells = [("" if row.get(c, "") is None else str(row.get(c, ""))) if c in TEXT_COLS
@@ -1002,7 +1023,7 @@ def _blocks(df, cols):
                  for c in cols]
         k = "tot" if seq.endswith("合計") else ("subtot" if kind == "subtotal" else "data")
         if k != "data":                       # 小計／合計：標籤搬去項目名稱欄
-            cells[lab_c] = seq; cells[0] = ""
+            cells[lab_c] = sub_display(seq); cells[0] = ""
         cur.append((k, cells))
     if cur:
         out.append(cur)
@@ -2983,7 +3004,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 96e45b2 · bundled 2026-08-17 13:53"
+BUILD_STAMP = "base a30c437 · bundled 2026-08-17 14:07"
 
 
 # ── from make_report ──
@@ -3246,6 +3267,8 @@ def _df_table(df, first_label=None):
     li = 1 if (cols[0] == "序號" and len(cols) > 1) else 0
     for _, row in df.iterrows():
         cells = [str(row[cols[0]]).strip()] + [_cell_txt(c, row[c]) for c in cols[1:]]
+        if cols[0] in ("範疇", "序號"):        # 範疇名用報告寫法（render 層）
+            cells[li] = sub_display(cells[li])
         lab = (cells[li] or cells[0]).strip()
         if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
             rows.append(("sec", cells)); continue
@@ -3314,6 +3337,7 @@ def _overview_display(ov):
         else:
             n += 1; seq.append(str(n))
     d.insert(0, "序號", seq)
+    d["範疇"] = d["範疇"].map(sub_display)          # 報告寫法（render 層，唔影響算數）
     return d.rename(columns={k: v for k, v in _OV_GROUP.items() if k in d.columns})
 
 
