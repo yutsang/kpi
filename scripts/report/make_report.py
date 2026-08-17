@@ -398,7 +398,7 @@ def _df_table(df, first_label=None):
         lab = (cells[li] or cells[0]).strip()
         if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
             rows.append(("sec", cells)); continue
-        kind = ("tot" if lab.endswith("總計") else
+        kind = ("tot" if lab in ("總計", "合計") else
                 "subtot" if lab.endswith(("小計", "合計")) else "data")
         rows.append((kind, cells))
     return subs, rows, widths, supers
@@ -490,6 +490,16 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
     rx = L.MARGIN + left_w + 0.22
     L.prose_box(slide, rx, top - 0.02, W - rx - L.MARGIN, L.CONTENT_BOTTOM - top, bullets)
     L.source_note(slide, W)
+
+
+def _draw_adj_table(slide, x, y, w, adjdf, *, font=None):
+    """報告 1.4／2.2／2.4 個表：範疇 × 七大類 + 表頭下面嗰行斜體公式（對 scan slide 15）。"""
+    subs, rows, widths, supers = _df_table(adjdf, first_label="萬澳門元")
+    rows = [("formula", O.adj_formula_row(list(adjdf.columns)))] + rows
+    f = font or (L.SZ_TBL_WIDE if len(subs) > 11 else L.SZ_TBL)
+    return L.draw_table(slide, x, y, w, subs, rows, widths, supers=supers,
+                        font=f, hfont=max(4.5, f - 0.5), left_cols=1,
+                        fill_h=L.CONTENT_BOTTOM - y - 0.28, hdr_cols=_hdr_cols(subs, supers))
 
 
 def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, table_name=None,
@@ -693,16 +703,15 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     tname = f"{ent_up} {yr}年度投資計劃於2025年申報的期後投資金額的潛在調整"
     W, H = L.size_of(prs)
     crumb = f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總"
-    tbl = _bucket_adj_table(ov)
-    subs, rows, widths, supers = _df_table(tbl)
+    tbl = O.adjustment_by_sub(sdf, bk)
+    if tbl.empty:
+        tbl = _bucket_adj_table(ov)
     # ★ 報告（p15）：呢一節係【一整版都係表，冇右邊敘述】；逐類說明另起版、全闊（p22）。
     #   之前做成「表左 + 敘述右」，敘述長就出一版左邊全白嘅續頁 —— 報告冇呢種版。
     tw = W - 2 * L.MARGIN
     slide, W, H, top = _page(prs, 1, crumb, head)
     t2 = L.caption_bar(slide, L.MARGIN, top, tw, tname)
-    L.draw_table(slide, L.MARGIN, t2, tw, subs, rows, widths, supers=supers,
-                 font=L.SZ_TBL, hfont=L.SZ_TBL_HDR, fill_h=L.CONTENT_BOTTOM - t2 - 0.28,
-                 hdr_cols=_hdr_cols(subs, supers))
+    _draw_adj_table(slide, L.MARGIN, t2, tw, tbl.fillna(""))
     L.put(slide, L.MARGIN, L.CONTENT_BOTTOM - 0.26, tw, 0.3,
           "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
     L.source_note(slide, W)
@@ -1661,11 +1670,22 @@ def main():
         if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
             _prose_slide(prs, f"{S1}  |  2025年度計劃申報投資支出為零的項目",
                          [("", x) for x in zit[1:]], headline=zit[0], sec=0)
-    ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：表左 + 匯總敘述右
-    render_overview_page(prs, f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總",
-                         ahl, adj.fillna(""), ab, sec=0,
-                         table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
-                         note="註：金額單位為萬澳門元；括號表示調減。")
+    ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：全闊表 + 敘述另起版
+    adj2 = O.adjustment_by_sub(sdf, S.BUCKET_ORDER[0])
+    _c14 = f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總"
+    if not adj2.empty:
+        _sl, _W, _H, _top = _page(prs, 0, _c14, ahl)
+        _tw = _W - 2 * L.MARGIN
+        _t2 = L.caption_bar(_sl, L.MARGIN, _top, _tw,
+                            f"{ent_up} 2025年度投資計劃報告投資金額潛在調整")
+        _draw_adj_table(_sl, L.MARGIN, _t2, _tw, adj2.fillna(""))
+        L.put(_sl, L.MARGIN, L.CONTENT_BOTTOM - 0.26, _tw, 0.3,
+              "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
+        L.source_note(_sl, _W)
+    else:
+        render_overview_page(prs, _c14, ahl, adj.fillna(""), ab, sec=0,
+                             table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
+                             note="註：金額單位為萬澳門元；括號表示調減。")
     _prose_2col(prs, f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總（詳述）",
                 _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6, sec=0,
                 headline=ahl)   # slide 16-17 詳述（LLM 優先）
