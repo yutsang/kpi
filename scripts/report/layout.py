@@ -347,7 +347,9 @@ def source_note(slide, W, y=None, *, note=None, more=False):
 RULE = "00338D"                             # 表格線（橫線 + 欄組虛線）＝ KPMG Blue
 HDR_FILL = RGBColor(0x1E, 0x49, 0xE2)       # 表頭預設（accent1 亮藍）
 #   ⚠ 唔可以叫 HDR —— make_report 已經有個 HDR(=NAVY)，bundle dedup 會靜靜丟咗佢
-HDR_KEY = RGBColor(0x09, 0x8E, 0x7E)        # 重點欄組（1.2 獲批的計劃投資金額 / 4.1 最右潛在調整後）
+HDR_KEY = RGBColor(0x09, 0x8E, 0x7E)        # 綠：重點欄（獲批的計劃投資金額／潛在調整後／三年累計／比例）
+HDR_SKY = RGBColor(0x00, 0xB8, 0xF5)        # 天藍：調整事項欄組（1-7+合計）／2025年度／潛在調整金額
+HDR_PUR = RGBColor(0x48, 0x36, 0x98)        # 紫：2024年度（KPMG Violet；項目組未畀 hex，暫用品牌紫）
 CAPTION_FILL = NAVY                         # caption 條 #00338D
 SEC_FG = NAVY                               # 「博彩項目 / 非博彩項目」字色
 NOTE_FG = NAVY                              # 註 / 資料來源

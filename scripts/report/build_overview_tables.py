@@ -125,7 +125,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
                                      #   係兩個唔同項目（撞號），全表去重會少計 → 總計 = 兩個 scope 之和
         rows.append(mk(f"{name}小計", n_sc, _plan_tot(plan, yr, scope == 0),
                        sc["報告"].sum(), sc["調整"].sum(), sc["後"].sum(), sc["設施"].sum(), sc["活動"].sum()))
-    rows.append(mk("總計", n_tot, _plan_tot(plan, yr, None),
+    rows.append(mk("合計", n_tot, _plan_tot(plan, yr, None),
                    g["報告"].sum(), g["調整"].sum(), g["後"].sum(), g["設施"].sum(), g["活動"].sum()))
     if is_py:
         cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額", "投資計劃完成率",
@@ -180,6 +180,16 @@ def adjustment_by_sub(df, bucket):
                 rows.append(line(sub, sc[sc["_sub"] == sub]))
         rows.append(line(f"{name}小計", sc))
     rows.append(line("合計", d))
+    # 報告最後一行＝涉及項目數量（逐欄：該調整類型涉及幾多個 distinct 項目）
+    n = {"範疇": "涉及項目數量",
+         "報告投資金額": int(d["dicj code"].nunique())}
+    for t in types:
+        sub = d[(d["_adj"] == t) & (d["_chg"].abs() > 0.05)]
+        n[f"{ADJ_SUPER}·{t}"] = int(sub["dicj code"].nunique())
+    n["潛在調整合計"] = int(d[d["_chg"].abs() > 0.05]["dicj code"].nunique())
+    n["潛在調整後投資金額"] = ""
+    n["潛在調整金額佔報告投資金額比例"] = ""
+    rows.append(n)
     return pd.DataFrame(rows)[cols]
 
 

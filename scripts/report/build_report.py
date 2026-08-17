@@ -481,6 +481,14 @@ HDR_KEY = RGBColor(0x09, 0x8E, 0x7E)
 
 
 # ── from layout ──
+HDR_SKY = RGBColor(0x00, 0xB8, 0xF5)
+
+
+# ── from layout ──
+HDR_PUR = RGBColor(0x48, 0x36, 0x98)
+
+
+# ── from layout ──
 CAPTION_FILL = NAVY
 
 
@@ -1695,7 +1703,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
                                      #   係兩個唔同項目（撞號），全表去重會少計 → 總計 = 兩個 scope 之和
         rows.append(mk(f"{name}小計", n_sc, _plan_tot(plan, yr, scope == 0),
                        sc["報告"].sum(), sc["調整"].sum(), sc["後"].sum(), sc["設施"].sum(), sc["活動"].sum()))
-    rows.append(mk("總計", n_tot, _plan_tot(plan, yr, None),
+    rows.append(mk("合計", n_tot, _plan_tot(plan, yr, None),
                    g["報告"].sum(), g["調整"].sum(), g["後"].sum(), g["設施"].sum(), g["活動"].sum()))
     if is_py:
         cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額", "投資計劃完成率",
@@ -1753,6 +1761,16 @@ def adjustment_by_sub(df, bucket):
                 rows.append(line(sub, sc[sc["_sub"] == sub]))
         rows.append(line(f"{name}小計", sc))
     rows.append(line("合計", d))
+    # 報告最後一行＝涉及項目數量（逐欄：該調整類型涉及幾多個 distinct 項目）
+    n = {"範疇": "涉及項目數量",
+         "報告投資金額": int(d["dicj code"].nunique())}
+    for t in types:
+        sub = d[(d["_adj"] == t) & (d["_chg"].abs() > 0.05)]
+        n[f"{ADJ_SUPER}·{t}"] = int(sub["dicj code"].nunique())
+    n["潛在調整合計"] = int(d[d["_chg"].abs() > 0.05]["dicj code"].nunique())
+    n["潛在調整後投資金額"] = ""
+    n["潛在調整金額佔報告投資金額比例"] = ""
+    rows.append(n)
     return pd.DataFrame(rows)[cols]
 
 
@@ -3084,7 +3102,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 0360820 · bundled 2026-08-17 14:25"
+BUILD_STAMP = "base 1c48232 · bundled 2026-08-17 15:21"
 
 
 # ── from make_report ──
@@ -3307,7 +3325,8 @@ def _fmt_ratio(v):
 def _cell_txt(c, v):
     """跟欄名格式化：率／比例→%，數字→千分位（負數括號），其餘原文。"""
     if "比例" in str(c):
-        return _fmt_ratio(v)
+        t = _fmt_ratio(v)
+        return "-" if t in ("0.0%", "(0.0%)") else t      # 報告：比例 0 出「-」
     if "率" in str(c):
         return fmt_pct(v)
     if _is_num(v):
@@ -3352,7 +3371,8 @@ def _df_table(df, first_label=None):
         lab = (cells[li] or cells[0]).strip()
         if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
             rows.append(("sec", cells)); continue
-        kind = ("tot" if lab in ("總計", "合計") else
+        kind = ("data" if lab == "涉及項目數量" else
+                "tot" if lab in ("總計", "合計") else
                 "subtot" if lab.endswith(("小計", "合計")) else "data")
         rows.append((kind, cells))
     return subs, rows, widths, supers
@@ -3396,6 +3416,26 @@ def _hdr_cols(subs, supers):
         for lab, c0, c1 in (supers or []):
             if c0 <= last < c1 and "合計" in str(lab):
                 out[last] = HDR_KEY
+    # 調整表（1.4／2.2／2.4）：七大類欄組 + 潛在調整合計 = 天藍；比例欄 = 綠（項目組 2026-08-17）
+    for lab, c0, c1 in (supers or []):
+        if "潛在調整事項" in str(lab):
+            for c in range(c0, c1):
+                out[c] = HDR_SKY
+    for c, v in enumerate(subs):
+        t = str(v).strip()
+        if t in ("潛在調整合計", "潛在調整金額"):
+            out[c] = HDR_SKY
+        elif t.endswith("比例"):
+            out[c] = HDR_KEY
+    # 2.5 三年表：2023 藍（預設）／2024 紫／2025 天藍／三年累計 綠
+    for lab, c0, c1 in (supers or []):
+        t = str(lab)
+        col = (HDR_PUR if "2024年度投資計劃" in t else
+               HDR_SKY if "2025年度投資計劃" in t else
+               HDR_KEY if "三年累計" in t else None)
+        if col is not None:
+            for c in range(c0, c1):
+                out[c] = col
     return out
 
 
@@ -3436,11 +3476,12 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         avail = CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
         hh = header_h(supers, subs, wid, SZ_TBL_HDR)
         font = SZ_TBL
-        while font > 4.5 and sum(row_h(c, wid, font) for _, c in rows) > avail - hh:
+        # −0.18 安全位：估算同 PowerPoint 實際長高會差少少，唔留位就會 TABLE-GROW
+        while font > 4.5 and sum(row_h(c, wid, font) for _, c in rows) > avail - hh - 0.18:
             font -= 0.25
         tbl_bot, _ = draw_table(slide, MARGIN, top, left_w, subs, rows, widths,
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
-                                  fill_h=avail, left_cols=2,   # 序號 + 範疇 都左對齊（對報告）
+                                  fill_h=avail - 0.18, left_cols=2,   # 序號+範疇 左對齊；−0.18 安全位
                                   hdr_cols=_hdr_cols(subs, supers))
     if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
         put(slide, MARGIN, min(tbl_bot + 0.06, CONTENT_BOTTOM - 0.30), left_w, 0.3,
@@ -3456,9 +3497,17 @@ def _draw_adj_table(slide, x, y, w, adjdf, *, font=None):
     subs, rows, widths, supers = _df_table(adjdf, first_label="萬澳門元")
     rows = [("formula", adj_formula_row(list(adjdf.columns)))] + rows
     f = font or (SZ_TBL_WIDE if len(subs) > 11 else SZ_TBL)
+    avail = CONTENT_BOTTOM - y - 0.28
+    wid = [v * w / sum(widths) for v in widths]
+    while f > 4.0:      # 加咗公式行同「涉及項目數量」行之後會高咗 → 自動縮到放得落
+        need = (header_h(supers, subs, wid, max(4.5, f - 0.5))
+                + sum(row_h(c, wid, f) for _k, c in rows))
+        if need <= avail:
+            break
+        f -= 0.25
     return draw_table(slide, x, y, w, subs, rows, widths, supers=supers,
                         font=f, hfont=max(4.5, f - 0.5), left_cols=1,
-                        fill_h=CONTENT_BOTTOM - y - 0.28, hdr_cols=_hdr_cols(subs, supers))
+                        hdr_cols=_hdr_cols(subs, supers))
 
 
 # ── from make_report ──
