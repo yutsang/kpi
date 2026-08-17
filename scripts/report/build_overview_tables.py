@@ -85,10 +85,14 @@ def overview_by_bucket(df, bucket, plan, category=None):
                 sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
-                # ★ scan p10 註釋2：「項目數量」＝執行報告披露嘅項目數，【包含申報投資支出為零嘅部分】
-                #   → 唔可以再用 v > 0 過濾（之前 89，報告 95；未實施 10 vs 16 都係同一原因）
-                n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
-                n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
+                # ⚠ 清單一張表放晒三年嘅碼（MGM 246 個），非當年計劃嗰啲 2025 金額 = 0 →
+                #   唔可以「全部行都數」（會變 246）。用計劃金額 > 0 數返當年獲批開展嘅項目。
+                #   仲爭報告嗰 95（我哋 89）：scan p10 註釋2 話「包含申報的投資支出為零的部分」，
+                #   即有 6 個係【2025 計劃內但計劃金額為 0】—— 淨睇金額分唔到，要清單畀一條
+                #   「是否 2025 年度計劃項目」明碼欄先數得準。
+                if v > 0:
+                    n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
+                    n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
             elif v:
                 miss += 1
         if miss:

@@ -17,6 +17,8 @@ make_report / render_review_table_pptx 只負責「派數字」，唔再各自�
   呢度用 est_lines() 逐 cell 估 wrap 行數 → 逐 row 定實高度 → 按【累積高度】分頁，
   所以永遠唔會超出 slide 底（單項審查「超出 border」嘅正解）。
 """
+import re
+
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
@@ -108,8 +110,20 @@ def set_ea(run_or_font, ea=None):
     el.set("typeface", ea or FONT_CN)
 
 
+# openpyxl 讀 Excel 有啲 cell 帶住 _x0000_ 呢類轉義（原檔有控制字元），照抄落 pptx 會見到
+#   「在泰國曼_xFFFF_」咁嘅怪字。喺【所有文字最後出口】清一次，唔使逐個 loader 補。
+_ESC = re.compile(r"_x[0-9A-Fa-f]{4}_")
+
+
+def scrub(t):
+    return _ESC.sub("", str(t))
+
+
 def setfont(run, size, *, bold=False, italic=False, color=None, heading=False, latin=None):
-    """一次過設 size/bold/color + <a:latin> + <a:ea>（跟 template theme）。"""
+    """一次過設 size/bold/color + <a:latin> + <a:ea>（跟 template theme）。
+    順手清走 Excel 轉義殘留（_xFFFF_ 之類）——每個 run 一定會行過呢度。"""
+    if "_x" in run.text:
+        run.text = scrub(run.text)
     f = run.font
     f.size = Pt(size); f.bold = bold; f.italic = italic
     if color is not None:

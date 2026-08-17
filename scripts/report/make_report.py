@@ -393,7 +393,13 @@ def _df_table(df, first_label=None):
     #   否則 小計/總計 全部當 data（冇粗體、冇橫線）。
     li = 1 if (cols[0] == "序號" and len(cols) > 1) else 0
     for _, row in df.iterrows():
-        cells = [str(row[cols[0]]).strip()] + [_cell_txt(c, row[c]) for c in cols[1:]]
+        # ⚠ 完成率／比例係【一行】嘅表尾行（1.2 scan p10、2.5 scan p26）：格子入面係 0-1 嘅率，
+        #   但欄名係「報告投資金額」咁 money → 之前 render 做「1」。行名話事，蓋過欄名。
+        _rr = str(row[cols[1] if (cols[0] == "序號" and len(cols) > 1) else cols[0]]).strip()
+        _rate_row = _rr.endswith(("完成率", "比例"))
+        cells = [str(row[cols[0]]).strip()] + [
+            (_fmt_ratio(row[c]) if (_rate_row and _is_num(row[c])) else _cell_txt(c, row[c]))
+            for c in cols[1:]]
         if cols[0] in ("範疇", "序號"):        # 範疇名用報告寫法（render 層）
             cells[li] = FS.sub_display(cells[li])
         lab = (cells[li] or cells[0]).strip()
@@ -859,10 +865,14 @@ def _cum_table(df, plan, cat=None):
             a = round(sum(A.get((yr, g, sb), 0.0) for g, sb in items), 1)
             b = round(sum(_af(yr, g, sb, True) for g, sb in items), 1)
             c = round(sum(_af(yr, g, sb, False) for g, sb in items), 1)
-            out += ([a, b, c, round(b + c, 1), B._rate(b + c, a)] if yr != 25
-                    else [a, c, B._rate(c, a)])
+            # 計劃金額 0 → 完成率算唔到：出「-」（唔可以留白，報告冇白格）
+            def _rt(x, y):
+                r = B._rate(x, y)
+                return "-" if r is None else r
+            out += ([a, b, c, round(b + c, 1), _rt(b + c, a)] if yr != 25
+                    else [a, c, _rt(c, a)])
             ta += a; td += b + c
-        return out + [round(ta, 1), round(td, 1), B._rate(td, ta)]
+        return out + [round(ta, 1), round(td, 1), _rt(td, ta)]
 
     rows, all_items = [], []
     for gm, label in ((True, "博彩項目"), (False, "非博彩項目")):
@@ -1231,8 +1241,10 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
                 if nr.get("管理層解釋"):
                     items.append(("管理層解釋：", nr["管理層解釋"]))
             else:
+                # 標籤跟報告，唔好用清單嘅欄名（之前有啲 card 寫「KPMG分析發現」、
+                #   有啲寫「管理層解釋」做開頭，同其餘 card 嘅「事項描述」唔一致）
                 items = [(l + "：", t) for l, t in
-                         [("KPMG分析發現", nr.get("KPMG分析發現", "")),
+                         [("事項描述", nr.get("KPMG分析發現", "")),
                           ("管理層解釋", nr.get("管理層解釋", "")),
                           ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
                 if not items and b2:      # 清單冇 → 用表2 抽到嘅原文頂住
