@@ -48,7 +48,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
     逐範疇 + 博彩/非博彩小計 + 總計。欄跟報告 IMG_0104/0105：
       2025計劃：項目數量 | 獲批的計劃投資金額 | 報告投資金額 | 完成率 | 潛在調整後投資金額 | 完成率 | 設施建設 | 活動舉辦
       期後    ：項目數量 | 報告投資金額 | 潛在調整金額 | 潛在調整後投資金額 | 設施建設 | 活動舉辦
-    ⚠ 項目數量/逐範疇計劃 = feed 出現嘅碼；零申報項目未計入（報告項目數量含零申報）→ 小計/總計計劃用清單準數。"""
+    ⚠ 項目數量 = 執行報告披露嘅項目數，【含申報投資支出為零嘅項目】（scan p10 註釋2）→ 清單全部行都數。"""
     d = df[df["_bucket"] == bucket]
     if d.empty:
         return pd.DataFrame()
@@ -85,9 +85,10 @@ def overview_by_bucket(df, bucket, plan, category=None):
                 sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
-                if v > 0:      # 計劃金額 0 嘅唔算「獲批開展」（清單有大量 0 行）
-                    n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
-                    n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
+                # ★ scan p10 註釋2：「項目數量」＝執行報告披露嘅項目數，【包含申報投資支出為零嘅部分】
+                #   → 唔可以再用 v > 0 過濾（之前 89，報告 95；未實施 10 vs 16 都係同一原因）
+                n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
+                n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
             elif v:
                 miss += 1
         if miss:
@@ -99,6 +100,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
              "設施建設/資本性支出": round(fac, 1), "活動舉辦/營運性支出": round(act, 1)}
         if is_py:
             r["獲批的計劃投資金額"] = round(pl, 1)
+            r["投資金額的潛在調整事項"] = round(adj, 1)
             r["投資計劃完成率"] = _rate(rep, pl)
             r["潛在調整後投資計劃完成率"] = _rate(aft, pl)
         return r
@@ -108,9 +110,12 @@ def overview_by_bucket(df, bucket, plan, category=None):
         sc = g[g["_scope"] == scope]
         name = "博彩項目" if scope == 0 else "非博彩項目"
         if sc.empty:
-            # ⚠ 報告就算該 scope 全 0 都會出「博彩項目」section + 小計行（全部「-」），
-            #   唔會成組唔見（項目組 2026-08-17）。
+            # ⚠ 報告就算該 scope 全 0 都會【逐個範疇出行】＋小計（全部「-」）——
+            #   scan p20 博彩項目下面照樣有「博彩娛樂場場地的優化 / 博彩設施及設備的優化」。
             rows.append({"範疇": name})
+            if scope == 0:
+                for gsub in ("博彩娛樂場優化", "博彩設施設備優化"):
+                    rows.append(mk(gsub, 0, 0, 0, 0, 0, 0, 0))
             rows.append(mk(f"{name}小計", 0, _plan_tot(plan, yr, scope == 0), 0, 0, 0, 0, 0))
             continue
         rows.append({"範疇": name})     # section 標題行（跟報告 IMG_0105：博彩項目 / 非博彩項目）
@@ -125,11 +130,15 @@ def overview_by_bucket(df, bucket, plan, category=None):
                                      #   係兩個唔同項目（撞號），全表去重會少計 → 總計 = 兩個 scope 之和
         rows.append(mk(f"{name}小計", n_sc, _plan_tot(plan, yr, scope == 0),
                        sc["報告"].sum(), sc["調整"].sum(), sc["後"].sum(), sc["設施"].sum(), sc["活動"].sum()))
-    rows.append(mk("合計", n_tot, _plan_tot(plan, yr, None),
+    # 尾行字眼跟報告：1.2 用「總計」（scan p10）、期後 2.1／2.3 用「合計」（scan p19-20）
+    rows.append(mk("總計" if is_py else "合計", n_tot, _plan_tot(plan, yr, None),
                    g["報告"].sum(), g["調整"].sum(), g["後"].sum(), g["設施"].sum(), g["活動"].sum()))
     if is_py:
-        cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額", "投資計劃完成率",
-                "潛在調整後投資金額", "潛在調整後投資計劃完成率", "設施建設/資本性支出", "活動舉辦/營運性支出"]
+        # ★ scan p10：1.2 只有 5 條數字欄，冇完成率欄（完成率係表尾嘅【行】）、亦冇設施/活動欄。
+        #   兩條完成率欄留喺【最後】俾下游文字邏輯用，_overview_extra 出表前會 drop 走。
+        cols = ["範疇", "項目數量", "獲批的計劃投資金額", "報告投資金額",
+                "投資金額的潛在調整事項", "潛在調整後投資金額",
+                "投資計劃完成率", "潛在調整後投資計劃完成率"]
     else:
         cols = ["範疇", "項目數量", "報告投資金額", "潛在調整金額", "潛在調整後投資金額",
                 "設施建設/資本性支出", "活動舉辦/營運性支出"]
@@ -139,7 +148,9 @@ def overview_by_bucket(df, bucket, plan, category=None):
 # 報告 1.4／2.2／2.4 嘅【真身】——對 scan slide 15：範疇 × 七大類調整，12 欄 + 公式行。
 #   我哋之前做成「調整類型 × bucket」4 欄，形狀完全唔同（項目組 2026-08-17 指出）。
 ADJ_SUPER = "投資金額的潛在調整事項"
-ADJ_RESID = "其他調整"          # 落唔到七大類嘅殘差；非零先出（2025 通常係 0，同報告一樣得 7 欄）
+# 落唔到七大類嘅殘差 →【第 8 類】「不符合期後事項定義的投資支出」（scan p21：2024 期後個 (32,886)）。
+# 報告淨係出【有金額】嗰幾類，編號照舊 1-8 唔重排（p21 = a|1|2|4|5|6|8|b|c|d）。
+ADJ_RESID = B.ADJ_POST
 
 
 def adjustment_by_sub(df, bucket):
@@ -154,7 +165,8 @@ def adjustment_by_sub(df, bucket):
     d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = ADJ_RESID
     d["_rep"] = pd.to_numeric(d["調整前_萬"], errors="coerce").fillna(0.0)
     d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
-    types = [t for t in B.ADJ7] + ([ADJ_RESID] if abs(d.loc[d["_adj"] == ADJ_RESID, "_chg"].sum()) > 0.5 else [])
+    # 只出【有金額】嘅調整類；全 0 嗰幾類唔出欄（scan p15 出 1-7、p21 只出 1,2,4,5,6,8）
+    types = [t for t in B.ADJ_ALL if abs(d.loc[d["_adj"] == t, "_chg"].sum()) > 0.5]
     cols = (["範疇", "報告投資金額"] + [f"{ADJ_SUPER}·{t}" for t in types]
             + ["潛在調整合計", "潛在調整後投資金額", "潛在調整金額佔報告投資金額比例"])
 
@@ -193,10 +205,16 @@ def adjustment_by_sub(df, bucket):
     return pd.DataFrame(rows)[cols]
 
 
+def overview_formula_row(cols):
+    """期後概覽表（2.1／2.3）表頭下面嗰行斜體公式：a | b | c=a+b（對 scan p20）。"""
+    m = {"報告投資金額": "a", "潛在調整金額": "b", "潛在調整後投資金額": "c=a+b"}
+    return [m.get(str(c).split("·")[-1], "") for c in cols]
+
+
 def adj_formula_row(cols):
-    """報告表頭下面嗰行斜體公式：a | 1..7 | b | c=a+b | d=b/a（對 scan slide 15）。"""
+    """報告表頭下面嗰行斜體公式：a | 調整類【固定編號】 | b | c=a+b | d=b/a（對 scan p15／p21）。
+    ⚠ 編號要跟 B.ADJ_ALL 嘅位置，唔可以 1,2,3… 順住數 —— 報告 skip 咗嘅類會斷號（p21 = 1,2,4,5,6,8）。"""
     out = []
-    n = 0
     for c in cols:
         c = str(c)
         if c == "範疇":
@@ -204,7 +222,7 @@ def adj_formula_row(cols):
         elif c == "報告投資金額":
             out.append("a")
         elif c.startswith(ADJ_SUPER + "·"):
-            n += 1; out.append(str(n))
+            out.append(str(B.adj_no(c.split("·", 1)[1])))
         elif c == "潛在調整合計":
             out.append("b")
         elif c == "潛在調整後投資金額":
@@ -220,8 +238,9 @@ def adjustment_bridge(df):
     """S15-17：7 canonical 調整類型 × {2025計劃/2024期後/2023期後/合計}。"""
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
+    d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = B.ADJ_POST      # 殘差＝第 8 類
     rows = []
-    for adj in B.ADJ7:
+    for adj in B.ADJ_ALL:
         r = {"潛在調整事項": adj}
         for bk in S.BUCKET_ORDER:
             r[bk] = round(d[(d["_bucket"] == bk) & (d["_adj"] == adj)]["調整_萬"].sum(), 1)
@@ -301,8 +320,9 @@ def finding_summary(df):
     """S28-40：每個 canonical 調整類型 → 調整額合計 / 涉及項目數 / 主要涉及項目(top3)。"""
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
+    d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = B.ADJ_POST      # 殘差＝第 8 類
     rows = []
-    for adj in B.ADJ7:
+    for adj in B.ADJ_ALL:
         sub = d[(d["_adj"] == adj) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
             continue

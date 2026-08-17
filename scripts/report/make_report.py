@@ -400,8 +400,9 @@ def _df_table(df, first_label=None):
         if all(str(row[c]).strip() == "" for c in cols[li + 1:]):
             rows.append(("sec", cells)); continue
         kind = ("data" if lab == "涉及項目數量" else
+                "formula" if lab.endswith("完成率") else      # 1.2 表尾兩條完成率行＝斜體（scan p10）
                 "tot" if lab in ("總計", "合計") else
-                "subtot" if lab.endswith(("小計", "合計")) else "data")
+                "subtot" if lab.endswith(("小計", "合計")) or lab.startswith("承諾的") else "data")
         rows.append((kind, cells))
     return subs, rows, widths, supers
 
@@ -432,18 +433,18 @@ _OV_GROUP = {
 
 
 def _hdr_cols(subs, supers):
-    """表頭欄組色（項目組 2026-08-17 指定）：預設全部 HDR #1E49E2，只有【重點欄】用綠 #098E7E。
-      · 1.2／1.3 概覽表 → 「獲批的計劃投資金額」
-      · 4.1 金額匯總  → 最右邊「合計·潛在調整後投資金額」
-    其餘表（4.2 設施/活動、期後概覽）暫時全藍——項目組未指定綠欄。"""
+    """表頭欄組色（項目組 2026-08-17 指定）：預設全部 HDR_FILL #1E49E2，重點欄綠 #098E7E。
+      · 1.2／1.3 概覽表 → 「獲批的計劃投資金額」綠
+      · 調整表 1.4／2.2／2.4 → 七大類欄組＋潛在調整合計 天藍、比例欄 綠
+      · 4.1 金額匯總 → 三個年度欄組全藍，最右「潛在調整後投資金額」欄組 綠
+      · 2.5 三年表 → 2023 藍／2024 紫／2025 天藍／三年累計 綠
+    ⚠ 4.1 同 2.5 都有 super「2025年度投資計劃」，唔可以齋睇 label 撞色 →
+      有「三年累計」個 super 先當係 2.5 嗰套年度配色。"""
     out = {c: L.HDR_KEY for c, v in enumerate(subs) if str(v).strip() == "獲批的計劃投資金額"}
-    last = len(subs) - 1
-    if last >= 0 and str(subs[last]).strip() == "潛在調整後投資金額":
-        for lab, c0, c1 in (supers or []):
-            if c0 <= last < c1 and "合計" in str(lab):
-                out[last] = L.HDR_KEY
-    # 調整表（1.4／2.2／2.4）：七大類欄組 + 潛在調整合計 = 天藍；比例欄 = 綠（項目組 2026-08-17）
-    for lab, c0, c1 in (supers or []):
+    sup = list(supers or [])
+    tri = any("三年累計" in str(lab) for lab, _, _ in sup)
+    # 調整表（1.4／2.2／2.4）：七大類欄組 + 潛在調整合計 = 天藍；比例欄 = 綠
+    for lab, c0, c1 in sup:
         if "潛在調整事項" in str(lab):
             for c in range(c0, c1):
                 out[c] = L.HDR_SKY
@@ -453,16 +454,29 @@ def _hdr_cols(subs, supers):
             out[c] = L.HDR_SKY
         elif t.endswith("比例"):
             out[c] = L.HDR_KEY
-    # 2.5 三年表：2023 藍（預設）／2024 紫／2025 天藍／三年累計 綠
-    for lab, c0, c1 in (supers or []):
-        t = str(lab)
-        col = (L.HDR_PUR if "2024年度投資計劃" in t else
-               L.HDR_SKY if "2025年度投資計劃" in t else
-               L.HDR_KEY if "三年累計" in t else None)
-        if col is not None:
-            for c in range(c0, c1):
-                out[c] = col
+    if tri:                     # 2.5 三年表
+        for lab, c0, c1 in sup:
+            t = str(lab)
+            col = (L.HDR_PUR if "2024年度投資計劃" in t else
+                   L.HDR_SKY if "2025年度投資計劃" in t else
+                   L.HDR_KEY if "三年累計" in t else None)
+            if col is not None:
+                for c in range(c0, c1):
+                    out[c] = col
+    else:                       # 4.1／期後概覽：最右「潛在調整後投資金額」欄組 = 綠
+        for lab, c0, c1 in sup:
+            if str(lab).strip() == "潛在調整後投資金額" and c1 == len(subs):
+                for c in range(c0, c1):
+                    out[c] = L.HDR_KEY
     return out
+
+
+# 期後表（2.1／2.3）欄組同 1.2 唔同：報告/潛在調整/潛在調整後 各自獨立，
+#   只有【設施建設/活動舉辦】兩欄先喺「潛在調整後投資金額」super 之下（對 scan p20）。
+_OV_GROUP_POST = {
+    "設施建設/資本性支出": "潛在調整後投資金額·設施建設/資本性支出",
+    "活動舉辦/營運性支出": "潛在調整後投資金額·活動舉辦/營運性支出",
+}
 
 
 def _overview_display(ov):
@@ -477,13 +491,15 @@ def _overview_display(ov):
         if all(str(r[c]).strip() == "" for c in others):      # section 行（博彩項目/非博彩項目）
             n = 0; seq.append("")
         elif lab.endswith(("小計", "總計", "合計")) or lab.startswith(("原計劃", "投資執行報告",
-                                                                   "承諾的", "2025年投資支出")):
+                                                                   "承諾的", "2025年")):
             seq.append("")
         else:
             n += 1; seq.append(str(n))
     d.insert(0, "序號", seq)
     d["範疇"] = d["範疇"].map(FS.sub_display)          # 報告寫法（render 層，唔影響算數）
-    return d.rename(columns={k: v for k, v in _OV_GROUP.items() if k in d.columns})
+    # 1.2（scan p10）已經冇完成率欄、亦冇設施/活動欄 → 單層表頭，唔使 group map
+    gmap = ({} if "獲批的計劃投資金額" in d.columns else _OV_GROUP_POST)
+    return d.rename(columns={k: v for k, v in gmap.items() if k in d.columns})
 
 
 def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, table_name=None,
@@ -495,7 +511,10 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
     if table_df is not None and not table_df.empty:
         if table_name:
             top = L.caption_bar(slide, L.MARGIN, top, left_w, table_name)
-        subs, rows, widths, supers = _df_table(_overview_display(table_df))
+        disp = _overview_display(table_df)
+        subs, rows, widths, supers = _df_table(disp)
+        if "潛在調整金額" in list(table_df.columns):      # 期後表：表頭下面加斜體公式行
+            rows = [("formula", O.overview_formula_row(list(disp.columns)))] + rows
         wid = [w * left_w / sum(widths) for w in widths]
         avail = L.CONTENT_BOTTOM - top - 0.30          # 留位俾表下面個「註」
         hh = L.header_h(supers, subs, wid, L.SZ_TBL_HDR)
@@ -507,8 +526,9 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
                                   fill_h=avail - 0.18, left_cols=2,   # 序號+範疇 左對齊；−0.18 安全位
                                   hdr_cols=_hdr_cols(subs, supers))
-    if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字
-        L.put(slide, L.MARGIN, min(tbl_bot + 0.06, L.CONTENT_BOTTOM - 0.30), left_w, 0.3,
+    if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字（多行註要留夠位）
+        nh = 0.16 * (1 + note.count("\n")) + 0.16
+        L.put(slide, L.MARGIN, min(tbl_bot + 0.06, L.CONTENT_BOTTOM - nh), left_w, nh,
               note, size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
     rx = L.MARGIN + left_w + 0.22
     L.prose_box(slide, rx, top - 0.02, W - rx - L.MARGIN, L.CONTENT_BOTTOM - top, bullets)
@@ -563,7 +583,7 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
 def _total_line(df):
     """由表自己嘅『總計』行砌一句機械導語（避免「淨得個表冇文字」）。"""
     cols = list(df.columns)
-    tot = df[df[cols[0]].astype(str).str.strip().str.endswith("總計")]
+    tot = df[df[cols[0]].astype(str).str.strip().str.endswith(("總計", "合計"))]
     if tot.empty:
         return ""
     r = tot.iloc[0]
@@ -585,7 +605,7 @@ def _table_bullets(df):
     if not num:
         return []
     out = []
-    tot = df[first.str.endswith("總計")]
+    tot = df[first.str.endswith(("總計", "合計"))]
     if not tot.empty:
         out.append(("整體情況", "全部範疇合計 " +
                     "；".join(f"{c.replace('·', '－')} {_cell_txt(c, tot.iloc[0][c])}"
@@ -596,7 +616,7 @@ def _table_bullets(df):
             f"{r[cols[0]]} " + "、".join(f"{c.replace('·', '－')} {_cell_txt(c, r[c])}"
                                          for c in num[:3]) for _, r in subs.iterrows()) + "。"))
     val = next((c for c in num if "報告" in c or "合計" in c), num[0])
-    data = df[~first.str.endswith(("小計", "總計")) &
+    data = df[~first.str.endswith(("小計", "總計", "合計")) &
               df[cols[1:]].astype(str).apply(lambda r: any(x.strip() for x in r), axis=1)].copy()
     data["_v"] = pd.to_numeric(data[val], errors="coerce")
     top = data.sort_values("_v", ascending=False).head(4)
@@ -661,31 +681,38 @@ def _tot_projects(ov):
     return int(v) if pd.notna(v) and v > 0 else 0
 
 
+_RATE_COLS = ("投資計劃完成率", "潛在調整後投資計劃完成率")
+
+
 def _overview_extra(ov, plan, sdf, budget, ent_up):
-    """1.2 概況表尾段（scan slide 11）：原計劃未實施／已實施項目數量 + 承諾的10年投資預算 + 佔比。
-    項目數量計得到；10年預算要 config，冇就唔出嗰兩行。"""
-    cols = list(ov.columns)
-    n_plan, n_impl, n_zero = _proj_counts(sdf, plan, ov)
-    # 報告字眼（IMG_0441）：未實施個數寫括號，表示係計劃總數入面嗰部分
-    rows = [{cols[0]: "原計劃中未實施的投資項目數", cols[1]: f"({n_zero})" if n_zero else "-"},
-            {cols[0]: "投資執行報告中申報已實施的投資項目數", cols[1]: n_impl}]
-    # 10年投資預算：全 cell 搜過清單 + 表2 都冇（2026-08-12 確認），嚟自承批合同。
-    # 冇 config 就【照出行、留空】—— 保持報告結構，一眼睇到係待填而唔係漏咗（user 2026-08-12）。
+    """1.2 概況表出表前處理（對 scan p10）：
+      ① drop 兩條完成率【欄】—— 報告冇，完成率係表尾三行入面嘅一【行】；
+      ② 加尾三行：2025年度投資計劃完成率 ／ 承諾的10年投資預算 ／ 2025年度投資支出佔10年投資預算的完成率。
+    10年預算要 config，冇就照出行填「-」（保持報告結構，一眼睇到係待填而唔係漏咗）。"""
     tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+    ov = ov.drop(columns=[c for c in _RATE_COLS if c in ov.columns])
+    cols = list(ov.columns)
     b_all = budget.get("總計") if budget else None
-    # ⚠ 冇 budget 都要填「-」，唔可以留空 —— 成行全空會俾 _df_table 當做【範疇 section 行】
-    #   （→ 變粗體）。「-」亦係報告表示「冇數」嘅寫法。
+
+    def _v(c):
+        if not len(tot) or c not in tot.columns:
+            return None
+        x = pd.to_numeric(pd.Series([tot.iloc[0][c]]), errors="coerce").iloc[0]
+        return None if pd.isna(x) else float(x)
+    plan_tot = _v("獲批的計劃投資金額")
+    # ① 完成率行：報告／潛在調整事項／潛在調整後 各自除以「獲批的計劃投資金額」（scan p10：103.9%｜(38.2%)｜65.6%）
+    r1 = {cols[0]: "2025年度投資計劃完成率"}
+    for c in ("報告投資金額", "投資金額的潛在調整事項", "潛在調整後投資金額"):
+        v = _v(c)
+        r1[c] = B._rate(v, plan_tot) if (v is not None and plan_tot) else "-"
+    # ⚠ 冇 budget 都要填「-」，唔可以留空 —— 成行全空會俾 _df_table 當做【範疇 section 行】（→ 變粗體）
     _bcol = "獲批的計劃投資金額" if "獲批的計劃投資金額" in cols else "報告投資金額"
-    rows.append({cols[0]: "承諾的10年投資預算", _bcol: b_all if b_all else "-"})
-    r = {cols[0]: "2025年投資支出佔10年投資預算的完成率"}
-    for c in ("報告投資金額", "潛在調整後投資金額"):
-        if c in cols and len(tot) and b_all:
-            v = pd.to_numeric(pd.Series([tot.iloc[0][c]]), errors="coerce").iloc[0]
-            r[c] = B._rate(float(v or 0), b_all)
-        else:
-            r[c] = "-"
-    rows.append(r)
-    return pd.concat([ov, pd.DataFrame(rows)], ignore_index=True) if rows else ov
+    r2 = {cols[0]: "承諾的10年投資預算", _bcol: b_all if b_all else "-"}
+    r3 = {cols[0]: "2025年度投資支出佔10年投資預算的完成率"}
+    for c in ("獲批的計劃投資金額", "報告投資金額", "潛在調整後投資金額"):
+        v = _v(c)
+        r3[c] = B._rate(v, b_all) if (v is not None and b_all) else "-"
+    return pd.concat([ov, pd.DataFrame([r1, r2, r3])], ignore_index=True)
 
 
 def _bucket_adj_table(ov):
@@ -712,7 +739,9 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
     llm_bkt = (llm or {}).get("bkt", {})
     items = []
-    for i, t in enumerate(B.ADJ7, start=1):      # 編號＝七大類 canonical 序
+    d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = B.ADJ_POST      # 殘差＝第 8 類（同表一致）
+    for t in B.ADJ_ALL:                          # 編號＝1-8 canonical 序，冇金額嗰類 skip（斷號）
+        i = B.adj_no(t)
         sub = d[d["_adj"] == t]
         amt = pd.to_numeric(sub["調整_萬"], errors="coerce").sum()
         if abs(amt) < 0.5:
@@ -737,16 +766,32 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     tbl = O.adjustment_by_sub(sdf, bk)
     if tbl.empty:
         tbl = _bucket_adj_table(ov)
-    # ★ 報告（p15）：呢一節係【一整版都係表，冇右邊敘述】；逐類說明另起版、全闊（p22）。
-    #   之前做成「表左 + 敘述右」，敘述長就出一版左邊全白嘅續頁 —— 報告冇呢種版。
-    tw = W - 2 * L.MARGIN
-    slide, W, H, top = _page(prs, 1, crumb, head)
-    t2 = L.caption_bar(slide, L.MARGIN, top, tw, tname)
-    _draw_adj_table(slide, L.MARGIN, t2, tw, tbl.fillna(""))
-    L.put(slide, L.MARGIN, L.CONTENT_BOTTOM - 0.26, tw, 0.3,
+    # ★ 版式跟 scan p21-22（同 1.4 個 p15 唔一樣！）：
+    #     第 1 版 = 表【左】+ 逐類說明【右】（右欄裝得落幾多就幾多）
+    #     之後   = 全闊兩欄續版（p22），左右欄頂各有 navy 小標題（右邊加「（續）」）
+    left_w = W * 0.60
+    rx = L.MARGIN + left_w + 0.22
+    rw = W - L.MARGIN - rx
+    # 先【唔起版】計好第 1 版右欄裝得落邊幾項 → 先知總頁數，導語尾寫得出「（1/2）」
+    top0 = L.HEAD_Y + L.head_h(head, W)[0] + 0.10
+    rlim = L.CONTENT_BOTTOM - top0 - 0.22          # 減右欄頂嗰行小標題
+    first, rest, used = [], [], 0.0
+    for it in items:
+        hh = L.est_numbered_h([it], rw, size=L.SZ_BODY)
+        if rest or (first and used + hh > rlim):
+            rest.append(it); continue
+        first.append(it); used += hh
+    n_all = 1 + len(_prose_pages(prs, rest, head, tname))
+    slide, W, H, top = _page(prs, 1, crumb, head + (f"（1/{n_all}）" if n_all > 1 else ""))
+    t2 = L.caption_bar(slide, L.MARGIN, top, left_w, tname)
+    tbot = (_draw_adj_table(slide, L.MARGIN, t2, left_w, tbl.fillna("")) or (t2, 0))[0]
+    L.put(slide, L.MARGIN, min(tbot + 0.06, L.CONTENT_BOTTOM - 0.26), left_w, 0.3,
           "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
-    L.source_note(slide, W)
-    _prose_2col(prs, crumb, items, sec=1, headline=head, subtitle=tname)
+    L.put(slide, rx, top, rw, 0.18, tname, size=7, bold=True, color=L.NAVY)
+    L.prose_numbered(L._tb(slide, rx, top + 0.22, rw, L.CONTENT_BOTTOM - top - 0.22),
+                     first, size=L.SZ_BODY)
+    L.source_note(slide, W, more=(n_all > 1))
+    _prose_2col(prs, crumb, rest, sec=1, headline=head, subtitle=tname, pg0=1, pgn=n_all)
 
 
 def _cum_table(df, plan, cat=None):
@@ -1111,7 +1156,8 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
     llm_proj = (llm or {}).get("proj", {})
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
-    for adj in B.ADJ7:
+    d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = B.ADJ_POST     # 殘差＝第 8 類（同 1.4／2.2 表一致）
+    for adj in B.ADJ_ALL:
         sub = d[(d["_adj"] == adj) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
             continue
@@ -1263,7 +1309,7 @@ def _cats_of(ov, col="報告投資金額", n=3, scope=None):
     """由 overview 表攞金額最大嘅幾個範疇名（scan：『主要涉及會議展覽、文化藝術、社區旅遊等…』）。"""
     if ov is None or ov.empty or col not in ov.columns:
         return ""
-    d = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))].copy()
+    d = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "合計", "項目"))].copy()
     d["_v"] = pd.to_numeric(d[col], errors="coerce").fillna(0)
     d = d[d["_v"] > 0].sort_values("_v", ascending=False)
     named = d[~d["範疇"].astype(str).isin(["其他", "其它"])]      # 「其他」唔好排喺點名範疇最前
@@ -1296,8 +1342,8 @@ def _zero_intro(ent_up, zi):
 
 
 def _bucket_headline(ent_up, bucket, ov):
-    """②期後概覽導語（由表自己嘅總計行計，自洽）。"""
-    tot = ov[ov["範疇"].astype(str).str.strip() == "總計"]
+    """②期後概覽導語（由表自己嘅合計行計，自洽）。"""
+    tot = ov[ov["範疇"].astype(str).str.strip().isin(("合計", "總計"))]
     if tot.empty:
         return ""
     r = tot.iloc[0]
@@ -1331,9 +1377,33 @@ def _prose_paginated(prs, title, bullets, per):
         _prose_slide(prs, t, page)
 
 
-def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=None):
-    """報告式 2 欄敘述（對 scan slide 16-17：左右兩欄，每欄 navy 小標題 + body）。
-    每頁裝幾多由【估算高度】決定，唔會爆版。"""
+def _prose_pages(prs, bullets, headline=None, subtitle=None):
+    """_prose_2col 嘅分頁計算，抽咗出嚟 —— caller（1.4／2.2／2.4）要【預先知總頁數】
+    先寫得出表版嗰句「（1/3）」（scan p15 = 1/3、p16 = 2/3、p17 = 3/3）。"""
+    if not bullets:
+        return []
+    numbered = len(bullets[0]) == 3
+    W, _ = L.size_of(prs)
+    colw = (W - 2 * L.MARGIN - L.COL_GAP) / 2
+    probe = L.HEAD_Y + L.head_h(headline, W)[0] + 0.10
+    avail = L.CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
+    if not numbered:
+        return L.fit_prose(bullets, colw, avail * 2, head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
+    pages, cur, used = [], [], 0.0
+    for b in bullets:
+        hh = L.est_numbered_h([b], colw, size=L.SZ_BODY)
+        if cur and used + hh > avail * 2:
+            pages.append(cur); cur, used = [], 0.0
+        cur.append(b); used += hh
+    if cur:
+        pages.append(cur)
+    return pages
+
+
+def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=None,
+                pg0=0, pgn=0):
+    """報告式 2 欄敘述（對 scan p16-17：左右兩欄，每欄頂有 navy 小標題，右欄加「（續）」）。
+    pg0/pgn = 前面已經有幾多版／成節總共幾多版（表版計埋）→ 導語尾寫「（2/3）」。"""
     if not bullets:
         return
     numbered = bool(bullets) and len(bullets[0]) == 3      # (no, head, body) = scan 編號清單
@@ -1341,24 +1411,16 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
     colw = (W - 2 * L.MARGIN - L.COL_GAP) / 2
     probe = L.HEAD_Y + L.head_h(headline, W)[0] + 0.10
     avail = L.CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
-    if numbered:
-        hs_all = [L.est_numbered_h([b], colw, size=L.SZ_BODY) for b in bullets]
-        half_pages, cur, used = [], [], 0.0
-        for b, hh in zip(bullets, hs_all):
-            if cur and used + hh > avail * 2:
-                half_pages.append(cur); cur, used = [], 0.0
-            cur.append(b); used += hh
-        if cur:
-            half_pages.append(cur)
-    else:
-        half_pages = L.fit_prose(bullets, colw, avail * 2, head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
+    half_pages = _prose_pages(prs, bullets, headline, subtitle)
+    n_all = pgn or len(half_pages)
     for pi, page in enumerate(half_pages):
-        suffix = f"（{pi+1}/{len(half_pages)}）" if len(half_pages) > 1 else ""
+        suffix = f"（{pg0 + pi + 1}/{n_all}）" if n_all > 1 else ""
         slide, W, H, top = _page(prs, sec, title, (headline or "") + suffix)
-        if subtitle:
-            L.put(slide, L.MARGIN, top, W - 2 * L.MARGIN, 0.18, subtitle, size=6.5,
-                  italic=True, color=L.GREY)
-            top += 0.20
+        if subtitle:      # scan p16：小標題喺【每欄】頂，右欄加「（續）」
+            L.put(slide, L.MARGIN, top, colw, 0.18, subtitle, size=7, bold=True, color=L.NAVY)
+            L.put(slide, L.MARGIN + colw + L.COL_GAP, top, colw, 0.18, subtitle + "（續）",
+                  size=7, bold=True, color=L.NAVY)
+            top += 0.22
         # 斷欄：以【總高一半】為目標令左右大致平均（對 scan），但唔可以超過一欄可用高
         lim = L.CONTENT_BOTTOM - top
         hs = [(L.est_numbered_h([it], colw, size=L.SZ_BODY) if numbered
@@ -1526,7 +1588,7 @@ def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
         amt = r.get(pb, 0)
         if not isinstance(amt, (int, float)) or abs(amt) < 0.5:
             continue
-        no = (B.ADJ7.index(t) + 1) if t in B.ADJ7 else len(B.ADJ7) + 1
+        no = B.adj_no(t)
         if t in llm_adj and llm_adj[t]:                   # LLM 寫嘅摘要優先
             bullets.append((no, f"{t}（{_amt(amt)}）：", llm_adj[t])); continue
         sub = d[(d["_adj"] == t) & (d["_bucket"] == pb) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
@@ -1684,8 +1746,11 @@ def main():
     budget = _load_budget(entity)
     ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan, cat)
     adj = O.adjustment_bridge(sdf)
-    NOTE_RATE = ("註：投資計劃完成率 ＝ 報告投資金額 ／ 獲批的計劃投資金額；潛在調整後完成率 ＝ "
-                 "潛在調整後投資金額 ／ 獲批的計劃投資金額。金額單位為萬澳門元。")
+    # 1.2 表底兩條註（逐字對 scan p10；註釋2 就係「項目數量含零申報」嗰條口徑）
+    NOTE_RATE = ("註釋1：上述承諾的10年投資預算包含額外投資部分（澳門全年博彩毛收入達到1,800億澳門元後"
+                 "觸發的非博彩範疇額外20%投資）\n"
+                 "註釋2：項目數量是指各家承批公司在其2025年度投資執行報告中披露的投資項目數量，"
+                 "包含申報的投資支出為零的部分")
     if not ov.empty:      # slide 10-11：表左 + headline/執行敘述右（報告 2 欄式）
         zi = O.zero_investment_summary(sdf, plan, cat, narr, ent_up)
         hl, hlb = _headline(ent_up, ov, sdf, plan)
@@ -1704,8 +1769,13 @@ def main():
     ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：全闊表 + 敘述另起版
     adj2 = O.adjustment_by_sub(sdf, S.BUCKET_ORDER[0])
     _c14 = f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總"
+    _adjb = _adj_detail_bullets(ent_up, adj, sdf, narr, llm)
+    _tname14 = f"{ent_up} 2025年度報告投資金額的潛在調整事項"
+    # 表版 + 詳述版【一齊數頁】：scan p15 = (1/3)、p16 = (2/3)、p17 = (3/3)
+    _n14 = 1 + len(_prose_pages(prs, _adjb, ahl, _tname14))
+    _sfx14 = f"（1/{_n14}）" if _n14 > 1 else ""
     if not adj2.empty:
-        _sl, _W, _H, _top = _page(prs, 0, _c14, ahl)
+        _sl, _W, _H, _top = _page(prs, 0, _c14, ahl + _sfx14)
         _tw = _W - 2 * L.MARGIN
         _t2 = L.caption_bar(_sl, L.MARGIN, _top, _tw,
                             f"{ent_up} 2025年度投資計劃報告投資金額潛在調整")
@@ -1714,12 +1784,11 @@ def main():
               "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
         L.source_note(_sl, _W)
     else:
-        render_overview_page(prs, _c14, ahl, adj.fillna(""), ab, sec=0,
+        render_overview_page(prs, _c14, ahl + _sfx14, adj.fillna(""), ab, sec=0,
                              table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",
                              note="註：金額單位為萬澳門元；括號表示調減。")
-    _prose_2col(prs, f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總（詳述）",
-                _adj_detail_bullets(ent_up, adj, sdf, narr, llm), 6, sec=0,
-                headline=ahl)   # slide 16-17 詳述（LLM 優先）
+    _prose_2col(prs, _c14, _adjb, 6, subtitle=_tname14, sec=0,
+                headline=ahl, pg0=1, pgn=_n14)   # slide 16-17 詳述（LLM 優先）
 
     # ② 過往年度投資計劃在2025年繼續執行的審查跟進（報告 slide 19-26）
     S2 = "過往年度投資計劃在2025年繼續執行的審查跟進"

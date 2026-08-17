@@ -74,20 +74,27 @@ def _emit(agg, valcols):
         if sc.empty:
             continue
         nm = "博彩項目" if scope == 0 else "非博彩項目"
+        rows.append({c: "" for c in ALL} | {"範疇": nm})   # section 標題行（對 scan p42）
         for _, row in sc.iterrows():
             r = {"範疇": row["_sub"]}
             for c in valcols:
                 r[c] = round(float(row[c]), 1)
             rows.append(r)
         rows.append(agg_row(sc, f"{nm}小計"))
-    rows.append(agg_row(_order(agg), "總計"))
+    rows.append(agg_row(_order(agg), "合計"))
     return pd.DataFrame(rows, columns=ALL)
 
 
 def summary_amount(df) -> pd.DataFrame:
     """4.1 金額匯總：範疇 × bucket → 報告投資金額 / 潛在調整後投資金額 + 合計。"""
+    # ★ 對 scan p42（項目組 2026-08-17）：每個年度出【報告 / 投資金額的潛在調整事項 / 潛在調整後】
+    #   三欄；唔要「合計」欄組；最尾多一組「潛在調整後投資金額」拆設施建設／活動舉辦。
     g = df.groupby(["_scope", "_go", "_ngn", "_sub", "_bucket"], dropna=False).agg(
-        報告=("調整前_萬", "sum"), 調整後=("調整後_萬", "sum")).reset_index()
+        報告=("調整前_萬", "sum"), 調整=("調整_萬", "sum"), 調整後=("調整後_萬", "sum")).reset_index()
+    cap = df[df["final_capex_opex"] == "Capex"].groupby(
+        ["_scope", "_go", "_ngn", "_sub"], dropna=False)["調整後_萬"].sum()
+    ope = df[df["final_capex_opex"] == "Opex"].groupby(
+        ["_scope", "_go", "_ngn", "_sub"], dropna=False)["調整後_萬"].sum()
     # pivot bucket → 兩個 measure
     base = g.groupby(["_scope", "_go", "_ngn", "_sub"], dropna=False)
     idx = base.size().reset_index()[["_scope", "_go", "_ngn", "_sub"]]
@@ -95,15 +102,18 @@ def summary_amount(df) -> pd.DataFrame:
     valcols = []
     for bk in BUCKET_ORDER:
         sub = g[g["_bucket"] == bk].set_index(["_scope", "_go", "_ngn", "_sub"])
-        for meas, lab in [("報告", "報告投資金額"), ("調整後", "潛在調整後投資金額")]:
+        for meas, lab in [("報告", "報告投資金額"), ("調整", "投資金額的潛在調整事項"),
+                          ("調整後", "潛在調整後投資金額")]:
             col = f"{bk}·{lab}"
             out[col] = out.set_index(["_scope", "_go", "_ngn", "_sub"]).index.map(
                 lambda k: sub[meas].get(k, 0.0)).astype(float).round(1).values
             valcols.append(col)
-    out["合計·報告投資金額"] = out[[f"{b}·報告投資金額" for b in BUCKET_ORDER]].sum(axis=1).round(1)
-    out["合計·潛在調整後投資金額"] = out[[f"{b}·潛在調整後投資金額" for b in BUCKET_ORDER]].sum(axis=1).round(1)
-    valcols += ["合計·報告投資金額", "合計·潛在調整後投資金額"]
-    return _emit(out, valcols)
+    _k = out.set_index(["_scope", "_go", "_ngn", "_sub"]).index
+    for lab, ser in (("設施建設/資本性支出", cap), ("活動舉辦/營運性支出", ope)):
+        col = f"潛在調整後投資金額·{lab}"
+        out[col] = [round(float(ser.get(k, 0.0)), 1) for k in _k]
+        valcols.append(col)
+    return _emit(out, valcols)          # 冇「合計」欄組（項目組 2026-08-17）
 
 
 def facility_activity(df, bucket_label) -> pd.DataFrame:
