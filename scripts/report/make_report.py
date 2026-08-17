@@ -631,7 +631,8 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     b_all = budget.get("總計") if budget else None
     # ⚠ 冇 budget 都要填「-」，唔可以留空 —— 成行全空會俾 _df_table 當做【範疇 section 行】
     #   （→ 變粗體）。「-」亦係報告表示「冇數」嘅寫法。
-    rows.append({cols[0]: "承諾的10年投資預算", "報告投資金額": b_all if b_all else "-"})
+    _bcol = "獲批的計劃投資金額" if "獲批的計劃投資金額" in cols else "報告投資金額"
+    rows.append({cols[0]: "承諾的10年投資預算", _bcol: b_all if b_all else "-"})
     r = {cols[0]: "2025年投資支出佔10年投資預算的完成率"}
     for c in ("報告投資金額", "潛在調整後投資金額"):
         if c in cols and len(tot) and b_all:
@@ -651,6 +652,8 @@ def _bucket_adj_table(ov):
     adj = pd.to_numeric(d.get("潛在調整金額"), errors="coerce")
     ratio = (adj / rep).where(rep.abs() > 0).astype(object)   # object：section 行要填 ""（避 pandas FutureWarning）
     ratio[d["範疇"].astype(str).str.strip().eq("") | rep.isna()] = ""
+    # ⚠ 分母 0（例如博彩全 0 嘅小計行）→ 出「-」，唔可以出 nan%
+    ratio[ratio.isna()] = "-"
     d["潛在調整金額佔報告投資金額比例"] = ratio
     return d
 
@@ -1007,13 +1010,15 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     probe_top = L.HEAD_Y + L.head_h(head, W)[0] + 0.10
     avail = L.CONTENT_BOTTOM - probe_top - 0.24
     hh = L.header_h(supers, subs, wid, 5.5)
+    hcols = _hdr_cols(subs, supers)      # 全闊表一樣要派重點欄色（4.1 最右「潛在調整後投資金額」）
     pages = L.fit_rows(rows, wid, 6.5, avail, hh)
     for pi, chunk in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
         slide, W, H, top = _page(prs, sec, crumb, (head or "") + suffix)
         top = L.caption_bar(slide, L.MARGIN, top, tw, title + suffix)
         L.draw_table(slide, L.MARGIN, top, tw, subs, chunk, widths, supers=supers,
-                     font=L.SZ_TBL, hfont=L.SZ_TBL_HDR, fill_h=L.CONTENT_BOTTOM - top - 0.28)
+                     font=L.SZ_TBL, hfont=L.SZ_TBL_HDR, fill_h=L.CONTENT_BOTTOM - top - 0.28,
+                     hdr_cols=hcols)
         L.source_note(slide, W, note=note, more=(pi < len(pages) - 1))
 
 
@@ -1041,14 +1046,13 @@ def _cards(prs, sec, crumb, headline, recs, *, note=None):
         for bar_text, items in page:
             bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(L.MARGIN), Inches(y),
                                          Inches(cw), Inches(0.22))
-            bar.fill.solid(); bar.fill.fore_color.rgb = HDR
+            bar.fill.solid(); bar.fill.fore_color.rgb = HDR      # #00338D（card 條，唔跟表頭色）
             bar.line.fill.background(); bar.shadow.inherit = False
             btf = bar.text_frame; btf.word_wrap = True
             btf.margin_left = Emu(54000); btf.margin_top = btf.margin_bottom = Emu(0)
             btf.vertical_anchor = MSO_ANCHOR.MIDDLE
             br = btf.paragraphs[0].add_run(); br.text = bar_text
-            br.font.bold = True; br.font.size = Pt(8)
-            br.font.color.rgb = LIGHT; br.font.name = "微软雅黑"
+            L.setfont(br, 8, bold=True, color=LIGHT)   # Arial latin + Microsoft YaHei ea（同全份一致）
             bh = min(L.est_prose_h(items, cw - 0.12, head_size=L.SZ_BODY, body_size=L.SZ_BODY, gap=3),
                      L.CONTENT_BOTTOM - y - 0.26)
             L.prose_box(slide, L.MARGIN + 0.06, y + 0.26, cw - 0.12, bh, items,

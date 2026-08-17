@@ -345,12 +345,13 @@ def source_note(slide, W, y=None, *, note=None, more=False):
 #   ＋ 欄組之間虛線直線。之前全格線 + sec/小計/總計 3 級藍底 = 自己作，同報告唔同。
 # ★ 表格配色（項目組 2026-08-17 逐項指定 hex，唔再靠影相估）：
 RULE = "00338D"                             # 表格線（橫線 + 欄組虛線）＝ KPMG Blue
-HDR = RGBColor(0x1E, 0x49, 0xE2)            # 表頭預設（accent1 亮藍）
+HDR_FILL = RGBColor(0x1E, 0x49, 0xE2)       # 表頭預設（accent1 亮藍）
+#   ⚠ 唔可以叫 HDR —— make_report 已經有個 HDR(=NAVY)，bundle dedup 會靜靜丟咗佢
 HDR_KEY = RGBColor(0x09, 0x8E, 0x7E)        # 重點欄組（1.2 獲批的計劃投資金額 / 4.1 最右潛在調整後）
 CAPTION_FILL = NAVY                         # caption 條 #00338D
 SEC_FG = NAVY                               # 「博彩項目 / 非博彩項目」字色
 NOTE_FG = NAVY                              # 註 / 資料來源
-HDR1, HDR2, HDR3 = HDR, HDR, HDR_KEY        # 舊名保留（唔好散落 import error）
+HDR1, HDR2, HDR3 = HDR_FILL, HDR_FILL, HDR_KEY        # 舊名保留（唔好散落 import error）
 TEAL = HDR_KEY
 
 

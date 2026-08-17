@@ -69,7 +69,10 @@ def fmt_money(v):
 
 
 def fmt_pct(v):
-    if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
+    # 分母 0／算唔到 → 「-」（同表內其餘「冇數」寫法一致；之前留空同 - 混用）
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "-"
+    if v == "":
         return ""
     try:
         return f"{float(v)*100:.1f}%"
