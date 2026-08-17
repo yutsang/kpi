@@ -440,8 +440,11 @@ def _hdr_cols(subs, supers):
       · 2.5 三年表 → 2023 藍／2024 紫／2025 天藍／三年累計 綠
     ⚠ 4.1 同 2.5 都有 super「2025年度投資計劃」，唔可以齋睇 label 撞色 →
       有「三年累計」個 super 先當係 2.5 嗰套年度配色。"""
-    out = {c: L.HDR_KEY for c, v in enumerate(subs) if str(v).strip() == "獲批的計劃投資金額"}
     sup = list(supers or [])
+    # 「獲批的計劃投資金額」染綠【只限單層表頭嘅 1.2】—— 喺 4.2／2.5 呢啲有欄組嘅表染綠
+    #   會將 super 條 bar 斬開（顏色唔同就唔 merge），變咗同一個組名出現兩次、行高爆掉。
+    out = ({c: L.HDR_KEY for c, v in enumerate(subs) if str(v).strip() == "獲批的計劃投資金額"}
+           if not sup else {})
     tri = any("三年累計" in str(lab) for lab, _, _ in sup)
     # 調整表（1.4／2.2／2.4）：七大類欄組 + 潛在調整合計 = 天藍；比例欄 = 綠
     for lab, c0, c1 in sup:
@@ -1138,16 +1141,23 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     # 先用一版試高度（導語行數會食掉可用高）
     probe_top = L.HEAD_Y + L.head_h(head, W)[0] + 0.10
     avail = L.CONTENT_BOTTOM - probe_top - 0.24
-    hh = L.header_h(supers, subs, wid, 5.5)
+    # 欄多（4.2 = 19 欄）→ 字要細啲，唔係 PowerPoint 會自動長高 row 爆版（TABLE-GROW）
+    fz = L.SZ_TBL if len(subs) <= 13 else L.SZ_TBL_WIDE
+    #   留 0.30in headroom：draw_table 派嘅 row 高同 PowerPoint 實際 wrap 有少少落差
+    while fz > 4.0 and (L.header_h(supers, subs, wid, max(4.5, fz - 0.5))
+                        + sum(L.row_h(c, wid, fz) for _k, c in rows)) > avail - 0.30:
+        fz -= 0.25
+    hh = L.header_h(supers, subs, wid, max(4.5, fz - 0.5))
     hcols = _hdr_cols(subs, supers)      # 全闊表一樣要派重點欄色（4.1 最右「潛在調整後投資金額」）
-    pages = L.fit_rows(rows, wid, 6.5, avail, hh)
+    pages = L.fit_rows(rows, wid, fz, avail, hh)
     for pi, chunk in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
         slide, W, H, top = _page(prs, sec, crumb, (head or "") + suffix)
         top = L.caption_bar(slide, L.MARGIN, top, tw, title + suffix)
         L.draw_table(slide, L.MARGIN, top, tw, subs, chunk, widths, supers=supers,
-                     font=L.SZ_TBL, hfont=L.SZ_TBL_HDR, fill_h=L.CONTENT_BOTTOM - top - 0.28,
-                     hdr_cols=hcols)
+                     font=fz, hfont=max(4.5, fz - 0.5), hdr_cols=hcols,
+                     # 闊表（4.2 = 19 欄）唔可以 fill_h：撐高 row 會爆版（同 _draw_adj_table 一樣）
+                     fill_h=(None if len(subs) > 13 else L.CONTENT_BOTTOM - top - 0.28))
         L.source_note(slide, W, note=note, more=(pi < len(pages) - 1))
 
 
@@ -1892,9 +1902,10 @@ def main():
     for bk in S.BUCKET_ORDER:
         fa = S.facility_activity(sdf, bk)
         if not fa.empty:
-            # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False
-            render_generic(prs, f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額", fa.fillna(""), sec=3,
+            # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False；表頭下有公式行
+            render_generic(prs, f"{ent_up} {bk}的投資支出 — 區分設施建設/活動舉辦", fa.fillna(""), sec=3,
                            crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦", side=False,
+                           formula=S.fa_formula_row,
                            headline=(f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額"),
                            note="註：金額為潛在調整後金額，單位為萬澳門元。",
                            llm=llm, tbl_id=tbl_key("設施活動", bk))
