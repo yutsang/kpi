@@ -2604,16 +2604,19 @@ def _cat_prompt(sub, rate_pct, projects, reason, b2=""):
     ⚠ 一定要逐個項目【點名】—— 之前只餵一個項目嘅內容去寫成個範疇，讀者分唔清邊句開始
       講新項目（項目組 2026-08-13 反映）。"""
     lines = []
-    for code, name, amt, content in projects[:3]:
-        lines.append(f"- {code}「{name}」（報告投資金額 {amt:,.0f} 萬澳門元）：{str(content)[:320]}")
+    for code, name, amt, content in projects[:2]:      # 2 個夠：一版要放晒 11 個範疇
+        lines.append(f"- {code}「{name}」（報告投資金額 {amt:,.0f} 萬澳門元）：{str(content)[:240]}")
     ctx = (f"投資範疇：{sub}\n投資計劃金額完成率：{rate_pct}\n"
            f"該範疇金額最大嘅投資項目（項目清單）：\n" + "\n".join(lines) + "\n"
            f"管理層變更原因／業務解釋：{str(reason)[:340]}\n"
            f"表2 補充（只可攞嚟豐富『投資內容』，例如子項目／活動場次／金額明細；"
            f"切勿抄佢嘅審計措辭或調整理由）：{str(b2)[:700]}")
-    return (f"請為承批公司投資執行報告寫一句『按範疇的項目概況』（約90-160字）。\n"
+    # ⚠ 字數上限係【版面約束】：報告「按範疇的項目概況」博彩／非博彩各佔【一版】，
+    #   非博彩 11 個範疇要一版放晒 → 每個範疇最多 ~55 字，寫長咗就會分成三版（同報告唔同）。
+    return (f"請為承批公司投資執行報告寫一句『按範疇的項目概況』"
+            f"（【嚴格 40-55 字】，超過就會排版爆版，寧短勿長；唔好客套話、唔好重覆範疇名）。\n"
             f"★格式：「主要包括{{項目序號}}「{{項目名稱}}」……；{{項目序號}}「{{項目名稱}}」……。"
-            f"投資計劃金額完成率為{rate_pct}，主要由於……（管理層業務原因）」\n"
+            f"完成率{rate_pct}，主要由於……（管理層業務原因，一句起兩句止）」\n"
             f"★【每個項目必須先寫返項目序號同項目名稱】先講佢做咗乜，項目與項目之間用「；」分開，"
             f"令讀者一眼睇到邊句係講邊個項目 —— 唔可以將幾個項目嘅內容混埋一齊寫。\n"
             f"完成率原因只用管理層業務解釋，唔好用審計／調整措辭。\n\n{ctx}")
@@ -2980,7 +2983,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base ad26715 · bundled 2026-08-17 13:38"
+BUILD_STAMP = "base 96e45b2 · bundled 2026-08-17 13:53"
 
 
 # ── from make_report ──
@@ -3550,28 +3553,21 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     S2 = "過往年度投資計劃在2025年繼續執行的審查跟進"
     tname = f"{ent_up} {yr}年度投資計劃於2025年申報的期後投資金額的潛在調整"
     W, H = size_of(prs)
-    lw = W * 0.55
+    crumb = f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總"
     tbl = _bucket_adj_table(ov)
     subs, rows, widths, supers = _df_table(tbl)
-    wid = [w * lw / sum(widths) for w in widths]
-    cw = W - (MARGIN + lw + 0.22) - MARGIN
-    pages = fit_prose([(h, b) for _n, h, b in items], cw, CONTENT_BOTTOM - 1.9)
-    idx = 0
-    for pi, page in enumerate(pages):
-        suffix = _pg(pi + 1, len(pages))
-        slide, W, H, top = _page(prs, 1, f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總",
-                                 head + suffix)
-        if pi == 0:
-            t2 = caption_bar(slide, MARGIN, top, lw, tname)
-            draw_table(slide, MARGIN, t2, lw, subs, rows, widths, supers=supers,
-                         font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - t2 - 0.28)
-            put(slide, MARGIN, CONTENT_BOTTOM - 0.26, lw, 0.3,
-                  "註：金額單位為萬澳門元；括號表示調減。", size=SZ_NOTE - 1, italic=True, color=GREY)
-        box = _tb(slide, MARGIN + lw + 0.22, top - 0.02, cw, CONTENT_BOTTOM - top)
-        prose_numbered(box, items[idx:idx + len(page)], size=SZ_BODY,
-                         title=(tname if pi == 0 else tname + "（續）"))
-        idx += len(page)
-        source_note(slide, W, more=(pi < len(pages) - 1))
+    # ★ 報告（p15）：呢一節係【一整版都係表，冇右邊敘述】；逐類說明另起版、全闊（p22）。
+    #   之前做成「表左 + 敘述右」，敘述長就出一版左邊全白嘅續頁 —— 報告冇呢種版。
+    tw = W - 2 * MARGIN
+    slide, W, H, top = _page(prs, 1, crumb, head)
+    t2 = caption_bar(slide, MARGIN, top, tw, tname)
+    draw_table(slide, MARGIN, t2, tw, subs, rows, widths, supers=supers,
+                 font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - t2 - 0.28,
+                 hdr_cols=_hdr_cols(subs, supers))
+    put(slide, MARGIN, CONTENT_BOTTOM - 0.26, tw, 0.3,
+          "註：金額單位為萬澳門元；括號表示調減。", size=SZ_NOTE - 1, italic=True, color=GREY)
+    source_note(slide, W)
+    _prose_2col(prs, crumb, items, sec=1, headline=head, subtitle=tname)
 
 
 # ── from make_report ──
@@ -4268,8 +4264,10 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
             if content and reason:
                 break
         content, reason = _trim(content), _trim(reason)   # 清單原文已有句號 → 唔剝就出「。。」
-        summ = (content[:90] + "…") if len(content) > 90 else content
-        rsn = ("，主要由於" + (reason[:80] + "…" if len(reason) > 80 else reason)) if reason else ""
+        # ⚠ 字數上限 = 版面約束：非博彩 11 個範疇要一版放晒（報告 4/4 得一版）→ 每個 ~55 字。
+        #   同 build_llm_narrative._cat_prompt 嘅 40-55 字一致，LLM 同 fallback 都唔會撐爆版。
+        summ = (content[:34] + "…") if len(content) > 34 else content
+        rsn = ("，主要由於" + (reason[:24] + "…" if len(reason) > 24 else reason)) if reason else ""
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
                 else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
         (g_bul if sub.startswith("博彩") else n_bul).append((f"{sub}：", body))
