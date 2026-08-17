@@ -106,9 +106,13 @@ def overview_by_bucket(df, bucket, plan, category=None):
     rows, n_tot = [], 0
     for scope in [0, 1]:
         sc = g[g["_scope"] == scope]
-        if sc.empty:
-            continue
         name = "博彩項目" if scope == 0 else "非博彩項目"
+        if sc.empty:
+            # ⚠ 報告就算該 scope 全 0 都會出「博彩項目」section + 小計行（全部「-」），
+            #   唔會成組唔見（項目組 2026-08-17）。
+            rows.append({"範疇": name})
+            rows.append(mk(f"{name}小計", 0, _plan_tot(plan, yr, scope == 0), 0, 0, 0, 0, 0))
+            continue
         rows.append({"範疇": name})     # section 標題行（跟報告 IMG_0105：博彩項目 / 非博彩項目）
         for _, row in sc.iterrows():
             rows.append(mk(row["_sub"], n_by_sub.get(row["_sub"], row["項目數量"]),

@@ -427,13 +427,16 @@ _OV_GROUP = {
 
 
 def _hdr_cols(subs, supers):
-    """概覽表三色欄組（對 IMG_0441）：設施建設/活動舉辦＝綠、潛在調整後嗰組＝深、其餘＝KPMG Blue。
-    ⚠ 只喺概覽表用；4.2 表同名欄組喺 scan p.24 係成排 navy。"""
-    out = {c: L.HDR3 for c, v in enumerate(subs) if any(k in str(v) for k in L._TEAL_KEYS)}
-    for lab, c0, c1 in (supers or []):
-        if "潛在調整後" in str(lab):
-            for c in range(c0, c1):
-                out.setdefault(c, L.HDR2)
+    """表頭欄組色（項目組 2026-08-17 指定）：預設全部 HDR #1E49E2，只有【重點欄】用綠 #098E7E。
+      · 1.2／1.3 概覽表 → 「獲批的計劃投資金額」
+      · 4.1 金額匯總  → 最右邊「合計·潛在調整後投資金額」
+    其餘表（4.2 設施/活動、期後概覽）暫時全藍——項目組未指定綠欄。"""
+    out = {c: L.HDR_KEY for c, v in enumerate(subs) if str(v).strip() == "獲批的計劃投資金額"}
+    last = len(subs) - 1
+    if last >= 0 and str(subs[last]).strip() == "潛在調整後投資金額":
+        for lab, c0, c1 in (supers or []):
+            if c0 <= last < c1 and "合計" in str(lab):
+                out[last] = L.HDR_KEY
     return out
 
 
@@ -486,9 +489,10 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
 
 
 def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, table_name=None,
-                          note=None):
+                          note=None, grouped=False):
     """同 render_overview_page，但右邊敘述長就自動分版，【左邊同一個表逐版重複】。
-    對 scan slide 11-14：1.3 四版全部都係左邊 1.2 嗰個整體概況表 + 右邊唔同段落。"""
+    對 scan slide 11-14：1.3 四版全部都係左邊 1.2 嗰個整體概況表 + 右邊唔同段落。
+    grouped=True 時 bullets = [(右欄小標題, [(head, body)…])]，每組至少一版（報告 1/4…4/4）。"""
     if not bullets:
         return
     W, _H = L.size_of(prs)
@@ -496,8 +500,16 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     rx = L.MARGIN + left_w + 0.22
     colw = W - rx - L.MARGIN
     top = L.HEAD_Y + L.head_h(f"{headline}（1/9）", W)[0] + 0.10 + (0.20 if table_name else 0)
-    pages = L.fit_prose(bullets, colw, L.CONTENT_BOTTOM - top,
-                        head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
+    avail = L.CONTENT_BOTTOM - top
+    pages = []
+    for grp in (bullets if grouped else [(None, bullets)]):
+        head, items = grp if grouped else grp
+        if not items:
+            continue
+        chunks = L.fit_prose(items, colw, avail - (0.24 if head else 0),
+                             head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
+        for ci, ch in enumerate(chunks):
+            pages.append(([(head + ("（續）" if ci else ""), "")] if head else []) + ch)
     for pi, page in enumerate(pages):
         render_overview_page(prs, crumb, headline + _pg(pi + 1, len(pages)), table_df, page,
                              sec=sec, table_name=table_name, note=note)
@@ -1340,7 +1352,7 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
     d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
     cats = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))]
-    bullets = []
+    g_bul, n_bul = [], []       # 按範疇概況：博彩 / 非博彩 各自一版（報告 3/4、4/4）
     for _, r in cats.iterrows():
         sub = str(r["範疇"]); rate = r.get("投資計劃完成率")
         if not isinstance(rate, (int, float)) or pd.isna(rate):
@@ -1348,7 +1360,7 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
         if sub in llm_cat and llm_cat[sub]:               # LLM 寫嘅摘要優先
             txt = llm_cat[sub]
             txt = txt[len(sub) + 1:] if txt.startswith(sub + "：") else txt
-            bullets.append((f"{sub}：", txt)); continue
+            (g_bul if sub.startswith("博彩") else n_bul).append((f"{sub}：", txt)); continue
         scope = "gaming" if sub.startswith("博彩") else "non_gaming"
         pr = proj[proj["_sub"] == sub].sort_values("調整前_萬", ascending=False)
         content = reason = ""       # content=清單實際投資內容；reason=清單管理層解釋(變更原因)
@@ -1365,7 +1377,7 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
         rsn = ("，主要由於" + (reason[:80] + "…" if len(reason) > 80 else reason)) if reason else ""
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
                 else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
-        bullets.append((f"{sub}：", body))
+        (g_bul if sub.startswith("博彩") else n_bul).append((f"{sub}：", body))
     # scan p-06 句式：著重於投入{博彩範疇}等博彩項目，以及{非博彩範疇}等非博彩投資項目 + 前後完成率
     gm = ov[ov["範疇"].astype(str).str.startswith("博彩") &
             ~ov["範疇"].astype(str).str.endswith(("小計", "項目"))]
@@ -1402,13 +1414,57 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
                     cats[cats["投資計劃完成率"].apply(
                         lambda v: isinstance(v, (int, float)) and not pd.isna(v) and v < 0.5)]
                     .sort_values("投資計劃完成率").iterrows())
-    if hi_s:      # 報告：高/低完成率範疇擺喺 1.3 呢版（唔喺 1.2）
-        bullets.append(("報告投資金額完成率較高的範疇", f"{hi_s}。"))
+    exec_b = []               # 1/4：整體執行概況
+    if hi_s:
+        exec_b.append(("報告投資金額完成率較高的範疇", f"{hi_s}。"))
     if lo_s:
-        bullets.append(("報告投資金額完成率相對較低的範疇", f"{lo_s}。"))
+        exec_b.append(("報告投資金額完成率相對較低的範疇", f"{lo_s}。"))
+    # ★ 報告 1.3 係【4 版、每版右邊唔同主題】（項目組 2026-08-17 指明），
+    #   唔係逐範疇順住排落去分頁。左邊 4 版都係同一個 1.2 概況表。
+    groups = [("2025年度投資項目的整體執行概況", exec_b),
+              ("2025年度投資計劃區分設施建設/活動舉辦的投資金額", _fac_bullets(ent_up, ov)),
+              ("按範疇的項目概況 — 博彩項目", g_bul),
+              ("按範疇的項目概況 — 非博彩項目", n_bul)]
     render_overview_pages(prs, "2025年度投資計劃執行情況概述  |  2025年度投資項目的整體執行概況",
-                          head, ovx if ovx is not None else ov, bullets, sec=0, note=note,
-                          table_name=f"{ent_up} 2025年度計劃的整體投資支出概況")
+                          head, ovx if ovx is not None else ov, groups, sec=0, note=note,
+                          table_name=f"{ent_up} 2025年度計劃的整體投資支出概況", grouped=True)
+
+
+def _fac_bullets(ent_up, ov):
+    """1.3 第 2 版：區分設施建設／活動舉辦嘅投資金額（由概況表自己嗰兩欄機械計）。"""
+    F, A = "設施建設/資本性支出", "活動舉辦/營運性支出"
+    if ov is None or ov.empty or F not in ov.columns:
+        return []
+
+    def num(row, c):
+        v = row.get(c)
+        return float(v) if isinstance(v, (int, float)) and not pd.isna(v) else 0.0
+
+    def line(label):
+        r = ov[ov["範疇"].astype(str).str.strip() == label]
+        return (num(r.iloc[0], F), num(r.iloc[0], A)) if len(r) else (0.0, 0.0)
+    tf, ta = line("總計")
+    gf, ga = line("博彩項目小計")
+    nf, na = line("非博彩項目小計")
+    cat = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))].copy()
+    if cat.empty or (tf + ta) == 0:
+        return []
+    cat["_f"] = cat.apply(lambda r: num(r, F), axis=1)
+    cat["_a"] = cat.apply(lambda r: num(r, A), axis=1)
+    top_f = "、".join(f"{r['範疇']}（{_amt(r['_f'])}）" for _, r in
+                     cat.sort_values("_f", ascending=False).head(3).iterrows() if r["_f"] > 0)
+    top_a = "、".join(f"{r['範疇']}（{_amt(r['_a'])}）" for _, r in
+                     cat.sort_values("_a", ascending=False).head(3).iterrows() if r["_a"] > 0)
+    return [
+        ("設施建設／資本性支出",
+         f"考慮潛在調整事項後，設施建設／資本性支出的投資金額約{_amt(tf)}"
+         f"（佔{tf / (tf + ta) * 100:.1f}%），其中博彩項目約{_amt(gf)}、非博彩項目約{_amt(nf)}。"
+         + (f"金額較大的範疇包括{top_f}。" if top_f else "")),
+        ("活動舉辦／營運性支出",
+         f"考慮潛在調整事項後，活動舉辦／營運性支出的投資金額約{_amt(ta)}"
+         f"（佔{ta / (tf + ta) * 100:.1f}%），其中博彩項目約{_amt(ga)}、非博彩項目約{_amt(na)}。"
+         + (f"金額較大的範疇包括{top_a}。" if top_a else "")),
+    ]
 
 
 def _adj_detail_bullets(ent_up, adj, df, narr, llm=None):
