@@ -1610,21 +1610,111 @@ def summary_amount(df) -> pd.DataFrame:
 
 
 # ── from build_summary_tables ──
-def facility_activity(df, bucket_label) -> pd.DataFrame:
-    """4.2 設施vs活動（一個 bucket）：範疇 × 設施建設(capex調整後)/活動舉辦(opex調整後)/合計。"""
-    d = df[df["_bucket"] == bucket_label]
+FA_G1, FA_G2, FA_G3 = "設施建設/資本性支出", "活動舉辦/營運性支出", "合計"
+
+
+# ── from build_summary_tables ──
+FA_LEG = ["項目數量", "獲批的計劃投資金額", "報告投資金額",
+          "設施建設及活動舉辦金額分攤", "投資金額小計", "投資金額的潛在調整事項",
+          "潛在調整後投資金額"]
+
+
+# ── from build_summary_tables ──
+FA_TOT = ["項目數量", "獲批的計劃投資金額", "報告投資金額",
+          "投資金額的潛在調整事項", "潛在調整後投資金額"]
+
+
+# ── from build_summary_tables ──
+DECLARED_COLS = ("declared_capex_opex", "capex_opex", "Capex_Opex", "Capex/Opex")
+
+
+# ── from build_summary_tables ──
+def _cap_key(v):
+    return "Capex" if str(v).strip().lower().startswith("cap") else "Opex"
+
+
+# ── from build_summary_tables ──
+def facility_activity(df, bucket_label, plan_split=None) -> pd.DataFrame:
+    """4.2 區分設施建設/活動舉辦（一個 bucket）→ 對 scan p43：3 個欄組 × 逐範疇。
+
+      設施建設/資本性支出：項目數量 | 獲批的計劃投資金額 a¹ | 報告投資金額 b¹
+                          | 設施建設及活動舉辦金額分攤 c¹ | 投資金額小計 d¹=b¹+c¹
+                          | 投資金額的潛在調整事項 e¹ | 潛在調整後投資金額 f¹=d¹+e¹
+      活動舉辦/營運性支出：同上（²）
+      合計                ：項目數量 a=a¹+a² | 獲批 | 報告投資金額 b=b¹+b²
+                          | 潛在調整事項 e=e¹+e² | 潛在調整後 f=b+e   ← 冇「分攤」欄（c¹+c²=0）
+
+    ⚠ d/e/f 全部用【我哋嘅 final_capex_opex】→ 同 4.1 最後嗰組 tie 得返。
+      b 用【項目組申報】嗰條 capex/opex 欄；c = d − b（即我哋重分類搬咗幾多）。
+      plan_split = {(gaming, 碼): (計劃capex, 計劃opex)}，冇就 a 欄留空。"""
+    d = df[df["_bucket"] == bucket_label].copy()
     if d.empty:
         return pd.DataFrame()
-    cap = d[d["final_capex_opex"] == "Capex"].groupby(["_scope", "_go", "_ngn", "_sub"])["調整後_萬"].sum()
-    ope = d[d["final_capex_opex"] == "Opex"].groupby(["_scope", "_go", "_ngn", "_sub"])["調整後_萬"].sum()
-    idx = d.groupby(["_scope", "_go", "_ngn", "_sub"]).size().reset_index()[["_scope", "_go", "_ngn", "_sub"]]
-    out = idx.copy()
-    out["設施建設/資本性支出"] = out.set_index(["_scope", "_go", "_ngn", "_sub"]).index.map(
-        lambda k: cap.get(k, 0.0)).astype(float).round(1).values
-    out["活動舉辦/營運性支出"] = out.set_index(["_scope", "_go", "_ngn", "_sub"]).index.map(
-        lambda k: ope.get(k, 0.0)).astype(float).round(1).values
-    out["合計"] = (out["設施建設/資本性支出"] + out["活動舉辦/營運性支出"]).round(1)
-    return _emit(out, ["設施建設/資本性支出", "活動舉辦/營運性支出", "合計"])
+    idx = ["_scope", "_go", "_ngn", "_sub"]
+    dec = next((c for c in DECLARED_COLS if c in d.columns), None)
+    d["_ours"] = d["final_capex_opex"].map(_cap_key)
+    d["_decl"] = d[dec].map(_cap_key) if dec else d["_ours"]
+    if not dec:
+        print("    ⚠ 4.2：feed 冇【項目組申報】嘅 capex/opex 欄（試過 "
+              + "／".join(DECLARED_COLS) + "）→「設施建設及活動舉辦金額分攤」欄全 0")
+
+    def _sum(col, leg, by):
+        return d[d[by] == leg].groupby(idx, dropna=False)[col].sum()
+
+    keys = d.groupby(idx, dropna=False).size().reset_index()[idx]
+    out = keys.copy()
+    ki = out.set_index(idx).index
+
+    def _col(ser):
+        return [round(float(ser.get(k, 0.0)), 1) for k in ki]
+    npj = d.groupby(idx + ["_ours"], dropna=False)["dicj code"].nunique()
+    valcols = []
+    for leg, gname in (("Capex", FA_G1), ("Opex", FA_G2)):
+        b = _sum("調整前_萬", leg, "_decl")
+        dd = _sum("調整前_萬", leg, "_ours")
+        e = _sum("調整_萬", leg, "_ours")
+        cells = {
+            "項目數量": [int(npj.get(k + (leg,), 0)) for k in ki],
+            "獲批的計劃投資金額": _col(plan_split.get(leg, {}) if plan_split else {}),
+            "報告投資金額": _col(b),
+            "設施建設及活動舉辦金額分攤": [round(x - y, 1) for x, y in zip(_col(dd), _col(b))],
+            "投資金額小計": _col(dd),
+            "投資金額的潛在調整事項": _col(e),
+        }
+        cells["潛在調整後投資金額"] = [round(x + y, 1) for x, y in
+                                     zip(cells["投資金額小計"], cells["投資金額的潛在調整事項"])]
+        for c in FA_LEG:
+            col = f"{gname}·{c}"
+            out[col] = cells[c]; valcols.append(col)
+    tot = {
+        # scan p43 公式：合計項目數量 = a¹+a²（一個項目兩邊都有就數兩次），唔係 distinct
+        "項目數量": [int(x + y) for x, y in
+                    zip(out[f"{FA_G1}·項目數量"], out[f"{FA_G2}·項目數量"])],
+        "獲批的計劃投資金額": [round(x + y, 1) for x, y in
+                             zip(out[f"{FA_G1}·獲批的計劃投資金額"], out[f"{FA_G2}·獲批的計劃投資金額"])],
+        "報告投資金額": _col(d.groupby(idx, dropna=False)["調整前_萬"].sum()),
+        "投資金額的潛在調整事項": _col(d.groupby(idx, dropna=False)["調整_萬"].sum()),
+    }
+    tot["潛在調整後投資金額"] = [round(x + y, 1) for x, y in
+                               zip(tot["報告投資金額"], tot["投資金額的潛在調整事項"])]
+    for c in FA_TOT:
+        col = f"{FA_G3}·{c}"
+        out[col] = tot[c]; valcols.append(col)
+    return _emit(out, valcols)
+
+
+# ── from build_summary_tables ──
+def fa_formula_row(cols):
+    """4.2 表頭下面嗰行斜體公式（對 scan p43）。"""
+    m = {f"{FA_G1}·獲批的計劃投資金額": "a¹", f"{FA_G1}·報告投資金額": "b¹",
+         f"{FA_G1}·設施建設及活動舉辦金額分攤": "c¹", f"{FA_G1}·投資金額小計": "d¹=b¹+c¹",
+         f"{FA_G1}·投資金額的潛在調整事項": "e¹", f"{FA_G1}·潛在調整後投資金額": "f¹=d¹+e¹",
+         f"{FA_G2}·獲批的計劃投資金額": "a²", f"{FA_G2}·報告投資金額": "b²",
+         f"{FA_G2}·設施建設及活動舉辦金額分攤": "c²", f"{FA_G2}·投資金額小計": "d²=b²+c²",
+         f"{FA_G2}·投資金額的潛在調整事項": "e²", f"{FA_G2}·潛在調整後投資金額": "f²=d²+e²",
+         f"{FA_G3}·獲批的計劃投資金額": "a=a¹+a²", f"{FA_G3}·報告投資金額": "b=b¹+b²",
+         f"{FA_G3}·投資金額的潛在調整事項": "e=e¹+e²", f"{FA_G3}·潛在調整後投資金額": "f=b+e"}
+    return [m.get(str(c), "") for c in cols]
 
 
 # ── from build_overview_tables ──
@@ -3155,7 +3245,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 78bb7c7 · bundled 2026-08-17 15:54"
+BUILD_STAMP = "base e9779ac · bundled 2026-08-17 16:08"
 
 
 # ── from make_report ──
@@ -3467,8 +3557,11 @@ def _hdr_cols(subs, supers):
       · 2.5 三年表 → 2023 藍／2024 紫／2025 天藍／三年累計 綠
     ⚠ 4.1 同 2.5 都有 super「2025年度投資計劃」，唔可以齋睇 label 撞色 →
       有「三年累計」個 super 先當係 2.5 嗰套年度配色。"""
-    out = {c: HDR_KEY for c, v in enumerate(subs) if str(v).strip() == "獲批的計劃投資金額"}
     sup = list(supers or [])
+    # 「獲批的計劃投資金額」染綠【只限單層表頭嘅 1.2】—— 喺 4.2／2.5 呢啲有欄組嘅表染綠
+    #   會將 super 條 bar 斬開（顏色唔同就唔 merge），變咗同一個組名出現兩次、行高爆掉。
+    out = ({c: HDR_KEY for c, v in enumerate(subs) if str(v).strip() == "獲批的計劃投資金額"}
+           if not sup else {})
     tri = any("三年累計" in str(lab) for lab, _, _ in sup)
     # 調整表（1.4／2.2／2.4）：七大類欄組 + 潛在調整合計 = 天藍；比例欄 = 綠
     for lab, c0, c1 in sup:
@@ -4188,16 +4281,23 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     # 先用一版試高度（導語行數會食掉可用高）
     probe_top = HEAD_Y + head_h(head, W)[0] + 0.10
     avail = CONTENT_BOTTOM - probe_top - 0.24
-    hh = header_h(supers, subs, wid, 5.5)
+    # 欄多（4.2 = 19 欄）→ 字要細啲，唔係 PowerPoint 會自動長高 row 爆版（TABLE-GROW）
+    fz = SZ_TBL if len(subs) <= 13 else SZ_TBL_WIDE
+    #   留 0.30in headroom：draw_table 派嘅 row 高同 PowerPoint 實際 wrap 有少少落差
+    while fz > 4.0 and (header_h(supers, subs, wid, max(4.5, fz - 0.5))
+                        + sum(row_h(c, wid, fz) for _k, c in rows)) > avail - 0.30:
+        fz -= 0.25
+    hh = header_h(supers, subs, wid, max(4.5, fz - 0.5))
     hcols = _hdr_cols(subs, supers)      # 全闊表一樣要派重點欄色（4.1 最右「潛在調整後投資金額」）
-    pages = fit_rows(rows, wid, 6.5, avail, hh)
+    pages = fit_rows(rows, wid, fz, avail, hh)
     for pi, chunk in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
         slide, W, H, top = _page(prs, sec, crumb, (head or "") + suffix)
         top = caption_bar(slide, MARGIN, top, tw, title + suffix)
         draw_table(slide, MARGIN, top, tw, subs, chunk, widths, supers=supers,
-                     font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - top - 0.28,
-                     hdr_cols=hcols)
+                     font=fz, hfont=max(4.5, fz - 0.5), hdr_cols=hcols,
+                     # 闊表（4.2 = 19 欄）唔可以 fill_h：撐高 row 會爆版（同 _draw_adj_table 一樣）
+                     fill_h=(None if len(subs) > 13 else CONTENT_BOTTOM - top - 0.28))
         source_note(slide, W, note=note, more=(pi < len(pages) - 1))
 
 
@@ -4965,9 +5065,10 @@ def main():
     for bk in BUCKET_ORDER:
         fa = facility_activity(sdf, bk)
         if not fa.empty:
-            # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False
-            render_generic(prs, f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額", fa.fillna(""), sec=3,
+            # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False；表頭下有公式行
+            render_generic(prs, f"{ent_up} {bk}的投資支出 — 區分設施建設/活動舉辦", fa.fillna(""), sec=3,
                            crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦", side=False,
+                           formula=fa_formula_row,
                            headline=(f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額"),
                            note="註：金額為潛在調整後金額，單位為萬澳門元。",
                            llm=llm, tbl_id=tbl_key("設施活動", bk))
