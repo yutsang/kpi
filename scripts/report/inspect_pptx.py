@@ -190,6 +190,10 @@ def _empty_cols(tbl):
     return out
 
 
+# 報告本身就係【淨得表冇敘述】嘅節（唔算問題）：4.2 區分設施建設/活動舉辦（scan p43-45）
+TABLE_ONLY = ("區分設施建設/活動舉辦",)
+
+
 def audit(path, tol=0.02):
     prs = Presentation(str(path))
     W, H = _in(prs.slide_width), _in(prs.slide_height)
@@ -254,6 +258,7 @@ def audit(path, tol=0.02):
     bad, palette_hits, geo = 0, {}, []
     for i, slide in enumerate(prs.slides, 1):
         issues, has_table, has_prose, has_foot = [], False, False, False
+        all_txt = ""
         for sh in slide.shapes:
             x, y, w, h = _in(sh.left), _in(sh.top), _in(sh.width), _in(sh.height)
             name = sh.shape_type
@@ -278,13 +283,14 @@ def audit(path, tol=0.02):
                     has_foot = True
                 if len(txt.strip()) > 40 and "初稿" not in txt and "©" not in txt:
                     has_prose = True
+                all_txt += txt
             _colors(sh, palette_hits.setdefault(i, set()))
         n_sh = len(slide.shapes)
         # 封面 / 章節分隔＝滿版深色底 → 冇 footer 係正常（跟 scan）
         cover = any(_in(s.width) > W - 0.1 and _in(s.height) > H - 0.1 for s in slide.shapes)
         if n_sh == 0:
             issues.append("EMPTY  冇任何 shape")
-        elif has_table and not has_prose:
+        elif has_table and not has_prose and not any(k in all_txt for k in TABLE_ONLY):
             issues.append("NO-TEXT  淨得表冇敘述文字")
         if not has_foot and n_sh > 3 and not cover:
             issues.append("NO-FURNITURE  冇 footer/頁碼")

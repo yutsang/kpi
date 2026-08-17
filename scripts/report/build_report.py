@@ -3155,7 +3155,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base b92c52e · bundled 2026-08-17 15:47"
+BUILD_STAMP = "base 72a1440 · bundled 2026-08-17 15:49"
 
 
 # ── from make_report ──
@@ -4828,15 +4828,16 @@ def main():
         exb = _exec_bullets(ent_up, ov)
         zintro = _zero_intro(ent_up, zi)
         ovx = _overview_extra(ov, plan, sdf, budget, ent_up).fillna("")
+        # ★ 申報投資為零嘅項目：報告冇獨立一版，係 1.2 右欄第一點【下面嗰個子項】（scan p10）——
+        #   之前我哋出咗一版「單丁」嘅版，報告冇（項目組 2026-08-17 問「p11 點解單丁出咗嚟」）。
+        #   _zero_intro 已經寫齊「16個未產生投資金額，其中5個跨年／8個內部研究／3個已取消」，
+        #   同 scan p10 個子項一模一樣 → 唔使再貼 zero_investment_text（會重覆）。
+        zb = [zintro] if zintro else []
         render_overview_page(prs, f"{S1}  |  2025年度計劃的整體投資支出概況",
-                             hl, ovx, hlb + exb + ([zintro] if zintro else []), sec=0,
+                             hl, ovx, hlb + exb + zb, sec=0,
                              table_name=f"{ent_up} 2025年度的整體投資支出概況", note=NOTE_RATE)
         # slide 11-14 逐範疇概況（LLM 優先）；表照 1.2 嗰個逐版重複，同 scan 一致
         render_category_overview(prs, ent_up, ov, sdf, narr, llm, ovx=ovx, note=NOTE_RATE)
-        zit = zero_investment_text(zi, ent_up)
-        if zit:      # 報告概述尾段：2025計劃申報投資為零嘅項目（跨年/內部研究/取消）
-            _prose_slide(prs, f"{S1}  |  2025年度計劃申報投資支出為零的項目",
-                         [("", x) for x in zit[1:]], headline=zit[0], sec=0)
     ahl, ab = _adj_summary(ent_up, adj, ov, sdf)   # slide 15：全闊表 + 敘述另起版
     adj2 = adjustment_by_sub(sdf, BUCKET_ORDER[0])
     _c14 = f"{S1}  |  2025年度投資計劃報告投資金額的潛在調整事項匯總"
@@ -4914,10 +4915,10 @@ def main():
     for bk in BUCKET_ORDER:
         fa = facility_activity(sdf, bk)
         if not fa.empty:
+            # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False
             render_generic(prs, f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額", fa.fillna(""), sec=3,
-                           crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦",
-                           headline=(f"下表按範疇列示{ent_up} {bk}於2025年發生的投資金額，"
-                                     f"區分設施建設（資本性支出）及活動舉辦（營運性支出）。"),
+                           crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦", side=False,
+                           headline=(f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額"),
                            note="註：金額為潛在調整後金額，單位為萬澳門元。",
                            llm=llm, tbl_id=tbl_key("設施活動", bk))
     for yr in (25, 24, 23):     # 單個項目審查匯總（slide 46-63）
