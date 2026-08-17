@@ -473,7 +473,7 @@ RULE = "00338D"
 
 
 # ── from layout ──
-HDR = RGBColor(0x1E, 0x49, 0xE2)
+HDR_FILL = RGBColor(0x1E, 0x49, 0xE2)
 
 
 # ── from layout ──
@@ -493,7 +493,7 @@ NOTE_FG = NAVY
 
 
 # ── from layout ──
-HDR1, HDR2, HDR3 = HDR, HDR, HDR_KEY
+HDR1, HDR2, HDR3 = HDR_FILL, HDR_FILL, HDR_KEY
 
 
 # ── from layout ──
@@ -951,7 +951,10 @@ def fmt_money(v):
 
 # ── from render_review_table_pptx ──
 def fmt_pct(v):
-    if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
+    # 分母 0／算唔到 → 「-」（同表內其餘「冇數」寫法一致；之前留空同 - 混用）
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "-"
+    if v == "":
         return ""
     try:
         return f"{float(v)*100:.1f}%"
@@ -2564,7 +2567,8 @@ def _tbl_prompt(title, df, sources, unit="萬澳門元"):
             f"　『…在2025年度執行報告中申報的「因發生期後事項需作後續調整之2024年度博彩／非博彩項目」"
             f"投資金額為6.4億澳門元，主要包括…以及…。本次審查工作識別潛在調減金額約4.8億澳門元，"
             f"調減後金額為1.6億澳門元，主要涉及會議展覽、文化藝術、社區旅遊等非博彩投資範疇的37個項目。』\n"
-            f"　金額單位跟報告習慣：≥1億寫『X.X億澳門元』，唔夠1億寫『X,XXX萬澳門元』。\n\n"
+            f"　金額單位跟報告習慣：≥1億寫『X.X億澳門元』（一位小數），唔夠1億寫『X,XXX萬澳門元』"
+            f"（【整數、千分位、冇小數】—— 唔可以寫『5,528.9萬澳門元』，要寫『5,529萬澳門元』）。\n\n"
             f"表名：{title}\n金額單位：{unit}（括號 = 負數／調減，「-」= 零）\n\n"
             f"【表格內容】\n{_tbl_text(df)}\n\n"
             f"【其他來源（項目清單／審查底稿表2，用嚟解釋原因，唔好抄佢嘅措辭）】\n{src}")
@@ -2846,6 +2850,10 @@ except ImportError:
 
 
 # ── from make_report ──
+HDR = NAVY
+
+
+# ── from make_report ──
 SEC = SECFILL
 
 
@@ -2972,7 +2980,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base e11d3a9 · bundled 2026-08-17 11:36"
+BUILD_STAMP = "base ad26715 · bundled 2026-08-17 13:38"
 
 
 # ── from make_report ──
@@ -3482,7 +3490,8 @@ def _overview_extra(ov, plan, sdf, budget, ent_up):
     b_all = budget.get("總計") if budget else None
     # ⚠ 冇 budget 都要填「-」，唔可以留空 —— 成行全空會俾 _df_table 當做【範疇 section 行】
     #   （→ 變粗體）。「-」亦係報告表示「冇數」嘅寫法。
-    rows.append({cols[0]: "承諾的10年投資預算", "報告投資金額": b_all if b_all else "-"})
+    _bcol = "獲批的計劃投資金額" if "獲批的計劃投資金額" in cols else "報告投資金額"
+    rows.append({cols[0]: "承諾的10年投資預算", _bcol: b_all if b_all else "-"})
     r = {cols[0]: "2025年投資支出佔10年投資預算的完成率"}
     for c in ("報告投資金額", "潛在調整後投資金額"):
         if c in cols and len(tot) and b_all:
@@ -3503,6 +3512,8 @@ def _bucket_adj_table(ov):
     adj = pd.to_numeric(d.get("潛在調整金額"), errors="coerce")
     ratio = (adj / rep).where(rep.abs() > 0).astype(object)   # object：section 行要填 ""（避 pandas FutureWarning）
     ratio[d["範疇"].astype(str).str.strip().eq("") | rep.isna()] = ""
+    # ⚠ 分母 0（例如博彩全 0 嘅小計行）→ 出「-」，唔可以出 nan%
+    ratio[ratio.isna()] = "-"
     d["潛在調整金額佔報告投資金額比例"] = ratio
     return d
 
@@ -3871,13 +3882,15 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     probe_top = HEAD_Y + head_h(head, W)[0] + 0.10
     avail = CONTENT_BOTTOM - probe_top - 0.24
     hh = header_h(supers, subs, wid, 5.5)
+    hcols = _hdr_cols(subs, supers)      # 全闊表一樣要派重點欄色（4.1 最右「潛在調整後投資金額」）
     pages = fit_rows(rows, wid, 6.5, avail, hh)
     for pi, chunk in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
         slide, W, H, top = _page(prs, sec, crumb, (head or "") + suffix)
         top = caption_bar(slide, MARGIN, top, tw, title + suffix)
         draw_table(slide, MARGIN, top, tw, subs, chunk, widths, supers=supers,
-                     font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - top - 0.28)
+                     font=SZ_TBL, hfont=SZ_TBL_HDR, fill_h=CONTENT_BOTTOM - top - 0.28,
+                     hdr_cols=hcols)
         source_note(slide, W, note=note, more=(pi < len(pages) - 1))
 
 
@@ -3906,14 +3919,13 @@ def _cards(prs, sec, crumb, headline, recs, *, note=None):
         for bar_text, items in page:
             bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(MARGIN), Inches(y),
                                          Inches(cw), Inches(0.22))
-            bar.fill.solid(); bar.fill.fore_color.rgb = HDR
+            bar.fill.solid(); bar.fill.fore_color.rgb = HDR      # #00338D（card 條，唔跟表頭色）
             bar.line.fill.background(); bar.shadow.inherit = False
             btf = bar.text_frame; btf.word_wrap = True
             btf.margin_left = Emu(54000); btf.margin_top = btf.margin_bottom = Emu(0)
             btf.vertical_anchor = MSO_ANCHOR.MIDDLE
             br = btf.paragraphs[0].add_run(); br.text = bar_text
-            br.font.bold = True; br.font.size = Pt(8)
-            br.font.color.rgb = LIGHT; br.font.name = "微软雅黑"
+            setfont(br, 8, bold=True, color=LIGHT)   # Arial latin + Microsoft YaHei ea（同全份一致）
             bh = min(est_prose_h(items, cw - 0.12, head_size=SZ_BODY, body_size=SZ_BODY, gap=3),
                      CONTENT_BOTTOM - y - 0.26)
             prose_box(slide, MARGIN + 0.06, y + 0.26, cw - 0.12, bh, items,

@@ -32,7 +32,7 @@ MODULES = [
 
 future_imports = []   # from __future__ … 必須喺最頂
 imports = []          # 其餘非內部 import
-seen = set()          # 已定義 top-level 名（dedup）
+seen = {}             # 已定義 top-level 名 → 邊個 module（dedup）
 body_parts = []
 main_src = None       # make_report 嘅 main()
 
@@ -79,9 +79,13 @@ for mod, path in MODULES:
                 and isinstance(node.targets[0], ast.Name):
             name = node.targets[0].id
         if name and name in seen:
-            continue                                        # dedup（_rate/_norm 等）
+            # ⚠ dedup 會【靜靜丟咗】後面嗰個定義。_rate/_norm/main 係有心咁做；
+            #   但常數撞名試過搞出 bug（layout.HDR vs make_report.HDR）→ 一律出聲。
+            if not (name == "main" or name.startswith("_")):
+                print(f"  ⚠ 撞名 {name}：{seen[name]} 已定義 → {mod} 嗰個會被丟（改名避免）")
+            continue
         if name:
-            seen.add(name)
+            seen[name] = mod
         body_parts.append(f"# ── from {mod} ──\n{seg}")
 
 assembled = "\n\n\n".join(body_parts + ([main_src] if main_src else []))
