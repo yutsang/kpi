@@ -430,6 +430,30 @@ def run(fmt="csv", out_dir="data/tableau"):
     # year_bucket keeps the FULL 5 split-year buckets (24 / 24_23SY / 25 / 25_23SY / 25_24SY) as text,
     # matching the data\review 大表's per-bucket pivots. (No numeric 'year' col — it confuses Tableau typing.)
     combined["year_bucket"] = combined["year_bucket"].astype(str)
+
+    # ── 拆維度：year_bucket 一條欄塞咗兩個維度（"25_24SY" = 2024【計劃】、2025【發生】）→
+    #    出明碼 plan_year / spend_year，落游唔使再 parse 字串（user 2026-08-17）。
+    #    另外物化「範疇」＝ 博彩睇 vertical_label、非博彩睇 ng_label（之前 5 個 module 各寫一次）。
+    import re as _re
+
+    def _sy(v):
+        m = _re.match(r"^(\d{2})(?:_(\d{2})SY)?$", str(v).strip())
+        if not m:
+            return (None, None)
+        sp = int(m.group(1))
+        return (int(m.group(2)) if m.group(2) else sp, sp)
+    _pairs = {v: _sy(v) for v in combined["year_bucket"].unique()}
+    combined["plan_year"] = combined["year_bucket"].map(lambda v: _pairs[v][0])
+    combined["spend_year"] = combined["year_bucket"].map(lambda v: _pairs[v][1])
+    if "ng_scope" in combined.columns:
+        _gm = combined["ng_scope"].astype(str).str.strip().eq("gaming")
+        _v = combined["vertical_label"] if "vertical_label" in combined.columns else ""
+        _n = combined["ng_label"] if "ng_label" in combined.columns else ""
+        combined["範疇"] = pd.Series(_v, index=combined.index).where(
+            _gm, pd.Series(_n, index=combined.index))
+    print(f"  [維度] plan_year {sorted(set(combined['plan_year'].dropna()))}"
+          f"｜spend_year {sorted(set(combined['spend_year'].dropna()))}"
+          f"｜範疇 {combined['範疇'].nunique() if '範疇' in combined.columns else 0} 個")
     print(f"\nCombined: {len(combined):,} rows, {combined['amount_mop'].sum()/1e6:.0f}M total")
     print(f"year_bucket values: {sorted(combined['year_bucket'].unique())}")
 

@@ -138,6 +138,7 @@ def _ph(slide, idx):
 
 
 import build_project_review_table as B
+import feed_schema as FS
 import build_summary_tables as S
 import build_overview_tables as O
 import build_narrative as N
@@ -716,7 +717,7 @@ def _cum_table(df, plan, cat=None):
     d = df[df["dicj code"].astype(str).str.match(r"^項目\s*\d")].copy()
     if d.empty or not plan:
         return pd.DataFrame()
-    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    d["_sub"] = FS.sub_of(d)
     d["_g"] = (d["ng_scope"] == "gaming")
     d["_ry"] = pd.to_numeric(d["報告年"], errors="coerce")
     d["_af"] = pd.to_numeric(d["調整後_萬"], errors="coerce").fillna(0)
@@ -1349,7 +1350,7 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
         return
     llm_cat = (llm or {}).get("cat", {})
     d = df.copy()
-    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    d["_sub"] = FS.sub_of(d)
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
     cats = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))]
     g_bul, n_bul = [], []       # 按範疇概況：博彩 / 非博彩 各自一版（報告 3/4、4/4）

@@ -22,6 +22,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import feed_schema as FS
+
 try:
     import pandas as pd
 except ImportError:
@@ -197,7 +200,7 @@ def build_year(df: pd.DataFrame, year: int, plan: dict | None = None):
     if d.empty:
         return None, []
     d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
-    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    d["_sub"] = FS.sub_of(d)
     key = ["ng_scope", "dicj code"]
 
     def _mode(s):

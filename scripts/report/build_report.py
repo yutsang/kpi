@@ -13,9 +13,9 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
+import re
 import sys
 from pathlib import Path
-import re
 import json
 import os
 import time
@@ -821,6 +821,66 @@ def dark_slide(prs):
     return slide, W, H
 
 
+# ── from feed_schema ──
+_YB = re.compile(r"^(\d{2})(?:_(\d{2})SY)?$")
+
+
+# ── from feed_schema ──
+MEASURES = {
+    "報告投資金額": "調整前_萬",
+    "潛在調整金額": "調整_萬",
+    "潛在調整後投資金額": "調整後_萬",
+}
+
+
+# ── from feed_schema ──
+def split_year(yb):
+    """year_bucket → (plan_year, spend_year)，兩位數 int；認唔到回 (None, None)。
+
+        "25"      → (25, 25)   2025年計劃、2025年發生
+        "25_24SY" → (24, 25)   2024年計劃、2025年發生（＝期後）
+        "24_23SY" → (23, 24)
+        "23"      → (23, 23)
+    ⚠ 前面嗰個數字係【發生年】，_NNSY 嗰個先係【計劃年】。
+    """
+    m = _YB.match(str(yb).strip())
+    if not m:
+        return None, None
+    spend = int(m.group(1))
+    return (int(m.group(2)) if m.group(2) else spend), spend
+
+
+# ── from feed_schema ──
+def sub_of(df):
+    """報告 row label「範疇」：博彩用 vertical_label、非博彩用 ng_label。
+    feed 已經有物化嘅「範疇」欄就直接用（prep_tableau 出）。"""
+    if "範疇" in df.columns:
+        s = df["範疇"].astype(str).str.strip()
+        if not s.isin(["", "nan", "None"]).all():
+            return s
+    v = df["vertical_label"] if "vertical_label" in df.columns else ""
+    n = df["ng_label"] if "ng_label" in df.columns else ""
+    gm = df["ng_scope"].astype(str).str.strip().eq("gaming")
+    import pandas as pd
+    return pd.Series(v, index=df.index).where(gm, pd.Series(n, index=df.index))
+
+
+# ── from feed_schema ──
+def add_dims(df):
+    """就地加 plan_year / spend_year / 範疇（已經有就唔郁）→ 回 df。"""
+    if "year_bucket" in df.columns and ("plan_year" not in df.columns
+                                        or "spend_year" not in df.columns):
+        yb = df["year_bucket"].astype(str).str.strip()
+        pairs = {v: split_year(v) for v in yb.unique()}
+        if "plan_year" not in df.columns:
+            df["plan_year"] = yb.map(lambda v: pairs[v][0])
+        if "spend_year" not in df.columns:
+            df["spend_year"] = yb.map(lambda v: pairs[v][1])
+    if "範疇" not in df.columns:
+        df["範疇"] = sub_of(df)
+    return df
+
+
 # ── from render_review_table_pptx ──
 try:
     import pandas as pd
@@ -1301,7 +1361,7 @@ def build_year(df: pd.DataFrame, year: int, plan: dict | None = None):
     if d.empty:
         return None, []
     d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
-    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    d["_sub"] = sub_of(d)
     key = ["ng_scope", "dicj code"]
 
     def _mode(s):
@@ -1425,7 +1485,8 @@ def _load(feed: Path, entity: str) -> pd.DataFrame:
     df["_yb"] = df["year_bucket"].astype(str).str.strip()
     df["_bucket"] = df["_yb"].map(BUCKET)
     df = df[df["_bucket"].notna()].copy()                             # 只留「於2025發生」3 bucket
-    df["_sub"] = df.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    add_dims(df)                    # plan_year / spend_year / 範疇（一處派生）
+    df["_sub"] = df["範疇"]
     df["_scope"] = (df["ng_scope"] != "gaming").astype(int)           # 博彩=0 先
     df["_go"] = df["_sub"].map(lambda s: GORDER.get(s, 5))
     df["_ngn"] = df["ng_code"].map(_ngn)
@@ -2911,7 +2972,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 006ca2b · bundled 2026-08-17 11:23"
+BUILD_STAMP = "base e11d3a9 · bundled 2026-08-17 11:36"
 
 
 # ── from make_report ──
@@ -3510,7 +3571,7 @@ def _cum_table(df, plan, cat=None):
     d = df[df["dicj code"].astype(str).str.match(r"^項目\s*\d")].copy()
     if d.empty or not plan:
         return pd.DataFrame()
-    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    d["_sub"] = sub_of(d)
     d["_g"] = (d["ng_scope"] == "gaming")
     d["_ry"] = pd.to_numeric(d["報告年"], errors="coerce")
     d["_af"] = pd.to_numeric(d["調整後_萬"], errors="coerce").fillna(0)
@@ -4171,7 +4232,7 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
         return
     llm_cat = (llm or {}).get("cat", {})
     d = df.copy()
-    d["_sub"] = d.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    d["_sub"] = sub_of(d)
     proj = d.groupby(["_sub", "dicj code"])["調整前_萬"].sum().reset_index()
     cats = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))]
     g_bul, n_bul = [], []       # 按範疇概況：博彩 / 非博彩 各自一版（報告 3/4、4/4）

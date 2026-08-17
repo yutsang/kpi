@@ -18,6 +18,7 @@ try:
 except ImportError:
     print("✗ pip install pandas openpyxl"); sys.exit(1)
 import build_project_review_table as B
+import feed_schema as FS
 
 
 def main():
@@ -39,7 +40,7 @@ def main():
         df = df[df["entity"].astype(str).str.lower() == entity]
     # ★計劃年（plan year）＝ 報告表按計劃年份分（跟 scan：概述/單項審查都 by 計劃年），非支出年
     df["_planyr"] = df["year_bucket"].map(B._plan_year)
-    df["_sub"] = df.apply(lambda r: r["vertical_label"] if str(r["ng_scope"]) == "gaming" else r["ng_label"], axis=1)
+    df["_sub"] = FS.sub_of(df)
     plan = B.load_plan(Path(qingdan)) if qingdan else {}
     # ★清單診斷 —— 計劃/完成率 全靠呢個；載唔到就全空。re-run 時睇實呢兩行。
     if not qingdan:
