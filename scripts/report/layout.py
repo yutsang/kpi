@@ -316,7 +316,7 @@ def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
     """表頂 caption bar（重覆表名，對 scan 每張表都有）。
     ⚠ 用深色 HDR2 —— IMG_0441 量到 caption 條比表頭嗰排藍【深啲】，唔係同一隻色。"""
     bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.17))
-    bar.fill.solid(); bar.fill.fore_color.rgb = HDR2
+    bar.fill.solid(); bar.fill.fore_color.rgb = CAPTION_FILL
     bar.line.fill.background(); bar.shadow.inherit = False
     tf = bar.text_frame
     tf.margin_top = tf.margin_bottom = Emu(0)
@@ -332,9 +332,10 @@ def source_note(slide, W, y=None, *, note=None, more=False):
     """表下：資料來源（左）+（下頁待續）（右）。"""
     y = CONTENT_BOTTOM if y is None else y
     put(slide, MARGIN, y, W - 2.0, 0.16,
-        note or "資料來源：管理層提供之項目投資計劃及執行報告資料，畢馬威分析", size=SZ_NOTE, color=GREY)
+        note or "資料來源：管理層提供之項目投資計劃及執行報告資料，畢馬威分析",
+        size=SZ_NOTE, color=NOTE_FG)
     if more:
-        put(slide, W - MARGIN - 1.2, y, 1.2, 0.16, "（下頁待續）", size=SZ_NOTE, color=GREY,
+        put(slide, W - MARGIN - 1.2, y, 1.2, 0.16, "（下頁待續）", size=SZ_NOTE, color=NOTE_FG,
             align=PP_ALIGN.RIGHT)
 
 
@@ -342,15 +343,15 @@ def source_note(slide, W, y=None, *, note=None, more=False):
 # ★ 真報告（IMG_0441 彩色版）嘅表：【冇逐格格線、冇 row 底色】。
 #   得返：表頭 navy（設施建設/活動舉辦 嗰組 teal）＋ 小計/總計行上下幼橫線
 #   ＋ 欄組之間虛線直線。之前全格線 + sec/小計/總計 3 級藍底 = 自己作，同報告唔同。
-RULE = "000000"          # 小計/總計橫線（報告睇落係黑色幼線）
-# ★ 表頭係【三色欄組】（IMG_0441 彩色版逐格量色）——唔係成排同一隻 navy：
-#   HDR1 基本資料 + 報告投資金額 ｜ HDR2 潛在調整後（明顯深啲）｜ HDR3 設施建設/活動舉辦（綠）
-#   HDR3 隻綠係喺相入面目測（相有色偏，量到 #355B4E）→ 有準確 hex 就改呢一行。
-HDR1 = NAVY                                 # #00338D
-HDR2 = RGBColor(0x0C, 0x23, 0x3C)           # accent3 深底
-HDR3 = RGBColor(0x1E, 0x5C, 0x46)           # 深綠
-TEAL = HDR3                                 # 舊名保留
-_TEAL_KEYS = ("設施建設", "活動舉辦", "資本性支出", "營運性支出")
+# ★ 表格配色（項目組 2026-08-17 逐項指定 hex，唔再靠影相估）：
+RULE = "00338D"                             # 表格線（橫線 + 欄組虛線）＝ KPMG Blue
+HDR = RGBColor(0x1E, 0x49, 0xE2)            # 表頭預設（accent1 亮藍）
+HDR_KEY = RGBColor(0x09, 0x8E, 0x7E)        # 重點欄組（1.2 獲批的計劃投資金額 / 4.1 最右潛在調整後）
+CAPTION_FILL = NAVY                         # caption 條 #00338D
+SEC_FG = NAVY                               # 「博彩項目 / 非博彩項目」字色
+NOTE_FG = NAVY                              # 註 / 資料來源
+HDR1, HDR2, HDR3 = HDR, HDR, HDR_KEY        # 舊名保留（唔好散落 import error）
+TEAL = HDR_KEY
 
 
 def _edge(cell, side, *, w=9525, color=RULE, dash=None):
@@ -514,7 +515,8 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
                 continue                      # 已 merge 入 col 0
             al = PP_ALIGN.LEFT if c < left_cols else PP_ALIGN.RIGHT
             set_cell(tbl.cell(ri, c), cells[k] if c == 0 and k else v,
-                     size=font, bold=bold, fill=ROW_FILL.get(kind), align=al)
+                     size=font, bold=bold, fill=ROW_FILL.get(kind), align=al,
+                     color=SEC_FG if kind == "sec" else None)
         tbl.rows[ri].height = Emu(int(heights[ri - nhdr] * 914400))
     # ── 線：只有小計/總計橫線 + 欄組虛線直線（報告冇逐格格線）────────────
     # 只喺【有名嘅欄組】邊界畫虛線；標籤欄自成一「組」（label=""）唔算
@@ -527,7 +529,7 @@ def draw_table(slide, x, y, w, subs, rows, widths, *, supers=None, font=SZ_TBL, 
                 _edge(tbl.cell(ri, c), "B")      # 報告：小計同總計【上下都有】幼線
     for ri in range(nhdr, nhdr + len(rows)):
         for c in gsep:
-            _edge(tbl.cell(ri, c), "L", w=6350, color="808080", dash="sysDash")
+            _edge(tbl.cell(ri, c), "L", w=6350, color=RULE, dash="sysDash")
     return y + total_h, total_h
 
 
