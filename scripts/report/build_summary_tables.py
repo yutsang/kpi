@@ -20,6 +20,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import feed_schema as FS
+
 try:
     import pandas as pd
 except ImportError:
@@ -44,7 +47,8 @@ def _load(feed: Path, entity: str) -> pd.DataFrame:
     df["_yb"] = df["year_bucket"].astype(str).str.strip()
     df["_bucket"] = df["_yb"].map(BUCKET)
     df = df[df["_bucket"].notna()].copy()                             # 只留「於2025發生」3 bucket
-    df["_sub"] = df.apply(lambda r: r["vertical_label"] if r["ng_scope"] == "gaming" else r["ng_label"], axis=1)
+    FS.add_dims(df)                    # plan_year / spend_year / 範疇（一處派生）
+    df["_sub"] = df["範疇"]
     df["_scope"] = (df["ng_scope"] != "gaming").astype(int)           # 博彩=0 先
     df["_go"] = df["_sub"].map(lambda s: GORDER.get(s, 5))
     df["_ngn"] = df["ng_code"].map(_ngn)
