@@ -113,3 +113,6 @@ project_dump.tsv
 *_金額匯總.xlsx
 *_preview/
 *_render/
+
+# 報告待辦（工作用，內含客戶報告結構）— 唔入 public repo
+mgm_report_todo.md
