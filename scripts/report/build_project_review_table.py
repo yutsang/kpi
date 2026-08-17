@@ -150,6 +150,99 @@ def load_plan(path: Path, log=print) -> dict:
     return out
 
 
+# 清單 Database 逐年 block 嘅「設施建設／活動舉辦」拆分欄（user 2026-08-17 dump 確認）：
+#   2025：ET/EU 預計、EW/EX 實際 ｜2024：CK/CL 預計、CN/CO 實際 ｜2023 冇拆（P/Q 淨得合計）
+_SPLIT_RE = {
+    (25, "plan"): (r"^2025年預計投資金額—設施建設", r"^2025年預計投資金額—活動舉辦"),
+    (25, "actual"): (r"^2025年實際投資金額—設施建設", r"^2025年實際投資金額—活動舉辦"),
+    (24, "plan"): (r"^2024年預計投資金額—設施建設", r"^2024年預計投資金額—活動舉辦"),
+    (24, "actual"): (r"^2024年實際投資金額—設施建設", r"^2024年實際投資金額—活動舉辦"),
+}
+
+
+def _f(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def load_split(path: Path, log=print) -> dict:
+    """清單 → 逐年 capex/opex 拆分 + 「當年計劃項目」名單。
+
+        {"plan":   {yr: {(gaming, 碼): (設施建設, 活動舉辦)}},
+         "actual": {yr: {(gaming, 碼): (設施建設, 活動舉辦)}},
+         "in_plan":{yr: {(gaming, 碼), …}}}
+
+    ⚠ in_plan 唔可以用「計劃金額 > 0」——報告 95 個項目入面有 6 個計劃金額係 0
+      （scan p10 註釋2）。用【該年 block 嘅「項目狀況」有冇填】做判斷：
+      唔屬該年計劃嘅項目，成個 block 都係空白。
+    """
+    import openpyxl
+    out = {"plan": {}, "actual": {}, "in_plan": {}}
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception as e:
+        log(f"  ⚠ 清單開唔到 {path}: {e}"); return out
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        rows = []
+        for i, r in enumerate(ws.iter_rows(values_only=True)):
+            rows.append(r)
+            if i > 2500:
+                break
+        hdr_r = code_c = type_c = None
+        for ri in range(min(14, len(rows))):
+            for ci, v in enumerate(rows[ri] or []):
+                sv = "" if v is None else str(v)
+                if "承批公司項目序號" in sv:
+                    hdr_r, code_c = ri, ci
+                if type_c is None and "項目類型" in sv:
+                    type_c = ci
+            if hdr_r is not None:
+                break
+        if hdr_r is None:
+            continue
+        hdr = [("" if v is None else str(v).replace("\n", "").strip()) for v in rows[hdr_r]]
+        cols = {}
+        for k, (rc, ro) in _SPLIT_RE.items():
+            ci = next((i for i, h in enumerate(hdr) if re.match(rc, h)), None)
+            cj = next((i for i, h in enumerate(hdr) if re.match(ro, h)), None)
+            if ci is not None and cj is not None:
+                cols[k] = (ci, cj)
+        if not cols:
+            continue
+        # 逐年 block 嘅「項目狀況」= 該年計劃欄【之前】最後嗰個「項目狀況」
+        stat = [i for i, h in enumerate(hdr) if h == "項目狀況"]
+        anchor_c = {yr: cols.get((yr, "plan"), (None, None))[0] for yr in (24, 25)}
+        stat_c = {yr: max([i for i in stat if a is not None and i < a], default=None)
+                  for yr, a in anchor_c.items()}
+        log("  清單 拆分欄：" + "、".join(f"{yr}{k}→col{c1}/{c2}" for (yr, k), (c1, c2) in cols.items())
+            + "｜項目狀況欄 " + str({yr: c for yr, c in stat_c.items()}))
+        for k in cols:
+            out[k[1]].setdefault(k[0], {})
+        for yr in (24, 25):
+            out["in_plan"].setdefault(yr, set())
+        for ri in range(hdr_r + 1, len(rows)):
+            row = rows[ri]
+            code = _norm(row[code_c]) if code_c < len(row) else ""
+            if not code:
+                continue
+            gaming = (type_c is not None and type_c < len(row) and row[type_c] is not None
+                      and str(row[type_c]).strip().startswith("博彩"))
+            key = (gaming, code)
+            for (yr, kind), (ci, cj) in cols.items():
+                if max(ci, cj) < len(row):
+                    out[kind][yr].setdefault(key, (_f(row[ci]), _f(row[cj])))
+            for yr, sc in stat_c.items():
+                if sc is not None and sc < len(row) and str(row[sc] or "").strip():
+                    out["in_plan"][yr].add(key)
+        break
+    for yr, ks in out["in_plan"].items():
+        log(f"    清單 {yr}年度計劃項目：{len(ks)} 個（按該年 block「項目狀況」有填）")
+    return out
+
+
 def load_category(path: Path, log=lambda *a: None) -> dict:
     """{(is_gaming, 正規化項目編號): 項目性質(D)}（清單；用嚟將零投資項目計劃 attribute 返範疇）。
     含 feed 冇嘅零投資項目（清單有齊全部項目）。"""

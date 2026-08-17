@@ -1363,6 +1363,100 @@ def load_plan(path: Path, log=print) -> dict:
 
 
 # ── from build_project_review_table ──
+_SPLIT_RE = {
+    (25, "plan"): (r"^2025年預計投資金額—設施建設", r"^2025年預計投資金額—活動舉辦"),
+    (25, "actual"): (r"^2025年實際投資金額—設施建設", r"^2025年實際投資金額—活動舉辦"),
+    (24, "plan"): (r"^2024年預計投資金額—設施建設", r"^2024年預計投資金額—活動舉辦"),
+    (24, "actual"): (r"^2024年實際投資金額—設施建設", r"^2024年實際投資金額—活動舉辦"),
+}
+
+
+# ── from build_project_review_table ──
+def _f(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# ── from build_project_review_table ──
+def load_split(path: Path, log=print) -> dict:
+    """清單 → 逐年 capex/opex 拆分 + 「當年計劃項目」名單。
+
+        {"plan":   {yr: {(gaming, 碼): (設施建設, 活動舉辦)}},
+         "actual": {yr: {(gaming, 碼): (設施建設, 活動舉辦)}},
+         "in_plan":{yr: {(gaming, 碼), …}}}
+
+    ⚠ in_plan 唔可以用「計劃金額 > 0」——報告 95 個項目入面有 6 個計劃金額係 0
+      （scan p10 註釋2）。用【該年 block 嘅「項目狀況」有冇填】做判斷：
+      唔屬該年計劃嘅項目，成個 block 都係空白。
+    """
+    import openpyxl
+    out = {"plan": {}, "actual": {}, "in_plan": {}}
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception as e:
+        log(f"  ⚠ 清單開唔到 {path}: {e}"); return out
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        rows = []
+        for i, r in enumerate(ws.iter_rows(values_only=True)):
+            rows.append(r)
+            if i > 2500:
+                break
+        hdr_r = code_c = type_c = None
+        for ri in range(min(14, len(rows))):
+            for ci, v in enumerate(rows[ri] or []):
+                sv = "" if v is None else str(v)
+                if "承批公司項目序號" in sv:
+                    hdr_r, code_c = ri, ci
+                if type_c is None and "項目類型" in sv:
+                    type_c = ci
+            if hdr_r is not None:
+                break
+        if hdr_r is None:
+            continue
+        hdr = [("" if v is None else str(v).replace("\n", "").strip()) for v in rows[hdr_r]]
+        cols = {}
+        for k, (rc, ro) in _SPLIT_RE.items():
+            ci = next((i for i, h in enumerate(hdr) if re.match(rc, h)), None)
+            cj = next((i for i, h in enumerate(hdr) if re.match(ro, h)), None)
+            if ci is not None and cj is not None:
+                cols[k] = (ci, cj)
+        if not cols:
+            continue
+        # 逐年 block 嘅「項目狀況」= 該年計劃欄【之前】最後嗰個「項目狀況」
+        stat = [i for i, h in enumerate(hdr) if h == "項目狀況"]
+        anchor_c = {yr: cols.get((yr, "plan"), (None, None))[0] for yr in (24, 25)}
+        stat_c = {yr: max([i for i in stat if a is not None and i < a], default=None)
+                  for yr, a in anchor_c.items()}
+        log("  清單 拆分欄：" + "、".join(f"{yr}{k}→col{c1}/{c2}" for (yr, k), (c1, c2) in cols.items())
+            + "｜項目狀況欄 " + str({yr: c for yr, c in stat_c.items()}))
+        for k in cols:
+            out[k[1]].setdefault(k[0], {})
+        for yr in (24, 25):
+            out["in_plan"].setdefault(yr, set())
+        for ri in range(hdr_r + 1, len(rows)):
+            row = rows[ri]
+            code = _norm(row[code_c]) if code_c < len(row) else ""
+            if not code:
+                continue
+            gaming = (type_c is not None and type_c < len(row) and row[type_c] is not None
+                      and str(row[type_c]).strip().startswith("博彩"))
+            key = (gaming, code)
+            for (yr, kind), (ci, cj) in cols.items():
+                if max(ci, cj) < len(row):
+                    out[kind][yr].setdefault(key, (_f(row[ci]), _f(row[cj])))
+            for yr, sc in stat_c.items():
+                if sc is not None and sc < len(row) and str(row[sc] or "").strip():
+                    out["in_plan"][yr].add(key)
+        break
+    for yr, ks in out["in_plan"].items():
+        log(f"    清單 {yr}年度計劃項目：{len(ks)} 個（按該年 block「項目狀況」有填）")
+    return out
+
+
+# ── from build_project_review_table ──
 def load_category(path: Path, log=lambda *a: None) -> dict:
     """{(is_gaming, 正規化項目編號): 項目性質(D)}（清單；用嚟將零投資項目計劃 attribute 返範疇）。
     含 feed 冇嘅零投資項目（清單有齊全部項目）。"""
@@ -1637,7 +1731,7 @@ FA_TOT = ["項目數量", "獲批的計劃投資金額", "報告投資金額",
 
 
 # ── from build_summary_tables ──
-DECLARED_COLS = ("declared_capex_opex", "capex_opex", "Capex_Opex", "Capex/Opex")
+BUCKET_YR = {"2025年度投資計劃": 25, "2024年度計劃期後投資": 24, "2023年度計劃期後投資": 23}
 
 
 # ── from build_summary_tables ──
@@ -1646,7 +1740,7 @@ def _cap_key(v):
 
 
 # ── from build_summary_tables ──
-def facility_activity(df, bucket_label, plan_split=None) -> pd.DataFrame:
+def facility_activity(df, bucket_label, split=None) -> pd.DataFrame:
     """4.2 區分設施建設/活動舉辦（一個 bucket）→ 對 scan p43：3 個欄組 × 逐範疇。
 
       設施建設/資本性支出：項目數量 | 獲批的計劃投資金額 a¹ | 報告投資金額 b¹
@@ -1663,12 +1757,23 @@ def facility_activity(df, bucket_label, plan_split=None) -> pd.DataFrame:
     if d.empty:
         return pd.DataFrame()
     idx = ["_scope", "_go", "_ngn", "_sub"]
-    dec = next((c for c in DECLARED_COLS if c in d.columns), None)
+    yr = BUCKET_YR.get(bucket_label)
     d["_ours"] = d["final_capex_opex"].map(_cap_key)
-    d["_decl"] = d[dec].map(_cap_key) if dec else d["_ours"]
-    if not dec:
-        print("    ⚠ 4.2：feed 冇【項目組申報】嘅 capex/opex 欄（試過 "
-              + "／".join(DECLARED_COLS) + "）→「設施建設及活動舉辦金額分攤」欄全 0")
+    d["_key"] = list(zip(d["_scope"].eq(0), d["dicj code"].map(_norm)))
+    # 清單申報嘅 capex/opex（逐項目 2 個數）→ 逐範疇 sum
+    pl = ((split or {}).get("plan") or {}).get(yr) or {}
+    ac = ((split or {}).get("actual") or {}).get(yr) or {}
+    if not ac:
+        print(f"    ⚠ 4.2 {bucket_label}：清單冇該年「實際投資金額—設施建設/活動舉辦」"
+              f"→ 報告投資金額欄用我哋分類，「分攤」欄 0")
+
+    def _by_key(mp, i):
+        """{(gaming,碼):(cap,ope)} → 逐範疇 sum（一個碼跨兩個範疇就按報告金額比例攤）。"""
+        w = d.groupby(idx + ["_key"], dropna=False)["調整前_萬"].sum().reset_index()
+        tot = w.groupby("_key")["調整前_萬"].transform("sum")
+        w["_r"] = (w["調整前_萬"] / tot).where(tot.abs() > 1e-9, 1.0)
+        w["_v"] = [mp.get(k, (0.0, 0.0))[i] * r for k, r in zip(w["_key"], w["_r"])]
+        return w.groupby(idx, dropna=False)["_v"].sum()
 
     def _sum(col, leg, by):
         return d[d[by] == leg].groupby(idx, dropna=False)[col].sum()
@@ -1680,15 +1785,26 @@ def facility_activity(df, bucket_label, plan_split=None) -> pd.DataFrame:
     def _col(ser):
         return [round(float(ser.get(k, 0.0)), 1) for k in ki]
     npj = d.groupby(idx + ["_ours"], dropna=False)["dicj code"].nunique()
+    # ★ 保險：清單申報嘅拆分要對得返 feed 個報告總額，否則（例如項目碼對唔上）
+    #   「報告投資金額」欄會靜靜變 0、成筆數走晒去「分攤」欄 → 寧願退返用我哋分類。
+    if ac:
+        _bt = sum(sum(v) for k, v in ac.items()
+                  if k in set(zip(d["_scope"].eq(0), d["dicj code"].map(_norm))))
+        _ft = float(pd.to_numeric(d["調整前_萬"], errors="coerce").sum())
+        if abs(_ft) > 1 and abs(_bt - _ft) / abs(_ft) > 0.02:
+            print(f"    ⚠ 4.2 {bucket_label}：清單申報拆分合計 {_bt:,.0f} 萬 ≠ feed 報告 {_ft:,.0f} 萬"
+                  f"（差 {abs(_bt-_ft)/abs(_ft)*100:.1f}%）→ 退返用我哋 capex/opex 分類，分攤欄 0")
+            ac = {}
     valcols = []
-    for leg, gname in (("Capex", FA_G1), ("Opex", FA_G2)):
-        b = _sum("調整前_萬", leg, "_decl")
+    for i, (leg, gname) in enumerate((("Capex", FA_G1), ("Opex", FA_G2))):
         dd = _sum("調整前_萬", leg, "_ours")
         e = _sum("調整_萬", leg, "_ours")
+        b = _by_key(ac, i) if ac else dd          # 清單申報嘅拆分；冇就當同我哋一樣
         cells = {
             "項目數量": [int(npj.get(k + (leg,), 0)) for k in ki],
-            "獲批的計劃投資金額": _col(plan_split.get(leg, {}) if plan_split else {}),
+            "獲批的計劃投資金額": _col(_by_key(pl, i)) if pl else [0.0] * len(ki),
             "報告投資金額": _col(b),
+            # c = 我哋分類 − 項目組申報（兩邊加埋 = 0，所以合計組冇呢一欄）
             "設施建設及活動舉辦金額分攤": [round(x - y, 1) for x, y in zip(_col(dd), _col(b))],
             "投資金額小計": _col(dd),
             "投資金額的潛在調整事項": _col(e),
@@ -1698,12 +1814,12 @@ def facility_activity(df, bucket_label, plan_split=None) -> pd.DataFrame:
         for c in FA_LEG:
             col = f"{gname}·{c}"
             out[col] = cells[c]; valcols.append(col)
+    tot_n = d.groupby(idx, dropna=False)["dicj code"].nunique()
+    _pa, _pb = out[f"{FA_G1}·獲批的計劃投資金額"], out[f"{FA_G2}·獲批的計劃投資金額"]
     tot = {
-        # scan p43 公式：合計項目數量 = a¹+a²（一個項目兩邊都有就數兩次），唔係 distinct
-        "項目數量": [int(x + y) for x, y in
-                    zip(out[f"{FA_G1}·項目數量"], out[f"{FA_G2}·項目數量"])],
-        "獲批的計劃投資金額": [round(x + y, 1) for x, y in
-                             zip(out[f"{FA_G1}·獲批的計劃投資金額"], out[f"{FA_G2}·獲批的計劃投資金額"])],
+        # ⚠ 合計項目數量 = distinct（scan p43：5 + 9 但合計 10；95 ≠ 33+68）
+        "項目數量": [int(tot_n.get(k, 0)) for k in ki],
+        "獲批的計劃投資金額": [round(x + y, 1) for x, y in zip(_pa, _pb)],
         "報告投資金額": _col(d.groupby(idx, dropna=False)["調整前_萬"].sum()),
         "投資金額的潛在調整事項": _col(d.groupby(idx, dropna=False)["調整_萬"].sum()),
     }
@@ -1712,7 +1828,59 @@ def facility_activity(df, bucket_label, plan_split=None) -> pd.DataFrame:
     for c in FA_TOT:
         col = f"{FA_G3}·{c}"
         out[col] = tot[c]; valcols.append(col)
-    return _emit(out, valcols)
+    return _fa_tail(_emit(out, valcols), split, yr)
+
+
+# ── from build_summary_tables ──
+def _fa_tail(tbl, split, yr):
+    """4.2 表尾 4 行（scan p43）：合計行改名「獲批的計劃投資項目」，再加
+    未在原投資計劃的新增項目 ／ 原計劃中未實現的投資項目（負）／ 投資執行報告中申報已實施的投資項目。
+    只郁【項目數量】同【獲批的計劃投資金額】兩類欄，其餘跟獲批行（同報告一樣）。"""
+    pl = ((split or {}).get("plan") or {}).get(yr) or {}
+    ac = ((split or {}).get("actual") or {}).get(yr) or {}
+    ip = ((split or {}).get("in_plan") or {}).get(yr) or set()
+    if tbl.empty or not pl:
+        return tbl
+    cols = list(tbl.columns)
+    tbl.loc[tbl[cols[0]].astype(str).str.strip() == "合計", cols[0]] = "獲批的計劃投資項目"
+    base = tbl[tbl[cols[0]] == "獲批的計劃投資項目"]
+    if base.empty:
+        return tbl
+    base = base.iloc[0]
+    keys = (set(pl) | set(ac)) & (ip or (set(pl) | set(ac)))
+
+    def _agg(pick, i):
+        """→ (項目數量, 計劃金額)；i = 0 設施建設 / 1 活動舉辦 / None 合計。"""
+        n = amt = 0
+        for k in keys:
+            pv = pl.get(k, (0.0, 0.0)); av = ac.get(k, (0.0, 0.0))
+            p_, a_ = ((pv[i], av[i]) if i is not None else (sum(pv), sum(av)))
+            if pick(p_, a_):
+                n += 1; amt += p_
+        return n, round(amt, 1)
+    rows = []
+    for lab, pick, sign in (("未在原投資計劃的新增項目", lambda p_, a_: p_ <= 0 < abs(a_), 1),
+                            ("原計劃中未實現的投資項目", lambda p_, a_: p_ > 0 and abs(a_) < 0.05, -1)):
+        r = {c: "" for c in cols}; r[cols[0]] = lab
+        for i, g in ((0, FA_G1), (1, FA_G2), (None, FA_G3)):
+            n, amt = _agg(pick, i)
+            r[f"{g}·項目數量"] = sign * n if n else "-"
+            r[f"{g}·獲批的計劃投資金額"] = sign * amt if amt else "-"
+        rows.append(r)
+    done = {c: base[c] for c in cols}
+    done[cols[0]] = "投資執行報告中申報已實施的投資項目"
+    for g in (FA_G1, FA_G2, FA_G3):
+        for c in ("項目數量", "獲批的計劃投資金額"):
+            col = f"{g}·{c}"
+            v = pd.to_numeric(pd.Series([base[col]]), errors="coerce").iloc[0]
+            if pd.isna(v):
+                continue
+            for r in rows:
+                d = pd.to_numeric(pd.Series([r[col]]), errors="coerce").iloc[0]
+                if not pd.isna(d):
+                    v += d
+            done[col] = round(float(v), 1) if c != "項目數量" else int(v)
+    return pd.concat([tbl, pd.DataFrame(rows + [done])], ignore_index=True)
 
 
 # ── from build_summary_tables ──
@@ -1747,7 +1915,7 @@ def _plan_tot(plan, yr, gaming=None):
 
 
 # ── from build_overview_tables ──
-def overview_by_bucket(df, bucket, plan, category=None):
+def overview_by_bucket(df, bucket, plan, category=None, split=None):
     """整體投資概況（S10-14 = 2025計劃有計劃/完成率；S19-26 = 期後冇計劃、多潛在調整金額欄）。
     逐範疇 + 博彩/非博彩小計 + 總計。欄跟報告 IMG_0104/0105：
       2025計劃：項目數量 | 獲批的計劃投資金額 | 報告投資金額 | 完成率 | 潛在調整後投資金額 | 完成率 | 設施建設 | 活動舉辦
@@ -1771,6 +1939,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
     # 項目數量：2025計劃表要數【計劃項目】（清單），唔係 feed 出現嘅碼 —— 否則同「已實施/未實施」
     #   兩行對唔上（項目組 2026-08-15：總計 84 但 79+10≠84）。期後表冇計劃概念，照用 feed。
     plan_by_sub, n_by_sub, n_by_scope = {}, {}, {}
+    in_plan = ((split or {}).get("in_plan") or {}).get(yr) or set()
     if is_py and plan:
         cat = category or {}
         sub_of = {}       # (gaming,碼)→範疇；博彩/非博彩共用項目N 都要留（唔可以 drop 淨 code）
@@ -1789,12 +1958,10 @@ def overview_by_bucket(df, bucket, plan, category=None):
                 sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
-                # ⚠ 清單一張表放晒三年嘅碼（MGM 246 個），非當年計劃嗰啲 2025 金額 = 0 →
-                #   唔可以「全部行都數」（會變 246）。用計劃金額 > 0 數返當年獲批開展嘅項目。
-                #   仲爭報告嗰 95（我哋 89）：scan p10 註釋2 話「包含申報的投資支出為零的部分」，
-                #   即有 6 個係【2025 計劃內但計劃金額為 0】—— 淨睇金額分唔到，要清單畀一條
-                #   「是否 2025 年度計劃項目」明碼欄先數得準。
-                if v > 0:
+                # 「當年計劃項目」判斷（scan p10 = 95 個）：清單該年 block「項目狀況」有填就算，
+                #   包括計劃金額為 0 嗰啲（註釋2）。清單一張表放晒三年嘅碼（MGM 246 個），
+                #   所以【唔可以全部數】；load_split 讀唔到就 fallback 計劃金額 > 0。
+                if (((gm, code) in in_plan) if in_plan else v > 0):
                     n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
                     n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
             elif v:
@@ -3261,7 +3428,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 2fc9868 · bundled 2026-08-17 16:41"
+BUILD_STAMP = "base 17d18b9 · bundled 2026-08-17 16:57"
 
 
 # ── from make_report ──
@@ -4937,6 +5104,7 @@ def main():
     df["_plan_year"] = df["year_bucket"].map(_plan_year)
     plan = load_plan(qingdan) if qingdan else None
     cat = load_category(qingdan) if qingdan else None     # 項目性質(D)→派零投資項目計劃返範疇
+    split = load_split(qingdan) if qingdan else {}        # 清單逐年 capex/opex 拆分 + 當年計劃項目名單
     narr = load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
@@ -4993,7 +5161,7 @@ def main():
         ("1.4  2025年度投資計劃報告投資金額的潛在調整事項匯總", ""),
     ])
     budget = _load_budget(entity)
-    ov = overview_by_bucket(sdf, "2025年度投資計劃", plan, cat)
+    ov = overview_by_bucket(sdf, "2025年度投資計劃", plan, cat, split)
     adj = adjustment_bridge(sdf)
     # 1.2 表底兩條註（逐字對 scan p10；註釋2 就係「項目數量含零申報」嗰條口徑）
     NOTE_RATE = ("註釋1：上述承諾的10年投資預算包含額外投資部分（澳門全年博彩毛收入達到1,800億澳門元後"
@@ -5050,7 +5218,7 @@ def main():
         ("2.5  截至2025年末投資金額概覽", ""),
     ])
     for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
-        ov = overview_by_bucket(sdf, bk, plan, cat)
+        ov = overview_by_bucket(sdf, bk, plan, cat, split)
         if not ov.empty:
             render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""), sec=1,
                            crumb=f"{S2}  |  {bk}金額概覽",
@@ -5091,7 +5259,7 @@ def main():
                              f"於2025年發生的投資金額（報告投資金額及潛在調整後投資金額）。"),
                    note="註：金額單位為萬澳門元。", llm=llm, tbl_id=tbl_key("金額匯總"))
     for bk in BUCKET_ORDER:
-        fa = facility_activity(sdf, bk)
+        fa = facility_activity(sdf, bk, split)
         if not fa.empty:
             # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False；表頭下有公式行
             render_generic(prs, f"{ent_up} {bk}的投資支出 — 區分設施建設/活動舉辦", fa.fillna(""), sec=3,
