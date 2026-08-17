@@ -16,6 +16,9 @@ inspect_pptx.py — 報告 pptx 版面體檢（唔使開 PowerPoint 逐版睇）
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --slide 12 # 淨睇某版 shape 清單
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --dump [--batch 12]
                                             # 逐版文字（唔使重 build）；出檔 + console 印方便 copy
+    python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --fmt --range 5-6
+                                            # 逐版 dump【格式】：底色/字體/欄闊/合併/框線/對齊
+                                            #   （--dump 淨係文字；要對表格 format 就用呢個）
     python scripts\\report\\inspect_pptx.py mgm_report_llm.pptx --render   # 用 PowerPoint 出 PDF/PNG（Mac）
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --spec  # 真報告嘅尺寸/字體/配色
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --fonts --range 10-63
@@ -677,6 +680,141 @@ def fonts(path, rng=None):
         print(f"      {k:<12} {getattr(L, k)} pt")
 
 
+# ── format dump（俾 Claude 喺 Mac 睇唔到 Windows 個 output 時對格式）──────────
+_NSA = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def _hex(c):
+    try:
+        return f"{c[0]:02X}{c[1]:02X}{c[2]:02X}"
+    except Exception:
+        return "?"
+
+
+def _cell_fill(cell):
+    try:
+        return _hex(cell.fill.fore_color.rgb)
+    except Exception:
+        return "-"
+
+
+def _run_style(tf):
+    """(pt, bold, 字色, latin, ea) —— 攞第一個有字嘅 run。"""
+    for p in tf.paragraphs:
+        for r in p.runs:
+            if not r.text.strip():
+                continue
+            rPr = r._r.find(f"{_NSA}rPr")
+            lat = ea = "-"
+            if rPr is not None:
+                e = rPr.find(f"{_NSA}latin")
+                lat = e.get("typeface") if e is not None else "-"
+                e = rPr.find(f"{_NSA}ea")
+                ea = e.get("typeface") if e is not None else "-"
+            col = "-"
+            try:
+                col = _hex(r.font.color.rgb)
+            except Exception:
+                pass
+            return (round(r.font.size.pt, 1) if r.font.size else 0, bool(r.font.bold), col, lat, ea)
+    return (0, False, "-", "-", "-")
+
+
+def _borders(cell):
+    """『T=000000 L=808080d』—— d = 虛線。冇邊就空字串。"""
+    tcPr = cell._tc.find(f"{_NSA}tcPr")
+    if tcPr is None:
+        return ""
+    out = []
+    for side in "TBLR":
+        ln = tcPr.find(f"{_NSA}ln{side}")
+        if ln is None:
+            continue
+        clr = ln.find(f".//{_NSA}srgbClr")
+        v = clr.get("val") if clr is not None else "000000"
+        out.append(f"{side}={v}" + ("d" if ln.find(f"{_NSA}prstDash") is not None else ""))
+    return " ".join(out)
+
+
+_ALIGN = {"LEFT": "l", "CENTER": "c", "RIGHT": "r", "JUSTIFY": "j", "None": "-"}
+_ANCH = {"TOP": "t", "MIDDLE": "m", "BOTTOM": "b", "None": "-"}
+
+
+def _cell_sig(cell):
+    tf = cell.text_frame
+    al = _ALIGN.get(str(cell.text_frame.paragraphs[0].alignment).split(" ")[0], "?")
+    an = _ANCH.get(str(cell.vertical_anchor).split(" ")[0], "?")
+    pt, bold, col, lat, ea = _run_style(tf)
+    return (f"fill={_cell_fill(cell)} fg={col} {pt}pt{'B' if bold else ''} "
+            f"{al}{an} {lat}/{ea}", _borders(cell))
+
+
+def fmt(path, only=None, maxtxt=16):
+    """逐版 dump【格式】：shape 幾何+底色+字體、表格欄闊+逐格 style（用 legend 壓縮）+框線。
+    冇 --range/--slide 就全份（會好長，建議指定版數）。"""
+    prs = Presentation(str(path))
+    W, H = _in(prs.slide_width), _in(prs.slide_height)
+    print(f"### {Path(path).name}  {W:.2f}x{H:.2f}in  {len(prs.slides._sldIdLst)} 版")
+    for i, sl in enumerate(prs.slides, 1):
+        if only and i not in only:
+            continue
+        print(f"\n===== slide {i} =====")
+        for sh in sl.shapes:
+            g = (f"x={_in(sh.left):5.2f} y={_in(sh.top):5.2f} "
+                 f"w={_in(sh.width):5.2f} h={_in(sh.height):5.2f}")
+            if sh.has_table:
+                _fmt_table(sh, g, maxtxt); continue
+            if sh.has_text_frame and sh.text_frame.text.strip():
+                pt, bold, col, lat, ea = _run_style(sh.text_frame)
+                t = re.sub(r"\s+", " ", sh.text_frame.text.strip())[:60]
+                print(f"  TEXT {g} fill={_fill_hex(sh) or '-'} {pt}pt{'B' if bold else ''} "
+                      f"{col} {lat}/{ea}  「{t}」")
+            else:
+                print(f"  {str(sh.shape_type)[:12]:12s} {g} fill={_fill_hex(sh) or '-'}")
+
+
+def _fmt_table(sh, g, maxtxt):
+    t = sh.table
+    nr, nc = len(t.rows), len(t.columns)
+    print(f"  TABLE {g}  {nr}r x {nc}c")
+    print("    colw : " + " ".join(f"{_in(c.width):.2f}" for c in t.columns))
+    print("    rowh : " + " ".join(f"{_in(r.height):.2f}" for r in t.rows))
+    legend, order, grid, bmap = {}, [], [], []
+    for ri in range(nr):
+        row = []
+        for ci in range(nc):
+            c = t.cell(ri, ci)
+            if getattr(c, "is_spanned", False):
+                row.append("  »"); continue
+            sig, bd = _cell_sig(c)
+            if sig not in legend:
+                legend[sig] = chr(ord("A") + len(order)); order.append(sig)
+            k = legend[sig]
+            n = c.span_width if getattr(c, "is_merge_origin", False) else 1
+            row.append(f"{k}x{n}" if n > 1 else f"  {k}")
+            if bd:
+                bmap.append(f"r{ri}c{ci} {bd}")
+        grid.append(f"    r{ri:<2d}| " + "".join(row))
+    print("    styles:")
+    for sig in order:
+        print(f"      {legend[sig]}  {sig}")
+    print("    grid（» = 被合併；Axn = 合併 n 欄）:")
+    print("\n".join(grid))
+    if bmap:
+        print("    borders（d = 虛線）:")
+        for j in range(0, len(bmap), 6):
+            print("      " + " ; ".join(bmap[j:j + 6]))
+    print("    text:")
+    for ri in range(nr):
+        cs = []
+        for ci in range(nc):
+            c = t.cell(ri, ci)
+            if getattr(c, "is_spanned", False):
+                cs.append(""); continue
+            cs.append(re.sub(r"[\n\v\x0b]+", "⏎", c.text.strip())[:maxtxt])
+        print(f"    r{ri:<2d}| " + " | ".join(cs))
+
+
 def dump(path, with_tables=False, batch=0):
     """由【現成 pptx】dump 逐版文字 → 唔使重新 build（user 2026-08-12）。
     預設唔 dump 表格 cell（表格係數字、另外驗；連表格會大到 paste 唔到）→ --dump-tables 先要。"""
@@ -717,6 +855,14 @@ def main():
     if not args:
         print(__doc__); return
     path = args[0]
+    if "--fmt" in args:
+        only = None
+        if "--slide" in args:
+            only = {int(x) for x in args[args.index("--slide") + 1].split(",")}
+        elif "--range" in args:
+            a, b = args[args.index("--range") + 1].split("-")
+            only = set(range(int(a), int(b) + 1))
+        fmt(path, only); return
     if "--dump" in args:
         b = int(args[args.index("--batch") + 1]) if "--batch" in args else 0
         dump(path, with_tables="--dump-tables" in args, batch=b); return
