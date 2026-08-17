@@ -8,12 +8,12 @@ build_report.py — 單一自足檔：由底層數據（feed + 清單）生成�
     python build_report.py [entity] --llm      # 即場生成 LLM 敘述（需 KPMG 網 + workbench creds）再出報告
 （此檔由各 build/LLM 模組自動合併；LLM 相關 heavy import [openai/msoffcrypto] 全 lazy；報告只作 ref。）
 """
+import re
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
-import re
 import sys
 from pathlib import Path
 import json
@@ -217,8 +217,20 @@ def set_ea(run_or_font, ea=None):
 
 
 # ── from layout ──
+_ESC = re.compile(r"_x[0-9A-Fa-f]{4}_")
+
+
+# ── from layout ──
+def scrub(t):
+    return _ESC.sub("", str(t))
+
+
+# ── from layout ──
 def setfont(run, size, *, bold=False, italic=False, color=None, heading=False, latin=None):
-    """一次過設 size/bold/color + <a:latin> + <a:ea>（跟 template theme）。"""
+    """一次過設 size/bold/color + <a:latin> + <a:ea>（跟 template theme）。
+    順手清走 Excel 轉義殘留（_xFFFF_ 之類）——每個 run 一定會行過呢度。"""
+    if "_x" in run.text:
+        run.text = scrub(run.text)
     f = run.font
     f.size = Pt(size); f.bold = bold; f.italic = italic
     if color is not None:
@@ -1777,10 +1789,14 @@ def overview_by_bucket(df, bucket, plan, category=None):
                 sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
-                # ★ scan p10 註釋2：「項目數量」＝執行報告披露嘅項目數，【包含申報投資支出為零嘅部分】
-                #   → 唔可以再用 v > 0 過濾（之前 89，報告 95；未實施 10 vs 16 都係同一原因）
-                n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
-                n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
+                # ⚠ 清單一張表放晒三年嘅碼（MGM 246 個），非當年計劃嗰啲 2025 金額 = 0 →
+                #   唔可以「全部行都數」（會變 246）。用計劃金額 > 0 數返當年獲批開展嘅項目。
+                #   仲爭報告嗰 95（我哋 89）：scan p10 註釋2 話「包含申報的投資支出為零的部分」，
+                #   即有 6 個係【2025 計劃內但計劃金額為 0】—— 淨睇金額分唔到，要清單畀一條
+                #   「是否 2025 年度計劃項目」明碼欄先數得準。
+                if v > 0:
+                    n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
+                    n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
             elif v:
                 miss += 1
         if miss:
@@ -3245,7 +3261,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base e9779ac · bundled 2026-08-17 16:08"
+BUILD_STAMP = "base 2fc9868 · bundled 2026-08-17 16:41"
 
 
 # ── from make_report ──
@@ -3508,7 +3524,13 @@ def _df_table(df, first_label=None):
     #   否則 小計/總計 全部當 data（冇粗體、冇橫線）。
     li = 1 if (cols[0] == "序號" and len(cols) > 1) else 0
     for _, row in df.iterrows():
-        cells = [str(row[cols[0]]).strip()] + [_cell_txt(c, row[c]) for c in cols[1:]]
+        # ⚠ 完成率／比例係【一行】嘅表尾行（1.2 scan p10、2.5 scan p26）：格子入面係 0-1 嘅率，
+        #   但欄名係「報告投資金額」咁 money → 之前 render 做「1」。行名話事，蓋過欄名。
+        _rr = str(row[cols[1] if (cols[0] == "序號" and len(cols) > 1) else cols[0]]).strip()
+        _rate_row = _rr.endswith(("完成率", "比例"))
+        cells = [str(row[cols[0]]).strip()] + [
+            (_fmt_ratio(row[c]) if (_rate_row and _is_num(row[c])) else _cell_txt(c, row[c]))
+            for c in cols[1:]]
         if cols[0] in ("範疇", "序號"):        # 範疇名用報告寫法（render 層）
             cells[li] = sub_display(cells[li])
         lab = (cells[li] or cells[0]).strip()
@@ -3987,10 +4009,14 @@ def _cum_table(df, plan, cat=None):
             a = round(sum(A.get((yr, g, sb), 0.0) for g, sb in items), 1)
             b = round(sum(_af(yr, g, sb, True) for g, sb in items), 1)
             c = round(sum(_af(yr, g, sb, False) for g, sb in items), 1)
-            out += ([a, b, c, round(b + c, 1), _rate(b + c, a)] if yr != 25
-                    else [a, c, _rate(c, a)])
+            # 計劃金額 0 → 完成率算唔到：出「-」（唔可以留白，報告冇白格）
+            def _rt(x, y):
+                r = _rate(x, y)
+                return "-" if r is None else r
+            out += ([a, b, c, round(b + c, 1), _rt(b + c, a)] if yr != 25
+                    else [a, c, _rt(c, a)])
             ta += a; td += b + c
-        return out + [round(ta, 1), round(td, 1), _rate(td, ta)]
+        return out + [round(ta, 1), round(td, 1), _rt(td, ta)]
 
     rows, all_items = [], []
     for gm, label in ((True, "博彩項目"), (False, "非博彩項目")):
@@ -4374,8 +4400,10 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
                 if nr.get("管理層解釋"):
                     items.append(("管理層解釋：", nr["管理層解釋"]))
             else:
+                # 標籤跟報告，唔好用清單嘅欄名（之前有啲 card 寫「KPMG分析發現」、
+                #   有啲寫「管理層解釋」做開頭，同其餘 card 嘅「事項描述」唔一致）
                 items = [(l + "：", t) for l, t in
-                         [("KPMG分析發現", nr.get("KPMG分析發現", "")),
+                         [("事項描述", nr.get("KPMG分析發現", "")),
                           ("管理層解釋", nr.get("管理層解釋", "")),
                           ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
                 if not items and b2:      # 清單冇 → 用表2 抽到嘅原文頂住
