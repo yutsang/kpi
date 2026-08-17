@@ -43,7 +43,7 @@ def _rate(a, b):
         return None
 
 
-def overview_by_bucket(df, bucket, plan, category=None):
+def overview_by_bucket(df, bucket, plan, category=None, split=None):
     """整體投資概況（S10-14 = 2025計劃有計劃/完成率；S19-26 = 期後冇計劃、多潛在調整金額欄）。
     逐範疇 + 博彩/非博彩小計 + 總計。欄跟報告 IMG_0104/0105：
       2025計劃：項目數量 | 獲批的計劃投資金額 | 報告投資金額 | 完成率 | 潛在調整後投資金額 | 完成率 | 設施建設 | 活動舉辦
@@ -67,6 +67,7 @@ def overview_by_bucket(df, bucket, plan, category=None):
     # 項目數量：2025計劃表要數【計劃項目】（清單），唔係 feed 出現嘅碼 —— 否則同「已實施/未實施」
     #   兩行對唔上（項目組 2026-08-15：總計 84 但 79+10≠84）。期後表冇計劃概念，照用 feed。
     plan_by_sub, n_by_sub, n_by_scope = {}, {}, {}
+    in_plan = ((split or {}).get("in_plan") or {}).get(yr) or set()
     if is_py and plan:
         cat = category or {}
         sub_of = {}       # (gaming,碼)→範疇；博彩/非博彩共用項目N 都要留（唔可以 drop 淨 code）
@@ -85,12 +86,10 @@ def overview_by_bucket(df, bucket, plan, category=None):
                 sub = d2sub1.get(str(cat.get((gm, code), "")))
             if sub is not None:
                 plan_by_sub[sub] = plan_by_sub.get(sub, 0.0) + v
-                # ⚠ 清單一張表放晒三年嘅碼（MGM 246 個），非當年計劃嗰啲 2025 金額 = 0 →
-                #   唔可以「全部行都數」（會變 246）。用計劃金額 > 0 數返當年獲批開展嘅項目。
-                #   仲爭報告嗰 95（我哋 89）：scan p10 註釋2 話「包含申報的投資支出為零的部分」，
-                #   即有 6 個係【2025 計劃內但計劃金額為 0】—— 淨睇金額分唔到，要清單畀一條
-                #   「是否 2025 年度計劃項目」明碼欄先數得準。
-                if v > 0:
+                # 「當年計劃項目」判斷（scan p10 = 95 個）：清單該年 block「項目狀況」有填就算，
+                #   包括計劃金額為 0 嗰啲（註釋2）。清單一張表放晒三年嘅碼（MGM 246 個），
+                #   所以【唔可以全部數】；load_split 讀唔到就 fallback 計劃金額 > 0。
+                if (((gm, code) in in_plan) if in_plan else v > 0):
                     n_by_sub[sub] = n_by_sub.get(sub, 0) + 1
                     n_by_scope[0 if gm else 1] = n_by_scope.get(0 if gm else 1, 0) + 1
             elif v:

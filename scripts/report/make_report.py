@@ -1758,6 +1758,7 @@ def main():
     df["_plan_year"] = df["year_bucket"].map(B._plan_year)
     plan = B.load_plan(qingdan) if qingdan else None
     cat = B.load_category(qingdan) if qingdan else None     # 項目性質(D)→派零投資項目計劃返範疇
+    split = B.load_split(qingdan) if qingdan else {}        # 清單逐年 capex/opex 拆分 + 當年計劃項目名單
     narr = N.load_narrative(qingdan) if qingdan else {}     # 清單 by-project narrative（抄字）
     if narr:
         print(f"    清單 narrative: {sum(1 for r in narr.values() if r.get('KPMG分析發現'))} 個項目有發現")
@@ -1814,7 +1815,7 @@ def main():
         ("1.4  2025年度投資計劃報告投資金額的潛在調整事項匯總", ""),
     ])
     budget = _load_budget(entity)
-    ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan, cat)
+    ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan, cat, split)
     adj = O.adjustment_bridge(sdf)
     # 1.2 表底兩條註（逐字對 scan p10；註釋2 就係「項目數量含零申報」嗰條口徑）
     NOTE_RATE = ("註釋1：上述承諾的10年投資預算包含額外投資部分（澳門全年博彩毛收入達到1,800億澳門元後"
@@ -1871,7 +1872,7 @@ def main():
         ("2.5  截至2025年末投資金額概覽", ""),
     ])
     for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
-        ov = O.overview_by_bucket(sdf, bk, plan, cat)
+        ov = O.overview_by_bucket(sdf, bk, plan, cat, split)
         if not ov.empty:
             render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""), sec=1,
                            crumb=f"{S2}  |  {bk}金額概覽",
@@ -1912,7 +1913,7 @@ def main():
                              f"於2025年發生的投資金額（報告投資金額及潛在調整後投資金額）。"),
                    note="註：金額單位為萬澳門元。", llm=llm, tbl_id=tbl_key("金額匯總"))
     for bk in S.BUCKET_ORDER:
-        fa = S.facility_activity(sdf, bk)
+        fa = S.facility_activity(sdf, bk, split)
         if not fa.empty:
             # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False；表頭下有公式行
             render_generic(prs, f"{ent_up} {bk}的投資支出 — 區分設施建設/活動舉辦", fa.fillna(""), sec=3,
