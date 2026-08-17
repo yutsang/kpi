@@ -689,28 +689,21 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     S2 = "過往年度投資計劃在2025年繼續執行的審查跟進"
     tname = f"{ent_up} {yr}年度投資計劃於2025年申報的期後投資金額的潛在調整"
     W, H = L.size_of(prs)
-    lw = W * 0.55
+    crumb = f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總"
     tbl = _bucket_adj_table(ov)
     subs, rows, widths, supers = _df_table(tbl)
-    wid = [w * lw / sum(widths) for w in widths]
-    cw = W - (L.MARGIN + lw + 0.22) - L.MARGIN
-    pages = L.fit_prose([(h, b) for _n, h, b in items], cw, L.CONTENT_BOTTOM - 1.9)
-    idx = 0
-    for pi, page in enumerate(pages):
-        suffix = _pg(pi + 1, len(pages))
-        slide, W, H, top = _page(prs, 1, f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總",
-                                 head + suffix)
-        if pi == 0:
-            t2 = L.caption_bar(slide, L.MARGIN, top, lw, tname)
-            L.draw_table(slide, L.MARGIN, t2, lw, subs, rows, widths, supers=supers,
-                         font=L.SZ_TBL, hfont=L.SZ_TBL_HDR, fill_h=L.CONTENT_BOTTOM - t2 - 0.28)
-            L.put(slide, L.MARGIN, L.CONTENT_BOTTOM - 0.26, lw, 0.3,
-                  "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
-        box = L._tb(slide, L.MARGIN + lw + 0.22, top - 0.02, cw, L.CONTENT_BOTTOM - top)
-        L.prose_numbered(box, items[idx:idx + len(page)], size=L.SZ_BODY,
-                         title=(tname if pi == 0 else tname + "（續）"))
-        idx += len(page)
-        L.source_note(slide, W, more=(pi < len(pages) - 1))
+    # ★ 報告（p15）：呢一節係【一整版都係表，冇右邊敘述】；逐類說明另起版、全闊（p22）。
+    #   之前做成「表左 + 敘述右」，敘述長就出一版左邊全白嘅續頁 —— 報告冇呢種版。
+    tw = W - 2 * L.MARGIN
+    slide, W, H, top = _page(prs, 1, crumb, head)
+    t2 = L.caption_bar(slide, L.MARGIN, top, tw, tname)
+    L.draw_table(slide, L.MARGIN, t2, tw, subs, rows, widths, supers=supers,
+                 font=L.SZ_TBL, hfont=L.SZ_TBL_HDR, fill_h=L.CONTENT_BOTTOM - t2 - 0.28,
+                 hdr_cols=_hdr_cols(subs, supers))
+    L.put(slide, L.MARGIN, L.CONTENT_BOTTOM - 0.26, tw, 0.3,
+          "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
+    L.source_note(slide, W)
+    _prose_2col(prs, crumb, items, sec=1, headline=head, subtitle=tname)
 
 
 def _cum_table(df, plan, cat=None):
@@ -1378,8 +1371,10 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
             if content and reason:
                 break
         content, reason = _trim(content), _trim(reason)   # 清單原文已有句號 → 唔剝就出「。。」
-        summ = (content[:90] + "…") if len(content) > 90 else content
-        rsn = ("，主要由於" + (reason[:80] + "…" if len(reason) > 80 else reason)) if reason else ""
+        # ⚠ 字數上限 = 版面約束：非博彩 11 個範疇要一版放晒（報告 4/4 得一版）→ 每個 ~55 字。
+        #   同 build_llm_narrative._cat_prompt 嘅 40-55 字一致，LLM 同 fallback 都唔會撐爆版。
+        summ = (content[:34] + "…") if len(content) > 34 else content
+        rsn = ("，主要由於" + (reason[:24] + "…" if len(reason) > 24 else reason)) if reason else ""
         body = (f"主要包括{summ}。投資計劃金額完成率為{_pct(rate)}{rsn}。" if summ
                 else f"投資計劃金額完成率為{_pct(rate)}{rsn}。")
         (g_bul if sub.startswith("博彩") else n_bul).append((f"{sub}：", body))
