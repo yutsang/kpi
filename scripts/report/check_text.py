@@ -28,6 +28,7 @@ import hashlib
 import json
 import re
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -44,9 +45,40 @@ except ImportError:                                    # tqdm 冇裝都跑得（
 
     class _Dummy:
         def update(self, *a): pass
+        def refresh(self): pass
         def close(self): pass
         @staticmethod
         def write(s): print(s)
+
+class _Ticker:
+    """令 tqdm 每秒 refresh 一次 —— LLM 一 call 要幾秒，唔 tick 嘅話 elapsed/rate 好似死咗機。
+    update() 同 refresh() 共用一把鎖（tqdm 本身唔係 thread-safe）。"""
+
+    def __init__(self, bar, every=1.0):
+        self.bar, self.every = bar, every
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def _run(self):
+        while not self._stop.wait(self.every):
+            with self._lock:
+                try:
+                    self.bar.refresh()
+                except Exception:
+                    return
+
+    def update(self, n=1):
+        with self._lock:
+            self.bar.update(n)
+
+    def close(self):
+        self._stop.set()
+        self._t.join(timeout=self.every + 1)
+        with self._lock:
+            self.bar.close()
+
 
 DEFAULT_DIR = "file_check"
 OUT_SUB = "_檢查報告"
@@ -414,7 +446,8 @@ def main():
                 todo.append((len(docs), doc, pi, segs, k))
         docs.append({"file": f, "pages": pages, "found": found})
     if todo:
-        bar = tqdm(total=len(todo), desc=f"校對 {len(files)} 檔", unit="頁", ncols=80)
+        bar = _Ticker(tqdm(total=len(todo), desc=f"校對 {len(files)} 檔", unit="頁",
+                           ncols=80, mininterval=0.5, smoothing=0.1))
         with ThreadPoolExecutor(max_workers=a.workers) as ex:
             futs = {ex.submit(llm_check, wb, doc, pi, segs, a.model): (di, doc, pi, k)
                     for di, doc, pi, segs, k in todo}
