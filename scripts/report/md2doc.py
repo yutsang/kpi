@@ -20,18 +20,37 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from tqdm import tqdm
+except ImportError:            # 冇裝 tqdm 照跑
+    def tqdm(it=None, **kw):
+        return it
+    tqdm.write = print
+
 DEFAULT_DIR = "file_check/_檢查報告"
 _INLINE = re.compile(r"`([^`]*)`|\*\*([^*]*)\*\*")
+# XML 1.0 唔食嘅控制字元（pptx 入面嘅 \x0b 軟斷行、\x07 表格尾等）——
+#   唔清就 lxml 會炒「All strings must be XML compatible」（2026-08-20 Melco/MGM 撞到）。
+_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffe\uffff]")
+
+
+def xml_safe(t):
+    """控制字元 → 空格／刪走，令 python-docx / lxml 收得。"""
+    return _CTRL.sub(lambda m: " " if m.group(0) in "\x0b\x0c" else "", str(t))
 
 
 def _plain(t):
-    """剝走 inline markdown（`code`、**bold**）→ 純文字。"""
-    return _INLINE.sub(lambda m: m.group(1) if m.group(1) is not None else m.group(2), t)
+    """剝走 inline markdown（`code`、**bold**）→ 純文字，順手清控制字元。"""
+    return xml_safe(_INLINE.sub(
+        lambda m: m.group(1) if m.group(1) is not None else m.group(2), t))
 
 
 def parse_md(text):
     """→ [(kind, payload)]；kind = h1/h2/h3 | li | p | table(list[list[str]])。"""
     blocks, rows = [], []
+    # ⚠ 一定要【split 之前】清 —— str.splitlines() 會當 \x0b/\x0c 係換行，
+    #   一行表格會俾佢劈開，之後認唔返做 | … | 就會靜靜咁唔見咗成行。
+    text = xml_safe(text)
 
     def flush():
         nonlocal rows
@@ -168,29 +187,38 @@ def main():
     a = ap.parse_args()
 
     src = Path(a.src)
-    mds = [src] if src.is_file() else sorted(src.glob("*.md"))
+    mds = [src] if src.is_file() else sorted(src.rglob("*.md"))     # 資料夾＝連子資料夾一齊掃
     if not mds:
         print(f"✗ {src.resolve()} 入面冇 .md（先跑 check_text.py）"); return
     outdir = Path(a.out) if a.out else (src if src.is_dir() else src.parent)
     outdir.mkdir(parents=True, exist_ok=True)
+    print(f"── {src.resolve()}：{len(mds)} 個 md → {a.to}")
 
-    parsed = [(p.stem, parse_md(p.read_text(encoding="utf-8"))) for p in mds]
+    parsed, bad = [], []
+    for p in tqdm(mds, desc="讀 md", unit="檔", ncols=76):
+        try:
+            parsed.append((p.stem, parse_md(p.read_text(encoding="utf-8", errors="replace"))))
+        except Exception as e:
+            bad.append((p.name, str(e)[:120]))
     if a.to == "xlsx":
         o = outdir / "用字檢查.xlsx"
         to_xlsx(parsed, o)
-        print(f"✓ {o.resolve()}（{len(parsed)} 張 sheet）"); return
-    for (name, blocks), p in zip(parsed, mds):
-        o = outdir / f"{name}.{'doc' if a.to == 'doc' else a.to}"
-        try:
-            if a.to == "docx":
-                to_docx(blocks, o, name)
-            else:
-                to_html(blocks, o, name)
-        except ImportError:
-            o = outdir / f"{name}.doc"
-            to_html(blocks, o, name)
-            print("  ⚠ 冇 python-docx → 出咗 .doc（HTML 版，Word 一樣開得）")
-        print(f"✓ {o.resolve()}")
+        print(f"✓ {o.resolve()}（{len(parsed)} 張 sheet）")
+    else:
+        ok = 0
+        for name, blocks in tqdm(parsed, desc=f"寫 {a.to}", unit="檔", ncols=76):
+            o = outdir / f"{name}.{'doc' if a.to == 'doc' else a.to}"
+            try:
+                (to_docx if a.to == "docx" else to_html)(blocks, o, name)
+            except ImportError:
+                o = outdir / f"{name}.doc"; to_html(blocks, o, name)
+                tqdm.write("  ⚠ 冇 python-docx → 出咗 .doc（HTML 版，Word 一樣開得）")
+            except Exception as e:      # ⚠ 一個檔炒唔可以拖冧成批
+                bad.append((name, str(e)[:120])); continue
+            ok += 1
+        print(f"✓ {ok}/{len(parsed)} 個檔寫咗落 {outdir.resolve()}")
+    for n, e in bad:
+        print(f"  ✗ {n}：{e}")
 
 
 if __name__ == "__main__":
