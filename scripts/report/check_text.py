@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-check_text.py — 文件用字檢查：掃 folder 入面全部 pptx/docx，逐【頁】揾錯別字、簡體字、
+check_text.py — 文件用字檢查：掃 folder 入面全部 pptx/potx/docx，逐【頁】揾錯別字、簡體字、
 繁簡轉換錯誤（后/後、里/裡、干/乾…）同其他用語問題。
 
 點用（乜 flag 都唔使，掉檔入 folder 就得）：
@@ -297,7 +297,9 @@ def pages_of_docx(path, per=40):
         yield page, segs
 
 
-READERS = {".pptx": pages_of_pptx, ".docx": pages_of_docx}
+# .potx = PowerPoint 範本，同 pptx 一樣係 OOXML package，python-pptx 開得（我哋主要用 potx）
+READERS = {".pptx": pages_of_pptx, ".potx": pages_of_pptx, ".pptm": pages_of_pptx,
+           ".docx": pages_of_docx, ".dotx": pages_of_docx}
 
 
 # ── ① 機械層 ────────────────────────────────────────────────────────
@@ -352,7 +354,8 @@ def main():
     ap = argparse.ArgumentParser(description="掃 folder 入面嘅 pptx/docx，逐頁校對繁體中文用字")
     ap.add_argument("--dir", default=DEFAULT_DIR, help=f"要掃嘅資料夾（預設 {DEFAULT_DIR}）")
     ap.add_argument("--no-llm", action="store_true", help="只跑機械檢查，唔叫 API")
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=4,
+                    help="LLM 並行數（預設 4；8 條試過俾公司網關 WAF 擋，同 build_report 一致）")
     ap.add_argument("--model", default=None, help="workbench model alias（預設 5.5）")
     ap.add_argument("--fresh", action="store_true", help="唔用 cache")
     a = ap.parse_args()
@@ -390,43 +393,47 @@ def main():
 
     print(f"── 掃 {root.resolve()}：{len(files)} 個檔"
           f"｜LLM {'開' if wb else '關'}｜cache {len(cache)} 頁")
-    summary = []
+    # 先【全部檔一次過】抽晒文字 + 跑機械層，再把所有未 cache 嘅頁排成【一條 task list】：
+    #   一個 thread pool、一條 tqdm 橫跨成個 folder（同 build_report.py 個做法一致）。
+    docs, todo = [], []
     for f in files:
         doc = f.stem
         try:
-            pages = list(READERS[f.suffix.lower()](f))
+            pages = [(i, s) for i, s in READERS[f.suffix.lower()](f) if s]
         except Exception as e:
             print(f"  ✗ {f.name} 讀唔到：{str(e)[:140]}"); continue
-        pages = [(i, s) for i, s in pages if s]
-        found, todo = [], []
+        found = []
         for pi, segs in pages:
             found += [{**x, "page": pi} for x in mech_check(segs)]
-            k = _key(doc, pi, segs)
             if wb is None:
                 continue
+            k = _key(doc, pi, segs)
             if k in cache:
                 found += [{**x, "page": pi} for x in cache[k]]
             else:
-                todo.append((pi, segs, k))
-        if todo:
-            bar = tqdm(total=len(todo), desc=f"{doc[:24]}", unit="頁", ncols=78)
-            with ThreadPoolExecutor(max_workers=a.workers) as ex:
-                futs = {ex.submit(llm_check, wb, doc, pi, segs, a.model): (pi, k)
-                        for pi, segs, k in todo}
-                for fu in as_completed(futs):
-                    pi, k = futs[fu]
-                    try:
-                        res = fu.result()
-                        cache[k] = res
-                        found += [{**x, "page": pi} for x in res]
-                    except Exception as e:
-                        tqdm.write(f"    ⚠ p{pi} LLM 失敗：{str(e)[:100]}")
-                    bar.update(1)
-            bar.close()
-        found.sort(key=lambda x: (x["page"], str(x.get("seg"))))
-        write_report(outdir / f"{doc}.md", f, pages, found)
-        summary.append((f.name, len(pages), found))
+                todo.append((len(docs), doc, pi, segs, k))
+        docs.append({"file": f, "pages": pages, "found": found})
+    if todo:
+        bar = tqdm(total=len(todo), desc=f"校對 {len(files)} 檔", unit="頁", ncols=80)
+        with ThreadPoolExecutor(max_workers=a.workers) as ex:
+            futs = {ex.submit(llm_check, wb, doc, pi, segs, a.model): (di, doc, pi, k)
+                    for di, doc, pi, segs, k in todo}
+            for fu in as_completed(futs):
+                di, doc, pi, k = futs[fu]
+                try:
+                    res = fu.result()
+                    cache[k] = res
+                    docs[di]["found"] += [{**x, "page": pi} for x in res]
+                except Exception as e:
+                    tqdm.write(f"    ⚠ {doc} p{pi} LLM 失敗：{str(e)[:100]}")
+                bar.update(1)
+        bar.close()
         cachef.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    summary = []
+    for d in docs:
+        d["found"].sort(key=lambda x: (x["page"], str(x.get("seg"))))
+        write_report(outdir / f"{d['file'].stem}.md", d["file"], d["pages"], d["found"])
+        summary.append((d["file"].name, len(d["pages"]), d["found"]))
 
     print(f"\n{'檔名':<44}{'頁':>4}{'問題':>6}   分類")
     print("-" * 96)
