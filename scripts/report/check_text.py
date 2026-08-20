@@ -84,6 +84,14 @@ DEFAULT_DIR = "file_check"
 OUT_SUB = "_檢查報告"
 CACHE = ".check_cache.json"
 
+# pptx 入面有控制字元（\x0b 軟斷行、\x07 等），照抄落 md 之後 python-docx／lxml 會炒
+#   （2026-08-20 Melco/MGM 撞到）→ 抽文字嗰陣即刻清。
+_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffe\uffff]")
+
+
+def clean(t):
+    return _CTRL.sub(lambda m: " " if m.group(0) in "\x0b\x0c" else "", str(t or "")).strip()
+
 # ── ① 機械層：簡體字（表由 zhconv 生成，唔係手寫 → 唔會誤報）────────────────
 #   做法：0x4E00-0x9FFF 逐個字問 zhconv「轉繁體會唔會變」，變咗就係簡體字。
 #   ⚠ 已剔走【繁體本身都會用】嘅字（后里干台余范征游云几谷划卷姜岳表采御…）——
@@ -283,7 +291,7 @@ def _shape_texts(shapes, out):
         if getattr(sh, "shape_type", None) is not None and getattr(sh, "has_table", False):
             for ri, row in enumerate(sh.table.rows):
                 for ci, cell in enumerate(row.cells):
-                    t = (cell.text or "").strip()
+                    t = clean(cell.text)
                     if t:
                         out.append((f"表格 r{ri}c{ci}", t))
             continue
@@ -293,7 +301,7 @@ def _shape_texts(shapes, out):
             except Exception:
                 pass
         if getattr(sh, "has_text_frame", False):
-            t = (sh.text_frame.text or "").strip()
+            t = clean(sh.text_frame.text)
             if t:
                 out.append(("文字框", t))
 
@@ -305,7 +313,7 @@ def pages_of_pptx(path):
         segs = []
         _shape_texts(sl.shapes, segs)
         if getattr(sl, "has_notes_slide", False) and sl.notes_slide.notes_text_frame.text.strip():
-            segs.append(("備註", sl.notes_slide.notes_text_frame.text.strip()))
+            segs.append(("備註", clean(sl.notes_slide.notes_text_frame.text)))
         yield i, segs
 
 
@@ -314,7 +322,7 @@ def pages_of_docx(path, per=40):
     d = docx.Document(str(path))
     segs, page = [], 1
     for p in d.paragraphs:
-        t = (p.text or "").strip()
+        t = clean(p.text)
         if t:
             segs.append(("段落", t))
         if len(segs) >= per:
@@ -322,7 +330,7 @@ def pages_of_docx(path, per=40):
     for ti, tb in enumerate(d.tables):
         for ri, row in enumerate(tb.rows):
             for ci, cell in enumerate(row.cells):
-                t = (cell.text or "").strip()
+                t = clean(cell.text)
                 if t:
                     segs.append((f"表{ti} r{ri}c{ci}", t))
     if segs:
