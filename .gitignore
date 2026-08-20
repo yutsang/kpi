@@ -116,3 +116,6 @@ project_dump.tsv
 
 # 報告待辦（工作用，內含客戶報告結構）— 唔入 public repo
 mgm_report_todo.md
+
+# 文件檢查 in/out（客戶 draft，repo 係 PUBLIC → 永不入 git）
+file_check/
