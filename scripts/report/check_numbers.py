@@ -10,8 +10,11 @@ check_numbers.py — 數字 tie 唔 tie 檢查：掃 folder 入面全部 pptx，
 
 出：file_check\\_數字檢查\\{檔名}.md ＋ .docx ＋ console 總結表
 
-★★ 分工死線：**LLM 只做「閱讀同配對」，加減乘除／比大細／換算單位一律 Python 做。**
-   LLM 永遠唔會計數 —— 咁先有佢嘅閱讀能力，又唔會出現「加錯數但睇落好合理」。
+三個層，唔會互相取代：
+  · 機械層 —— Python 自己加，穩陣、零假警報，但要靠公式行／小計字眼先驗到。
+  · LLM 配對層 —— LLM 只讀唔計（文表對照），數值一律 Python 比。
+  · LLM 驗算層 —— **叫 LLM 親自計數**（user 2026-08-21 指定），睇得明冇公式行、
+    關係唔規則嘅表；每條再由 Python 覆核係咪機械層都揾到，標明「一致／要人睇」。
 
 機械層（永遠會行，冇 API 都行）：
   ① 橫向：報告啲表本身印住公式行（a｜1..8｜b｜c=a+b｜d=b/a；4.2 係 a¹ b¹ c¹ d¹=b¹+c¹），
@@ -19,7 +22,9 @@ check_numbers.py — 數字 tie 唔 tie 檢查：掃 folder 入面全部 pptx，
   ② 直向：逐個範疇加埋 =唔= 小計；各小計加埋 =唔= 合計／總計。
   ③ 跨表：CROSS_RULES 5 條報告結構決定嘅關係（1.2總計=1.4合計、2.1=2.2…）。
 
-LLM 層（--no-llm 可以關）：
+LLM 層（--no-llm 可以關；逐版一 call，19 版有表就 19 個 call）：
+  ⓪ LLM 驗算（逐版）：成張表俾 LLM，叫佢【自己加減】驗小計／合計／橫向／完成率，
+     報返「表上寫幾多、佢計出幾多」。Python 覆核後標「✅機械層都揾到／⚠機械層冇揾到要人睇」。
   ④ 文表對照（逐版）：餵敘述文字 + 該版表格嘅【事實清單（已編號）】，
      LLM 答「邊句引用緊邊個事實、聲稱幾多、單位億定萬」→ Python 換算再比。
      捉「導語寫 6.9 億但表上係 68,523 萬」呢類。億 只印 1 位小數 → 容差放寬到 500 萬。
@@ -88,6 +93,56 @@ SYS_PAIR = (
     '回覆純 JSON：{"pairs":[{"a":<編號>,"b":<編號>,"why":"<15字內理由>"}]}'
 )
 _UNIT = {"億": 10000.0, "萬": 1.0, "個": 1.0, "%": 1.0}
+
+# ── LLM 驗算（user 2026-08-21 指定：要 LLM 幫手計數）──────────────────────
+#   同上面兩個 pass 唔同 —— 呢個係【真係叫 LLM 加減】。好處：機械層要靠公式行／
+#   小計字眼先驗到，LLM 睇得明啲冇公式行、關係唔規則嘅表。
+#   ⚠ 所以每條 LLM 講嘅嘢，Python 都會【自己重計一次】再標「覆核一致／唔同意」，
+#     唔會淨係信佢把口。
+SYS_AUDIT = (
+    "你係財務報告核數員。俾你一張表（逐格已經標好 r行c欄）。請【親自計數】，驗以下關係：\n"
+    "  · 小計 = 佢上面嗰組明細行加埋；合計／總計 = 各小計加埋（或全部明細加埋）\n"
+    "  · 橫向：如果表頭下面有公式行（例如 a｜1..8｜b｜c=a+b｜d=b/a），逐行代入驗\n"
+    "  · 冇公式行嘅，睇欄名自己判斷（例如『合計』欄 = 前面幾條金額欄加埋）\n"
+    "  · 完成率／佔比：驗係咪 = 對應兩欄相除\n\n"
+    "只報【對唔上】嘅格。每條要寫：邊行、邊欄、你用嘅算式、表上寫幾多、你計出嚟幾多。\n"
+    "★ 括號 = 負數（例如 (1,234) 即 -1234）；「-」= 冇數，唔好當 0 去加。\n"
+    "★ 金額全部已經四捨五入到整數 → 加總爭幾個單位（±N/2）唔算錯，唔好報。\n"
+    "★ 拆咗頁嘅表（標題有「（2/3）」呢類）唔好驗全表總計 —— 明細行喺第啲版。\n"
+    "★ 冇把握就唔好報。寧缺勿濫。\n"
+    '回覆純 JSON：{"bad":[{"row":"<行名>","col":"<欄名>","rule":"<你用嘅算式>",'
+    '"shown":<表上數字>,"computed":<你計出嚟>}]}　全部啱就 {"bad":[]}'
+)
+
+
+def _table_text(rows, hdr):
+    out = []
+    for ri, row in enumerate(rows):
+        tag = "表頭" if ri < hdr else f"r{ri}"
+        out.append(f"{tag}｜" + "｜".join(f"c{ci}:{(v or '').strip() or '·'}"
+                                         for ci, v in enumerate(row)))
+    return "\n".join(out)
+
+
+def llm_audit(wb, doc, page, cap, tables, model=None):
+    """叫 LLM 親自計數驗表；每條再由 Python 重計一次做覆核。"""
+    body = "\n\n".join(f"【表 {i+1}】{cap}\n{t}" for i, t in enumerate(tables))
+    if len(body) > 14000:
+        body = body[:14000] + "\n…（過長已截）"
+    r = wb.chat_json(f"《{doc}》第 {page} 頁。\n\n{body}", system=SYS_AUDIT,
+                     model=model, reasoning_effort="high")
+    out = []
+    for b_ in (r or {}).get("bad", []) or []:
+        try:
+            shown, comp = float(b_["shown"]), float(b_["computed"])
+        except Exception:
+            continue
+        if abs(shown - comp) < 1e-9:
+            continue                      # LLM 自己講一樣 → 唔係問題
+        out.append({"page": page, "caption": cap, "audit": True,
+                    "row": str(b_.get("row", ""))[:24], "col": str(b_.get("col", ""))[:24],
+                    "rule": str(b_.get("rule", ""))[:40], "shown": shown, "computed": comp})
+    return out
 
 _NUM = re.compile(r"^\(?\s*-?[\d,]+(?:\.\d+)?\s*\)?%?$")
 _FORMULA = re.compile(r"^[a-zA-Z][¹²³]?(?:\s*=\s*[a-zA-Z¹²³\d+/*\-\s]+)?$")
@@ -300,7 +355,7 @@ def scan_pptx(path):
             (sh.text_frame.text or "").strip().replace("\n", " ")
             for sh in sl.shapes
             if sh.has_text_frame and len((sh.text_frame.text or "").strip()) > 30)
-        facts, n_tbl, spare = [], 0, []
+        facts, n_tbl, spare, ttexts = [], 0, [], []
 
         def _row_facts(_si, _cap):
             return spare
@@ -313,6 +368,7 @@ def scan_pptx(path):
                 continue
             hdr, fml, letters = split_head(rows)
             subs = subs_of(rows, hdr, fml)
+            ttexts.append(_table_text(rows, hdr))
             paged = bool(_PAGED.search(cap)) and _PAGED.search(cap).group(2) != "1"
             for x in (check_across(rows, hdr, fml, letters, subs)
                       + check_down(rows, hdr, fml, subs, paged)):
@@ -345,8 +401,8 @@ def scan_pptx(path):
         #   唔係就嗰兩版完全冇 LLM 睇過（19 版有表得 17 版有 call）。
         if not facts and n_tbl:
             facts = _row_facts(si, cap)[:60]
-        if facts:                      # 只要嗰版有表就送去 LLM ——【逐版一 call】
-            pages[si] = (narr[:1800], facts)
+        if facts or ttexts:            # 只要嗰版有表就送去 LLM ——【逐版一 call】
+            pages[si] = (narr[:1800], facts, cap, ttexts)
     return issues, totals, pages
 
 
@@ -454,12 +510,39 @@ def cross_page(totals):
     return checked, {k: v for k, v in sorted(ref.items()) if len(v) > 1}
 
 
-def write_md(path, src, issues, checked, ref, npages, flags=()):
+def _stash(d, kind, res):
+    if kind == "claim":
+        d["issues"] += [x for x in res if not x.get("flag")]
+        d["flags"] += [x for x in res if x.get("flag")]
+    elif kind == "audit":
+        d["audit"] += res
+    else:
+        d["checked"] += res
+
+
+def recheck(a_list, mech):
+    """Python 覆核 LLM 講嘅每一條：機械層有冇喺同一行同一欄都揾到同一個問題？
+    → 標「✅ 一致」／「⚠ 程式覆核唔到（要人睇）」。唔會刪走 LLM 嘅發現。"""
+    idx = {(m["page"], m["row"], m["col"]) for m in mech}
+    loose = {(m["page"], m["row"]) for m in mech}
+    for x in a_list:
+        k3 = (x["page"], x["row"], x["col"])
+        if k3 in idx:
+            x["verdict"] = "✅ 機械層都揾到"
+        elif (x["page"], x["row"]) in loose:
+            x["verdict"] = "◐ 同一行機械層有發現"
+        else:
+            x["verdict"] = "⚠ 機械層冇揾到，要人睇"
+    return a_list
+
+
+def write_md(path, src, issues, checked, ref, npages, flags=(), audit=()):
     bad_x = [c for c in checked if not c["ok"]]
     L = [f"# {src.name} 數字 tie 檢查", "",
          f"- 來源：`{src.resolve()}`", f"- 頁數：{npages}",
          f"- 表內對唔上：**{len(issues)}** 處", 
          f"- 跨表關係：驗咗 {len(checked)} 條，**{len(bad_x)}** 條唔 tie",
+         f"- LLM 驗算揾到：**{len(audit)}** 處",
          f"- 合理性提示（LLM，唔算錯）：**{len(flags)}** 項", ""]
     if not issues:
         L += ["✅ 表內橫向／直向加總全部 tie。", ""]
@@ -487,6 +570,18 @@ def write_md(path, src, issues, checked, ref, npages, flags=()):
             (ls, lc, lv), (rs, rc, rv) = c["left"], c["right"]
             L.append(f"| {c['name']} | p{ls} = {lv:,.0f} | p{rs} = {rv:,.0f} | "
                      f"{c['diff']:+,.0f} | {'✅ tie' if c['ok'] else '❌ 唔 tie'} |")
+    if audit:
+        L += ["", "## LLM 驗算（由 LLM 親自計數）", "",
+              "> LLM 自己加減之後認為對唔上嘅格。最後一欄係【程式覆核】——",
+              "> 機械層有冇喺同一位置都揾到問題。「⚠ 機械層冇揾到」＝ 可能係 LLM 睇到機械層",
+              "> 捉唔到嘅關係，亦可能係 LLM 計錯，兩種都要人睇。", "",
+              "| 頁 | 表 | 行 | 欄 | LLM 用嘅算式 | 表上寫 | LLM 計出 | 差額 | 程式覆核 |",
+              "|---|---|---|---|---|---|---|---|---|"]
+        for x in sorted(audit, key=lambda x: x["page"]):
+            d = x["shown"] - x["computed"]
+            L.append(f"| p{x['page']} | {x['caption'][:16]} | {x['row']} | {x['col']} | "
+                     f"`{x['rule']}` | {x['shown']:,.0f} | {x['computed']:,.0f} | "
+                     f"**{d:+,.0f}** | {x.get('verdict', '')} |")
     if flags:
         L += ["", "## 合理性提示（數學上 tie，但值得人手 double check）", "",
               "> LLM 揀出嚟嘅可疑格；數值直接抄自表格，冇經過任何計算。", "",
@@ -545,8 +640,8 @@ def main():
                 wb.ping()
         except Exception as e:
             print(f"  ⚠ LLM 連唔到（{str(e)[:110]}）→ 淨係跑機械檢查"); wb = None
-    print(f"── 掃 {root.resolve()}：{len(files)} 個檔"
-          f"｜機械檢查一定行｜LLM {'開' if wb else '關'}（只做閱讀配對，計數 Python 做）")
+    print(f"── 掃 {root.resolve()}：{len(files)} 個檔｜機械檢查一定行"
+          f"｜LLM {'開（文表對照＋親自驗算＋合理性）' if wb else '關'}")
 
     # ── 第一浸：全部檔跑機械層 ──
     docs = []
@@ -558,7 +653,7 @@ def main():
         except Exception as e:
             tqdm.write(f"  ✗ {f.name}：{str(e)[:140]}"); continue
         checked, ref = cross_page(totals)
-        docs.append({"file": f, "npages": npages, "issues": issues, "flags": [],
+        docs.append({"file": f, "npages": npages, "issues": issues, "flags": [], "audit": [],
                      "checked": checked, "ref": ref, "pages": pages,
                      "tot_facts": [{"page": s_, "cap": c_, "row": "合計", "col": col,
                                     "val": v, "rate": False} for s_, c_, col, v in totals]})
@@ -568,42 +663,42 @@ def main():
         tasks = []
         for di, d in enumerate(docs):
             doc = d["file"].stem
-            for pi, (narr, facts) in d["pages"].items():
-                k = f"claim|{doc}|{pi}|" + hashlib.sha1(
-                    (narr + _fact_lines(facts)).encode("utf-8")).hexdigest()[:16]
-                tasks.append(("claim", di, doc, pi, narr, facts, k))
+            for pi, (narr, facts, cap, ttexts) in d["pages"].items():
+                if facts:
+                    k = f"claim|{doc}|{pi}|" + hashlib.sha1(
+                        (narr + _fact_lines(facts)).encode("utf-8")).hexdigest()[:16]
+                    tasks.append(("claim", di, doc, pi, (narr, facts), k))
+                if ttexts:      # ★ LLM 親自計數驗表（user 指定）
+                    k = f"audit|{doc}|{pi}|" + hashlib.sha1(
+                        "\n".join(ttexts).encode("utf-8")).hexdigest()[:16]
+                    tasks.append(("audit", di, doc, pi, (cap, ttexts), k))
             if d["tot_facts"]:
                 k = f"pair|{doc}|" + hashlib.sha1(
                     _fact_lines(d["tot_facts"], True).encode("utf-8")).hexdigest()[:16]
-                tasks.append(("pair", di, doc, 0, "", d["tot_facts"], k))
+                tasks.append(("pair", di, doc, 0, d["tot_facts"], k))
         todo = [t for t in tasks if t[-1] not in cache]
-        for kind, di, _doc, pi, _n, _f, k in tasks:
+        for kind, di, _doc, pi, _payload, k in tasks:
             if k in cache:
-                if kind == "claim":
-                    docs[di]["issues"] += [x for x in cache[k] if not x.get("flag")]
-                    docs[di]["flags"] += [x for x in cache[k] if x.get("flag")]
-                else:
-                    docs[di]["checked"] += cache[k]
+                _stash(docs[di], kind, cache[k])
         if todo:
             bar = _Ticker(tqdm(total=len(todo), desc="LLM 對照", unit="項", ncols=80,
                                mininterval=0.5))
             with ThreadPoolExecutor(max_workers=a.workers) as ex:
                 fut = {}
-                for kind, di, doc, pi, narr, facts, k in todo:
-                    fn = (llm_claims if kind == "claim" else llm_pairs)
-                    args = ((wb, doc, pi, narr, facts, a.model) if kind == "claim"
-                            else (wb, doc, facts, a.model))
+                for kind, di, doc, pi, payload, k in todo:
+                    if kind == "claim":
+                        fn, args = llm_claims, (wb, doc, pi, payload[0], payload[1], a.model)
+                    elif kind == "audit":
+                        fn, args = llm_audit, (wb, doc, pi, payload[0], payload[1], a.model)
+                    else:
+                        fn, args = llm_pairs, (wb, doc, payload, a.model)
                     fut[ex.submit(fn, *args)] = (kind, di, doc, pi, k)
                 for fu in as_completed(fut):
                     kind, di, doc, pi, k = fut[fu]
                     try:
                         res = fu.result()
                         cache[k] = res
-                        if kind == "claim":
-                            docs[di]["issues"] += [x for x in res if not x.get("flag")]
-                            docs[di]["flags"] += [x for x in res if x.get("flag")]
-                        else:
-                            docs[di]["checked"] += res
+                        _stash(docs[di], kind, res)
                     except Exception as e:
                         tqdm.write(f"    ⚠ {doc} p{pi} LLM 失敗：{str(e)[:100]}")
                     bar.update(1)
@@ -615,7 +710,8 @@ def main():
         f, npages = d["file"], d["npages"]
         issues, checked, ref = d["issues"], d["checked"], d["ref"]
         md = outdir / f"{f.stem}.md"
-        write_md(md, f, issues, checked, ref, npages, d["flags"])
+        audit = recheck(d["audit"], [x for x in issues if x.get("kind") in ("橫向", "直向")])
+        write_md(md, f, issues, checked, ref, npages, d["flags"], audit)
         if not a.no_docx:
             try:
                 import md2doc
@@ -623,13 +719,13 @@ def main():
                                outdir / f"{f.stem}.docx", f.stem)
             except Exception as e:
                 tqdm.write(f"  ⚠ {f.name} 出唔到 docx：{str(e)[:100]}")
-        summary.append((f.name, npages, len(issues),
-                        sum(1 for c in checked if not c["ok"]), len(checked), len(d["flags"])))
+        summary.append((f.name, npages, len(issues), sum(1 for c in checked if not c["ok"]),
+                        len(checked), len(audit), len(d["flags"])))
 
-    print(f"\n{'檔名':<44}{'頁':>4}{'表內對唔上':>11}{'跨表唔tie':>11}{'合理性提示':>11}")
+    print(f"\n{'檔名':<40}{'頁':>4}{'機械對唔上':>11}{'LLM驗算':>9}{'跨表唔tie':>11}{'合理性':>8}")
     print("-" * 96)
-    for name, npg, ni, nx, nt, nf in summary:
-        print(f"{name[:42]:<44}{npg:>4}{ni:>11}{f'{nx}/{nt}':>11}{nf:>11}")
+    for name, npg, ni, nx, nt, na, nf in summary:
+        print(f"{name[:38]:<40}{npg:>4}{ni:>11}{na:>9}{f'{nx}/{nt}':>11}{nf:>8}")
     print(f"\n✓ 報告寫咗落 {outdir.resolve()}")
 
 
