@@ -25,14 +25,20 @@ check_numbers.py — 數字 tie 唔 tie 檢查：掃 folder 入面全部 pptx，
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import re
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
+for _p in (_HERE.parent.parent, _HERE.parent.parent / "src"):      # repo root / src
+    sys.path.insert(0, str(_p))
+from check_text import _Ticker                                     # tqdm 每秒 refresh
 
 try:
     from tqdm import tqdm
@@ -43,6 +49,30 @@ except ImportError:
 
 DEFAULT_DIR = "file_check"
 OUT_SUB = "_數字檢查"
+CACHE = ".num_cache.json"
+
+# ★ 分工死線：LLM 淨係做【閱讀同配對】—— 邊句敘述講緊表入面邊個數。
+#   加減乘除、比大細、換算單位，全部 Python 做。LLM 永遠唔會計數。
+SYS_CLAIM = (
+    "你係財務報告校對員。俾你一版嘅【敘述文字】同埋嗰版表格入面嘅【事實清單】（已編號）。"
+    "任務：揾出敘述文字入面每一個【引用緊表格數字】嘅講法，指出佢對應邊個事實編號，"
+    "同埋佢喺文字入面聲稱嘅數值（照抄，唔好自己計）。\n"
+    "★ 唔好做算術、唔好推算、唔好改寫數字 —— 你只係負責配對。\n"
+    "★ 配唔到任何事實嘅講法唔好報。純粹描述性、冇數字嘅句子唔好報。\n"
+    "★ 單位照抄原文（億／萬／個／%）。\n"
+    '回覆純 JSON：{"claims":[{"quote":"<原文片段,20字內>","fact":<事實編號int>,'
+    '"value":<數字>,"unit":"億|萬|個|%"}]}　冇就 {"claims":[]}'
+)
+SYS_PAIR = (
+    "你係財務報告校對員。俾你一份報告入面全部【合計／總計】嘅事實清單（已編號，"
+    "每項有頁數、表名、欄名、數值）。任務：憑報告結構判斷邊幾對【應該完全相等】。\n"
+    "例：同一年度嘅『概覽表合計』同『調整事項匯總表合計』嘅報告投資金額應該相等；"
+    "『整體投資支出概況』嘅總計應該等於『金額匯總』入面同一年度嘅欄組。\n"
+    "★ 唔好比較數值、唔好計差額 —— 你只係指出邊兩項【定義上應該相等】。\n"
+    "★ 唔同年度、唔同口徑（報告 vs 調整後 vs 計劃）唔好配埋一齊。冇把握就唔好報。\n"
+    '回覆純 JSON：{"pairs":[{"a":<編號>,"b":<編號>,"why":"<15字內理由>"}]}'
+)
+_UNIT = {"億": 10000.0, "萬": 1.0, "個": 1.0, "%": 1.0}
 
 _NUM = re.compile(r"^\(?\s*-?[\d,]+(?:\.\d+)?\s*\)?%?$")
 _FORMULA = re.compile(r"^[a-zA-Z][¹²³]?(?:\s*=\s*[a-zA-Z¹²³\d+/*\-\s]+)?$")
@@ -239,10 +269,11 @@ def subs_of(rows, hdr, fml=None):
 
 
 def scan_pptx(path):
-    """→ (issues, totals)；totals = [(slide, caption, 欄名, 值)] 俾跨頁對數用。"""
+    """→ (issues, totals, pages)；
+    totals = [(slide, caption, 欄名, 值)]；pages = {版號: (敘述文字, [事實])}（餵 LLM 用）。"""
     from pptx import Presentation
     prs = Presentation(str(path))
-    issues, totals = [], []
+    issues, totals, pages = [], [], {}
     for si, sl in enumerate(prs.slides, 1):
         cap = ""
         for sh in sl.shapes:
@@ -250,6 +281,11 @@ def scan_pptx(path):
                 t = (sh.text_frame.text or "").strip()
                 if t and len(t) < 60 and not cap:
                     cap = t.replace("\n", " ")
+        narr = " ".join(
+            (sh.text_frame.text or "").strip().replace("\n", " ")
+            for sh in sl.shapes
+            if sh.has_text_frame and len((sh.text_frame.text or "").strip()) > 30)
+        facts = []
         for sh in sl.shapes:
             if not getattr(sh, "has_table", False):
                 continue
@@ -264,13 +300,75 @@ def scan_pptx(path):
                 issues.append({**x, "page": si, "caption": cap})
             for ri in range(hdr, len(rows)):
                 lab = row_label(rows[ri])
-                if lab.strip() in _TOTAL_EXACT:
+                if lab.strip() in _TOTAL_EXACT or lab.endswith(_SUBTOT_SUF):
+                    grand = lab.strip() in _TOTAL_EXACT
                     for c in range(len(rows[ri])):
                         v = parse_num(rows[ri][c])
                         col = subs[c] if c < len(subs) else ""
-                        if v is not None and col and "率" not in col and "比例" not in col:
+                        if v is None or not col:
+                            continue
+                        rate = "率" in col or "比例" in col
+                        if grand and not rate:
                             totals.append((si, cap, col, v))
-    return issues, totals
+                        facts.append({"page": si, "cap": cap, "row": lab, "col": col,
+                                      "val": v, "rate": rate})
+        if narr and facts:
+            pages[si] = (narr[:1800], facts)
+    return issues, totals, pages
+
+
+# ── LLM 層（只做閱讀／配對，計數一律 Python）────────────────────────────
+def _fact_lines(facts, with_page=False):
+    return "\n".join(
+        f"[{i}] " + (f"p{f['page']} " if with_page else "")
+        + f"{f['cap'][:26]}｜{f['row']}｜{f['col']}＝"
+        + (f"{f['val']*100:.1f}%" if f["rate"] else f"{f['val']:,.0f}")
+        for i, f in enumerate(facts, 1))
+
+
+def llm_claims(wb, doc, page, narr, facts, model=None):
+    """敘述文字 vs 表：LLM 配對，Python 驗數。→ issues"""
+    r = wb.chat_json(f"《{doc}》第 {page} 頁。\n\n【敘述文字】\n{narr}\n\n"
+                     f"【事實清單】\n{_fact_lines(facts)}", system=SYS_CLAIM,
+                     model=model, reasoning_effort="high")
+    out = []
+    for c in (r or {}).get("claims", []) or []:
+        try:
+            f = facts[int(c["fact"]) - 1]
+            said = float(c["value"])
+        except Exception:
+            continue
+        unit = str(c.get("unit", "萬"))
+        if f["rate"]:
+            said_w, real, tol, pct = said / 100.0, f["val"], 0.0015, True
+        else:
+            said_w = said * _UNIT.get(unit, 1.0)
+            real, pct = f["val"], False
+            # 億 只印到 1 位小數 → 容差要跟返嗰個精度（0.05億 = 500萬）
+            tol = max(tol_of([real]), 500.0 if unit == "億" else 1.0)
+        if abs(said_w - real) > tol:
+            out.append({"page": page, "caption": f["cap"], "kind": "文表",
+                        "row": f"「{str(c.get('quote', ''))[:22]}」", "col": f"{f['row']}·{f['col']}",
+                        "rule": "敘述 vs 表", "got": said_w, "want": real, "pct": pct})
+    return out
+
+
+def llm_pairs(wb, doc, facts, model=None):
+    """LLM 提出邊幾對合計【應該相等】→ Python 逐對比。→ checked"""
+    r = wb.chat_json(f"《{doc}》全份報告嘅合計清單：\n{_fact_lines(facts, True)}",
+                     system=SYS_PAIR, model=model, reasoning_effort="high")
+    out = []
+    for pr in (r or {}).get("pairs", []) or []:
+        try:
+            a_, b_ = facts[int(pr["a"]) - 1], facts[int(pr["b"]) - 1]
+        except Exception:
+            continue
+        d = a_["val"] - b_["val"]
+        out.append({"name": f"（LLM）{str(pr.get('why', ''))[:20]}",
+                    "left": (a_["page"], f"{a_['cap'][:16]}·{a_['col']}", a_["val"]),
+                    "right": (b_["page"], f"{b_['cap'][:16]}·{b_['col']}", b_["val"]),
+                    "diff": d, "ok": abs(d) <= max(1.0, abs(a_["val"]) * 0.001)})
+    return out
 
 
 # ③ 跨表【應該相等】嘅關係（報告結構決定，唔係估）。每條 = (名, 左邊, 右邊)，
@@ -322,6 +420,9 @@ def write_md(path, src, issues, checked, ref, npages):
          f"- 跨表關係：驗咗 {len(checked)} 條，**{len(bad_x)}** 條唔 tie", ""]
     if not issues:
         L += ["✅ 表內橫向／直向加總全部 tie。", ""]
+    else:
+        L += ["> 類型：**橫向**＝跟表頭公式行逐行驗｜**直向**＝小計／合計加總｜"
+              "**文表**＝敘述文字講嘅數 vs 表上嘅數（LLM 負責配對，數值一律 Python 比）。", ""]
     cur = None
     for x in sorted(issues, key=lambda x: (x["page"], x["kind"], x["row"])):
         if x["page"] != cur:
@@ -357,6 +458,10 @@ def main():
     ap = argparse.ArgumentParser(description="掃 folder 入面嘅 pptx，驗表內／跨頁數字 tie 唔 tie")
     ap.add_argument("--dir", default=DEFAULT_DIR, help=f"要掃嘅資料夾（預設 {DEFAULT_DIR}）")
     ap.add_argument("--no-docx", action="store_true", help="淨係出 md")
+    ap.add_argument("--no-llm", action="store_true", help="淨係機械檢查，唔叫 API")
+    ap.add_argument("--workers", type=int, default=4, help="LLM 並行數（同 build_report 一致）")
+    ap.add_argument("--model", default=None)
+    ap.add_argument("--fresh", action="store_true", help="唔用 cache")
     a = ap.parse_args()
 
     root = Path(a.dir)
@@ -370,17 +475,86 @@ def main():
         print(f"✗ {root.resolve()} 入面搵唔到 pptx"); return
     outdir = root / OUT_SUB
     outdir.mkdir(exist_ok=True)
-    print(f"── 掃 {root.resolve()}：{len(files)} 個檔（全機械計算，冇 LLM）")
+    cachef = outdir / CACHE
+    cache = {}
+    if not a.fresh and cachef.exists():
+        try:
+            cache = json.loads(cachef.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+    wb = None
+    if not a.no_llm:
+        try:
+            from kpi.lib.workbench import Workbench
+            wb = Workbench(model=a.model)
+            if not wb.config_masked().get("key_ok"):
+                print("  ⚠ 冇 workbench api key → 淨係跑機械檢查"); wb = None
+            else:
+                wb.ping()
+        except Exception as e:
+            print(f"  ⚠ LLM 連唔到（{str(e)[:110]}）→ 淨係跑機械檢查"); wb = None
+    print(f"── 掃 {root.resolve()}：{len(files)} 個檔"
+          f"｜機械檢查一定行｜LLM {'開' if wb else '關'}（只做閱讀配對，計數 Python 做）")
 
-    summary = []
-    for f in tqdm(files, desc="對數", unit="檔", ncols=76):
+    # ── 第一浸：全部檔跑機械層 ──
+    docs = []
+    for f in tqdm(files, desc="機械對數", unit="檔", ncols=76):
         try:
             from pptx import Presentation
             npages = len(Presentation(str(f)).slides)
-            issues, totals = scan_pptx(f)
+            issues, totals, pages = scan_pptx(f)
         except Exception as e:
             tqdm.write(f"  ✗ {f.name}：{str(e)[:140]}"); continue
         checked, ref = cross_page(totals)
+        docs.append({"file": f, "npages": npages, "issues": issues,
+                     "checked": checked, "ref": ref, "pages": pages,
+                     "tot_facts": [{"page": s_, "cap": c_, "row": "合計", "col": col,
+                                    "val": v, "rate": False} for s_, c_, col, v in totals]})
+
+    # ── 第二浸：LLM（逐版「文表對照」+ 每份「應該相等」）—— 一條 task list、一條 bar ──
+    if wb:
+        tasks = []
+        for di, d in enumerate(docs):
+            doc = d["file"].stem
+            for pi, (narr, facts) in d["pages"].items():
+                k = f"claim|{doc}|{pi}|" + hashlib.sha1(
+                    (narr + _fact_lines(facts)).encode("utf-8")).hexdigest()[:16]
+                tasks.append(("claim", di, doc, pi, narr, facts, k))
+            if d["tot_facts"]:
+                k = f"pair|{doc}|" + hashlib.sha1(
+                    _fact_lines(d["tot_facts"], True).encode("utf-8")).hexdigest()[:16]
+                tasks.append(("pair", di, doc, 0, "", d["tot_facts"], k))
+        todo = [t for t in tasks if t[-1] not in cache]
+        for kind, di, _doc, pi, _n, _f, k in tasks:
+            if k in cache:
+                (docs[di]["issues"] if kind == "claim" else docs[di]["checked"]).extend(cache[k])
+        if todo:
+            bar = _Ticker(tqdm(total=len(todo), desc="LLM 對照", unit="項", ncols=80,
+                               mininterval=0.5))
+            with ThreadPoolExecutor(max_workers=a.workers) as ex:
+                fut = {}
+                for kind, di, doc, pi, narr, facts, k in todo:
+                    fn = (llm_claims if kind == "claim" else llm_pairs)
+                    args = ((wb, doc, pi, narr, facts, a.model) if kind == "claim"
+                            else (wb, doc, facts, a.model))
+                    fut[ex.submit(fn, *args)] = (kind, di, doc, pi, k)
+                for fu in as_completed(fut):
+                    kind, di, doc, pi, k = fut[fu]
+                    try:
+                        res = fu.result()
+                        cache[k] = res
+                        (docs[di]["issues"] if kind == "claim"
+                         else docs[di]["checked"]).extend(res)
+                    except Exception as e:
+                        tqdm.write(f"    ⚠ {doc} p{pi} LLM 失敗：{str(e)[:100]}")
+                    bar.update(1)
+            bar.close()
+            cachef.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+
+    summary = []
+    for d in docs:
+        f, npages = d["file"], d["npages"]
+        issues, checked, ref = d["issues"], d["checked"], d["ref"]
         md = outdir / f"{f.stem}.md"
         write_md(md, f, issues, checked, ref, npages)
         if not a.no_docx:
