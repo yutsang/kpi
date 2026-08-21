@@ -63,14 +63,20 @@ CACHE = ".num_cache.json"
 # ★ 分工死線：LLM 淨係做【閱讀同配對】—— 邊句敘述講緊表入面邊個數。
 #   加減乘除、比大細、換算單位，全部 Python 做。LLM 永遠唔會計數。
 SYS_CLAIM = (
-    "你係財務報告校對員。俾你一版嘅【敘述文字】同埋嗰版表格入面嘅【事實清單】（已編號）。"
-    "任務：揾出敘述文字入面每一個【引用緊表格數字】嘅講法，指出佢對應邊個事實編號，"
-    "同埋佢喺文字入面聲稱嘅數值（照抄，唔好自己計）。\n"
-    "★ 唔好做算術、唔好推算、唔好改寫數字 —— 你只係負責配對。\n"
-    "★ 配唔到任何事實嘅講法唔好報。純粹描述性、冇數字嘅句子唔好報。\n"
-    "★ 單位照抄原文（億／萬／個／%）。\n"
-    '回覆純 JSON：{"claims":[{"quote":"<原文片段,20字內>","fact":<事實編號int>,'
-    '"value":<數字>,"unit":"億|萬|個|%"}]}　冇就 {"claims":[]}'
+    "你係財務報告校對員。俾你【一版】嘅敘述文字同埋嗰版表格入面嘅【事實清單】（已編號）。"
+    "做兩件事：\n\n"
+    "A【文表對照】揾出敘述文字入面每一個【引用緊表格數字】嘅講法，指出佢對應邊個事實編號，"
+    "同埋佢喺文字入面聲稱嘅數值（照抄，唔好自己計）。單位照抄原文（億／萬／個／%）。"
+    "配唔到事實嘅講法唔好報；冇數字嘅句子唔好報。呢一版冇敘述文字就交白卷。\n\n"
+    "B【合理性提示】喺事實清單入面揾出【數學上啱但睇落有問題】、值得人手 double check 嘅格，"
+    "例如：調整後金額變負數、完成率遠超 100%（如 273%）、調減金額大過報告金額（佔比超過 100%）、"
+    "小計係 0 但明細有數、同一版兩個應該一致嘅數唔一致。\n"
+    "每項要指明事實編號 + 一句 20 字內原因。冇把握就唔好報，寧缺勿濫。\n\n"
+    "★★ 你【唔可以做算術】—— 唔好加減乘除、唔好推算、唔好改寫數字。"
+    "你只係負責【配對】同【指出可疑】，所有計算由程式做。\n"
+    '回覆純 JSON：{"claims":[{"quote":"<原文片段,20字內>","fact":<編號int>,'
+    '"value":<數字>,"unit":"億|萬|個|%"}],'
+    '"flags":[{"fact":<編號int>,"why":"<20字內原因>"}]}'
 )
 SYS_PAIR = (
     "你係財務報告校對員。俾你一份報告入面全部【合計／總計】嘅事實清單（已編號，"
@@ -294,10 +300,14 @@ def scan_pptx(path):
             (sh.text_frame.text or "").strip().replace("\n", " ")
             for sh in sl.shapes
             if sh.has_text_frame and len((sh.text_frame.text or "").strip()) > 30)
-        facts = []
+        facts, n_tbl, spare = [], 0, []
+
+        def _row_facts(_si, _cap):
+            return spare
         for sh in sl.shapes:
             if not getattr(sh, "has_table", False):
                 continue
+            n_tbl += 1
             rows = grid_of(sh.table)
             if len(rows) < 3:
                 continue
@@ -321,7 +331,21 @@ def scan_pptx(path):
                             totals.append((si, cap, col, v))
                         facts.append({"page": si, "cap": cap, "row": lab, "col": col,
                                       "val": v, "rate": rate})
-        if narr and facts:
+            for ri in range(hdr, min(hdr + 15, len(rows))):     # 後備：明細行
+                lab = row_label(rows[ri])
+                if not lab or ri == fml:
+                    continue
+                for c in range(len(rows[ri])):
+                    v = parse_num(rows[ri][c])
+                    col = subs[c] if c < len(subs) else ""
+                    if v is not None and col:
+                        spare.append({"page": si, "cap": cap, "row": lab, "col": col,
+                                      "val": v, "rate": "率" in col or "比例" in col})
+        # 有表但一個小計／合計行都冇（例如「主要發現摘要」）→ 用明細行做事實，
+        #   唔係就嗰兩版完全冇 LLM 睇過（19 版有表得 17 版有 call）。
+        if not facts and n_tbl:
+            facts = _row_facts(si, cap)[:60]
+        if facts:                      # 只要嗰版有表就送去 LLM ——【逐版一 call】
             pages[si] = (narr[:1800], facts)
     return issues, totals, pages
 
@@ -336,11 +360,20 @@ def _fact_lines(facts, with_page=False):
 
 
 def llm_claims(wb, doc, page, narr, facts, model=None):
-    """敘述文字 vs 表：LLM 配對，Python 驗數。→ issues"""
-    r = wb.chat_json(f"《{doc}》第 {page} 頁。\n\n【敘述文字】\n{narr}\n\n"
-                     f"【事實清單】\n{_fact_lines(facts)}", system=SYS_CLAIM,
+    """逐版一 call：A 文表對照（Python 驗數）＋ B 合理性提示。→ [issues…] + [flags…]"""
+    r = wb.chat_json(f"《{doc}》第 {page} 頁。\n\n【敘述文字】\n{narr or '（呢版冇敘述文字，做 B 就夠）'}"
+                     f"\n\n【事實清單】\n{_fact_lines(facts)}", system=SYS_CLAIM,
                      model=model, reasoning_effort="high")
     out = []
+    for g in (r or {}).get("flags", []) or []:
+        try:
+            f = facts[int(g["fact"]) - 1]
+        except Exception:
+            continue
+        out.append({"page": page, "caption": f["cap"], "flag": True,
+                    "row": f["row"], "col": f["col"],
+                    "val": (f"{f['val']*100:.1f}%" if f["rate"] else f"{f['val']:,.0f}"),
+                    "why": str(g.get("why", ""))[:40]})
     for c in (r or {}).get("claims", []) or []:
         try:
             f = facts[int(c["fact"]) - 1]
@@ -421,12 +454,13 @@ def cross_page(totals):
     return checked, {k: v for k, v in sorted(ref.items()) if len(v) > 1}
 
 
-def write_md(path, src, issues, checked, ref, npages):
+def write_md(path, src, issues, checked, ref, npages, flags=()):
     bad_x = [c for c in checked if not c["ok"]]
     L = [f"# {src.name} 數字 tie 檢查", "",
          f"- 來源：`{src.resolve()}`", f"- 頁數：{npages}",
          f"- 表內對唔上：**{len(issues)}** 處", 
-         f"- 跨表關係：驗咗 {len(checked)} 條，**{len(bad_x)}** 條唔 tie", ""]
+         f"- 跨表關係：驗咗 {len(checked)} 條，**{len(bad_x)}** 條唔 tie",
+         f"- 合理性提示（LLM，唔算錯）：**{len(flags)}** 項", ""]
     if not issues:
         L += ["✅ 表內橫向／直向加總全部 tie。", ""]
     else:
@@ -453,6 +487,13 @@ def write_md(path, src, issues, checked, ref, npages):
             (ls, lc, lv), (rs, rc, rv) = c["left"], c["right"]
             L.append(f"| {c['name']} | p{ls} = {lv:,.0f} | p{rs} = {rv:,.0f} | "
                      f"{c['diff']:+,.0f} | {'✅ tie' if c['ok'] else '❌ 唔 tie'} |")
+    if flags:
+        L += ["", "## 合理性提示（數學上 tie，但值得人手 double check）", "",
+              "> LLM 揀出嚟嘅可疑格；數值直接抄自表格，冇經過任何計算。", "",
+              "| 頁 | 表 | 行 | 欄 | 值 | 點解可疑 |", "|---|---|---|---|---|---|"]
+        for g in sorted(flags, key=lambda x: x["page"]):
+            L.append(f"| p{g['page']} | {g['caption'][:20]} | {g['row']} | {g['col']} | "
+                     f"{g['val']} | {g['why']} |")
     if ref:
         L += ["", "## 附錄：全份文件嘅「合計／總計」一覽（參考，唔算錯）", "",
               "> 同名唔同數好正常（唔同年度／唔同口徑），要人 eyeball 有冇應該相等但唔等。", "",
@@ -517,7 +558,7 @@ def main():
         except Exception as e:
             tqdm.write(f"  ✗ {f.name}：{str(e)[:140]}"); continue
         checked, ref = cross_page(totals)
-        docs.append({"file": f, "npages": npages, "issues": issues,
+        docs.append({"file": f, "npages": npages, "issues": issues, "flags": [],
                      "checked": checked, "ref": ref, "pages": pages,
                      "tot_facts": [{"page": s_, "cap": c_, "row": "合計", "col": col,
                                     "val": v, "rate": False} for s_, c_, col, v in totals]})
@@ -538,7 +579,11 @@ def main():
         todo = [t for t in tasks if t[-1] not in cache]
         for kind, di, _doc, pi, _n, _f, k in tasks:
             if k in cache:
-                (docs[di]["issues"] if kind == "claim" else docs[di]["checked"]).extend(cache[k])
+                if kind == "claim":
+                    docs[di]["issues"] += [x for x in cache[k] if not x.get("flag")]
+                    docs[di]["flags"] += [x for x in cache[k] if x.get("flag")]
+                else:
+                    docs[di]["checked"] += cache[k]
         if todo:
             bar = _Ticker(tqdm(total=len(todo), desc="LLM 對照", unit="項", ncols=80,
                                mininterval=0.5))
@@ -554,8 +599,11 @@ def main():
                     try:
                         res = fu.result()
                         cache[k] = res
-                        (docs[di]["issues"] if kind == "claim"
-                         else docs[di]["checked"]).extend(res)
+                        if kind == "claim":
+                            docs[di]["issues"] += [x for x in res if not x.get("flag")]
+                            docs[di]["flags"] += [x for x in res if x.get("flag")]
+                        else:
+                            docs[di]["checked"] += res
                     except Exception as e:
                         tqdm.write(f"    ⚠ {doc} p{pi} LLM 失敗：{str(e)[:100]}")
                     bar.update(1)
@@ -567,7 +615,7 @@ def main():
         f, npages = d["file"], d["npages"]
         issues, checked, ref = d["issues"], d["checked"], d["ref"]
         md = outdir / f"{f.stem}.md"
-        write_md(md, f, issues, checked, ref, npages)
+        write_md(md, f, issues, checked, ref, npages, d["flags"])
         if not a.no_docx:
             try:
                 import md2doc
@@ -576,12 +624,12 @@ def main():
             except Exception as e:
                 tqdm.write(f"  ⚠ {f.name} 出唔到 docx：{str(e)[:100]}")
         summary.append((f.name, npages, len(issues),
-                        sum(1 for c in checked if not c["ok"]), len(checked)))
+                        sum(1 for c in checked if not c["ok"]), len(checked), len(d["flags"])))
 
-    print(f"\n{'檔名':<46}{'頁':>4}{'表內對唔上':>11}{'跨表唔tie':>11}")
-    print("-" * 92)
-    for name, npg, ni, nx, nt in summary:
-        print(f"{name[:44]:<46}{npg:>4}{ni:>11}{f'{nx}/{nt}':>11}")
+    print(f"\n{'檔名':<44}{'頁':>4}{'表內對唔上':>11}{'跨表唔tie':>11}{'合理性提示':>11}")
+    print("-" * 96)
+    for name, npg, ni, nx, nt, nf in summary:
+        print(f"{name[:42]:<44}{npg:>4}{ni:>11}{f'{nx}/{nt}':>11}{nf:>11}")
     print(f"\n✓ 報告寫咗落 {outdir.resolve()}")
 
 
