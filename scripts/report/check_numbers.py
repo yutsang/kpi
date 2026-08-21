@@ -1,26 +1,35 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-check_numbers.py — 數字 tie 唔 tie 檢查：掃 folder 入面全部 pptx，逐張表自己驗自己。
+check_numbers.py — 數字 tie 唔 tie 檢查：掃 folder 入面全部 pptx，驗表內同跨表嘅加總。
 
-點用（同 check_text 一樣，掉檔入 folder 就得）：
+點用（同 check_text 一樣，掉檔入 folder 就得；LLM 預設【開】）：
     python scripts\\report\\check_numbers.py            # 掃 file_check\\ → 出 md + docx
-    python scripts\\report\\check_numbers.py --dir 某資料夾
-    python scripts\\report\\check_numbers.py --no-docx  # 淨係出 md
+    python scripts\\report\\check_numbers.py --no-llm   # 淨係機械層（快、唔使 API）
+    python scripts\\report\\check_numbers.py --dir 某資料夾 --no-docx --workers 4 --fresh
 
 出：file_check\\_數字檢查\\{檔名}.md ＋ .docx ＋ console 總結表
 
-★ 全部係【機械計算】，冇 LLM —— 數字唔可以靠 LLM 加。
+★★ 分工死線：**LLM 只做「閱讀同配對」，加減乘除／比大細／換算單位一律 Python 做。**
+   LLM 永遠唔會計數 —— 咁先有佢嘅閱讀能力，又唔會出現「加錯數但睇落好合理」。
 
-三種檢查：
-  ① 橫向（跟表頭下面嗰行公式）：報告啲表本身印住 a｜1..8｜b｜c=a+b｜d=b/a，
-     直接攞嚟逐行驗。4.2 嗰啲 a¹ b¹ c¹ d¹=b¹+c¹ 一樣識。
-  ② 直向：逐個範疇加埋 =唔=小計；各小計加埋 =唔= 合計／總計。
-  ③ 跨頁：全份文件所有「合計／總計」行抽出嚟，同一個欄名喺唔同版出唔同數就標出嚟
-     （例如 1.2 總計報告投資金額 應該 = 4.1 2025年度報告投資金額）。
+機械層（永遠會行，冇 API 都行）：
+  ① 橫向：報告啲表本身印住公式行（a｜1..8｜b｜c=a+b｜d=b/a；4.2 係 a¹ b¹ c¹ d¹=b¹+c¹），
+     parse 做 letter→欄 嘅 map 再逐行代入驗。一段 code 覆蓋 1.2/1.4/2.x/4.1/4.2。
+  ② 直向：逐個範疇加埋 =唔= 小計；各小計加埋 =唔= 合計／總計。
+  ③ 跨表：CROSS_RULES 5 條報告結構決定嘅關係（1.2總計=1.4合計、2.1=2.2…）。
+
+LLM 層（--no-llm 可以關）：
+  ④ 文表對照（逐版）：餵敘述文字 + 該版表格嘅【事實清單（已編號）】，
+     LLM 答「邊句引用緊邊個事實、聲稱幾多、單位億定萬」→ Python 換算再比。
+     捉「導語寫 6.9 億但表上係 68,523 萬」呢類。億 只印 1 位小數 → 容差放寬到 500 萬。
+  ⑤ 跨表關係自動發現（每份一次）：餵全份合計清單，LLM 指出邊幾對【定義上應該相等】，
+     Python 逐對比 → 自動補足硬編嗰 5 條。
 
 容差：每格已經 round 到整數萬，所以 N 項加埋最多可以爭 N×0.5 →
-      tol = max(1, ceil(0.5×N))，另外加 0.1% 相對容差（大數用）。
+      tol = max(1, ceil(0.5×N), 0.1%)；率／比例用 0.15 個百分點。
+
+Cache：逐項按內容 hash 記喺 _數字檢查\\.num_cache.json，改過先會再問 LLM。
 """
 from __future__ import annotations
 
@@ -455,7 +464,9 @@ def write_md(path, src, issues, checked, ref, npages):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="掃 folder 入面嘅 pptx，驗表內／跨頁數字 tie 唔 tie")
+    ap = argparse.ArgumentParser(
+        description="掃 folder 入面嘅 pptx，驗數字 tie 唔 tie（機械層 + LLM 文表對照；"
+                    "LLM 預設開，只做閱讀配對，計數一律 Python）")
     ap.add_argument("--dir", default=DEFAULT_DIR, help=f"要掃嘅資料夾（預設 {DEFAULT_DIR}）")
     ap.add_argument("--no-docx", action="store_true", help="淨係出 md")
     ap.add_argument("--no-llm", action="store_true", help="淨係機械檢查，唔叫 API")
