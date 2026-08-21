@@ -10,11 +10,11 @@ check_numbers.py — 數字 tie 唔 tie 檢查：掃 folder 入面全部 pptx，
 
 出：file_check\\_數字檢查\\{檔名}.md ＋ .docx ＋ console 總結表
 
-三個層，唔會互相取代：
-  · 機械層 —— Python 自己加，穩陣、零假警報，但要靠公式行／小計字眼先驗到。
-  · LLM 配對層 —— LLM 只讀唔計（文表對照），數值一律 Python 比。
-  · LLM 驗算層 —— **叫 LLM 親自計數**（user 2026-08-21 指定），睇得明冇公式行、
-    關係唔規則嘅表；每條再由 Python 覆核係咪機械層都揾到，標明「一致／要人睇」。
+★ LLM 做主（user 2026-08-21 指定）：逐版一 call，LLM【親自計數】驗表 +
+  文表對照 + 合理性，report 出嘅就係佢嘅發現。
+  機械層仍然會行，但退做【背景覆核】—— 只用嚟喺每條 LLM 發現後面標
+  「✅ 機械層都揾到／⚠ 機械層冇揾到要人睇」，唔會喺報告佔位。
+  想連機械層自己揾到嘅都列出：--with-mech；完全唔用 LLM：--no-llm。
 
 機械層（永遠會行，冇 API 都行）：
   ① 橫向：報告啲表本身印住公式行（a｜1..8｜b｜c=a+b｜d=b/a；4.2 係 a¹ b¹ c¹ d¹=b¹+c¹），
@@ -22,12 +22,11 @@ check_numbers.py — 數字 tie 唔 tie 檢查：掃 folder 入面全部 pptx，
   ② 直向：逐個範疇加埋 =唔= 小計；各小計加埋 =唔= 合計／總計。
   ③ 跨表：CROSS_RULES 5 條報告結構決定嘅關係（1.2總計=1.4合計、2.1=2.2…）。
 
-LLM 層（--no-llm 可以關；逐版一 call，19 版有表就 19 個 call）：
-  ⓪ LLM 驗算（逐版）：成張表俾 LLM，叫佢【自己加減】驗小計／合計／橫向／完成率，
-     報返「表上寫幾多、佢計出幾多」。Python 覆核後標「✅機械層都揾到／⚠機械層冇揾到要人睇」。
-  ④ 文表對照（逐版）：餵敘述文字 + 該版表格嘅【事實清單（已編號）】，
-     LLM 答「邊句引用緊邊個事實、聲稱幾多、單位億定萬」→ Python 換算再比。
-     捉「導語寫 6.9 億但表上係 68,523 萬」呢類。億 只印 1 位小數 → 容差放寬到 500 萬。
+LLM 層（主力；19 版有表 → 19 個 call + 1 個 doc-level）：
+  ④ 逐版一 call，一次過做三件事，全部由 LLM 自己計：
+       A 驗算   —— 小計／合計／橫向公式／完成率，報「表上寫幾多、佢計出幾多」
+       B 文表   —— 敘述文字引用嘅數 vs 表上嘅數（億＝10000萬）
+       C 合理性 —— 數學上啱但睇落有問題（調整後變負數、完成率 273%…）
   ⑤ 跨表關係自動發現（每份一次）：餵全份合計清單，LLM 指出邊幾對【定義上應該相等】，
      Python 逐對比 → 自動補足硬編嗰 5 條。
 
@@ -113,6 +112,52 @@ SYS_AUDIT = (
     '回覆純 JSON：{"bad":[{"row":"<行名>","col":"<欄名>","rule":"<你用嘅算式>",'
     '"shown":<表上數字>,"computed":<你計出嚟>}]}　全部啱就 {"bad":[]}'
 )
+
+
+SYS_PAGE = (
+    "你係財務報告核數員。俾你【一版】嘅表格（逐格標好 r行c欄）同埋嗰版嘅敘述文字。"
+    "請【親自計數】，做三件事：\n\n"
+    "A【驗算】驗表入面所有加總關係：\n"
+    "  · 小計 = 佢上面嗰組明細行加埋；合計／總計 = 各小計加埋（或全部明細加埋）\n"
+    "  · 橫向：表頭下面若有公式行（a｜1..8｜b｜c=a+b｜d=b/a），逐行代入驗\n"
+    "  · 冇公式行嘅，睇欄名自己判斷（例如『合計』欄 = 前面幾條金額欄加埋）\n"
+    "  · 完成率／佔比：驗係咪 = 對應兩欄相除\n"
+    "  只報對唔上嘅；要寫低你用嘅算式、表上寫幾多、你計出嚟幾多。\n\n"
+    "B【文表對照】敘述文字引用嘅數字，同表上嘅對唔對得上（注意單位：億＝10000萬）。\n\n"
+    "C【合理性】數學上啱但睇落有問題、值得人手 double check 嘅格"
+    "（調整後變負數、完成率遠超100%、調減大過報告金額、小計 0 但明細有數…）。\n\n"
+    "★ 括號 = 負數（(1,234) 即 -1234）；「-」= 冇數，唔好當 0 去加。\n"
+    "★ 金額全部已四捨五入到整數 → 加總爭幾個單位唔算錯，唔好報。\n"
+    "★ 標題有「（2/3）」呢類嘅拆頁表，唔好驗全表總計（明細行喺第啲版）。\n"
+    "★ 冇把握就唔好報。寧缺勿濫。\n"
+    '回覆純 JSON：{"bad":[{"type":"驗算|文表|合理性","row":"<行名>","col":"<欄名>",'
+    '"rule":"<算式或原因>","shown":<表上數字>,"computed":<你計出嚟；合理性可以填同 shown 一樣>}]}'
+)
+
+
+def llm_page(wb, doc, page, cap, narr, tables, model=None):
+    """★ LLM 做主：逐版一 call，佢自己計數 + 文表對照 + 合理性。"""
+    body = "\n\n".join(f"【表 {i+1}】{cap}\n{t}" for i, t in enumerate(tables))
+    if len(body) > 14000:
+        body = body[:14000] + "\n…（過長已截）"
+    if narr:
+        body += f"\n\n【敘述文字】\n{narr}"
+    r = wb.chat_json(f"《{doc}》第 {page} 頁。\n\n{body}", system=SYS_PAGE,
+                     model=model, reasoning_effort="high")
+    out = []
+    for b_ in (r or {}).get("bad", []) or []:
+        try:
+            shown = float(b_["shown"])
+            comp = float(b_.get("computed", shown))
+        except Exception:
+            continue
+        typ = str(b_.get("type", "驗算"))
+        if typ != "合理性" and abs(shown - comp) < 1e-9:
+            continue
+        out.append({"page": page, "caption": cap, "audit": True, "type": typ,
+                    "row": str(b_.get("row", ""))[:24], "col": str(b_.get("col", ""))[:24],
+                    "rule": str(b_.get("rule", ""))[:44], "shown": shown, "computed": comp})
+    return out
 
 
 def _table_text(rows, hdr):
@@ -536,17 +581,20 @@ def recheck(a_list, mech):
     return a_list
 
 
-def write_md(path, src, issues, checked, ref, npages, flags=(), audit=()):
+def write_md(path, src, issues, checked, ref, npages, flags=(), audit=(), n_mech=0):
     bad_x = [c for c in checked if not c["ok"]]
     L = [f"# {src.name} 數字 tie 檢查", "",
          f"- 來源：`{src.resolve()}`", f"- 頁數：{npages}",
-         f"- 表內對唔上：**{len(issues)}** 處", 
+         f"- **LLM 揾到：{len(audit)} 處**"
+         f"（驗算 {sum(1 for x in audit if x.get('type') == '驗算')}"
+         f"／文表 {sum(1 for x in audit if x.get('type') == '文表')}"
+         f"／合理性 {sum(1 for x in audit if x.get('type') == '合理性')}）",
          f"- 跨表關係：驗咗 {len(checked)} 條，**{len(bad_x)}** 條唔 tie",
-         f"- LLM 驗算揾到：**{len(audit)}** 處",
-         f"- 合理性提示（LLM，唔算錯）：**{len(flags)}** 項", ""]
-    if not issues:
-        L += ["✅ 表內橫向／直向加總全部 tie。", ""]
-    else:
+         f"- 機械層背景覆核：揾到 {n_mech} 處"
+         + ("（已一齊列出）" if issues else "（唔列出，加 --with-mech 睇）"), ""]
+    if not issues and not audit:
+        L += ["✅ 冇揾到對唔上嘅數。", ""]
+    elif issues:
         L += ["> 類型：**橫向**＝跟表頭公式行逐行驗｜**直向**＝小計／合計加總｜"
               "**文表**＝敘述文字講嘅數 vs 表上嘅數（LLM 負責配對，數值一律 Python 比）。", ""]
     cur = None
@@ -571,17 +619,17 @@ def write_md(path, src, issues, checked, ref, npages, flags=(), audit=()):
             L.append(f"| {c['name']} | p{ls} = {lv:,.0f} | p{rs} = {rv:,.0f} | "
                      f"{c['diff']:+,.0f} | {'✅ tie' if c['ok'] else '❌ 唔 tie'} |")
     if audit:
-        L += ["", "## LLM 驗算（由 LLM 親自計數）", "",
+        L += ["", "## LLM 檢查結果（由 LLM 親自計數）", "",
               "> LLM 自己加減之後認為對唔上嘅格。最後一欄係【程式覆核】——",
               "> 機械層有冇喺同一位置都揾到問題。「⚠ 機械層冇揾到」＝ 可能係 LLM 睇到機械層",
               "> 捉唔到嘅關係，亦可能係 LLM 計錯，兩種都要人睇。", "",
-              "| 頁 | 表 | 行 | 欄 | LLM 用嘅算式 | 表上寫 | LLM 計出 | 差額 | 程式覆核 |",
-              "|---|---|---|---|---|---|---|---|---|"]
-        for x in sorted(audit, key=lambda x: x["page"]):
-            d = x["shown"] - x["computed"]
-            L.append(f"| p{x['page']} | {x['caption'][:16]} | {x['row']} | {x['col']} | "
-                     f"`{x['rule']}` | {x['shown']:,.0f} | {x['computed']:,.0f} | "
-                     f"**{d:+,.0f}** | {x.get('verdict', '')} |")
+              "| 頁 | 類型 | 表 | 行 | 欄 | 算式／原因 | 表上寫 | LLM 計出 | 差額 | 程式覆核 |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
+        for x in sorted(audit, key=lambda x: (x["page"], x.get("type", ""))):
+            dd = x["shown"] - x["computed"]
+            L.append(f"| p{x['page']} | {x.get('type', '驗算')} | {x['caption'][:16]} | "
+                     f"{x['row']} | {x['col']} | `{x['rule']}` | {x['shown']:,.0f} | "
+                     f"{x['computed']:,.0f} | **{dd:+,.0f}** | {x.get('verdict', '')} |")
     if flags:
         L += ["", "## 合理性提示（數學上 tie，但值得人手 double check）", "",
               "> LLM 揀出嚟嘅可疑格；數值直接抄自表格，冇經過任何計算。", "",
@@ -601,11 +649,13 @@ def write_md(path, src, issues, checked, ref, npages, flags=(), audit=()):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="掃 folder 入面嘅 pptx，驗數字 tie 唔 tie（機械層 + LLM 文表對照；"
-                    "LLM 預設開，只做閱讀配對，計數一律 Python）")
+        description="掃 folder 入面嘅 pptx 驗數字 tie 唔 tie。★ LLM 做主（逐版一 call，"
+                    "親自計數＋文表對照＋合理性）；機械層退做背景覆核。--no-llm 純機械。")
     ap.add_argument("--dir", default=DEFAULT_DIR, help=f"要掃嘅資料夾（預設 {DEFAULT_DIR}）")
     ap.add_argument("--no-docx", action="store_true", help="淨係出 md")
-    ap.add_argument("--no-llm", action="store_true", help="淨係機械檢查，唔叫 API")
+    ap.add_argument("--no-llm", action="store_true", help="唔用 LLM，退返純機械檢查")
+    ap.add_argument("--with-mech", action="store_true",
+                    help="連機械層嘅發現都一齊列出（預設 LLM 做主，機械層只做背景覆核）")
     ap.add_argument("--workers", type=int, default=4, help="LLM 並行數（同 build_report 一致）")
     ap.add_argument("--model", default=None)
     ap.add_argument("--fresh", action="store_true", help="唔用 cache")
@@ -641,7 +691,7 @@ def main():
         except Exception as e:
             print(f"  ⚠ LLM 連唔到（{str(e)[:110]}）→ 淨係跑機械檢查"); wb = None
     print(f"── 掃 {root.resolve()}：{len(files)} 個檔｜機械檢查一定行"
-          f"｜LLM {'開（文表對照＋親自驗算＋合理性）' if wb else '關'}")
+          f"｜{'★ LLM 做主（親自計數＋文表對照＋合理性），機械層背景覆核' if wb else 'LLM 關 → 純機械'}")
 
     # ── 第一浸：全部檔跑機械層 ──
     docs = []
@@ -664,14 +714,12 @@ def main():
         for di, d in enumerate(docs):
             doc = d["file"].stem
             for pi, (narr, facts, cap, ttexts) in d["pages"].items():
-                if facts:
-                    k = f"claim|{doc}|{pi}|" + hashlib.sha1(
-                        (narr + _fact_lines(facts)).encode("utf-8")).hexdigest()[:16]
-                    tasks.append(("claim", di, doc, pi, (narr, facts), k))
-                if ttexts:      # ★ LLM 親自計數驗表（user 指定）
-                    k = f"audit|{doc}|{pi}|" + hashlib.sha1(
-                        "\n".join(ttexts).encode("utf-8")).hexdigest()[:16]
-                    tasks.append(("audit", di, doc, pi, (cap, ttexts), k))
+                if not ttexts:
+                    continue
+                # ★ LLM 做主：一版一 call，佢自己計數 + 文表對照 + 合理性
+                k = f"page|{doc}|{pi}|" + hashlib.sha1(
+                    (narr + "\n".join(ttexts)).encode("utf-8")).hexdigest()[:16]
+                tasks.append(("audit", di, doc, pi, (cap, narr, ttexts), k))
             if d["tot_facts"]:
                 k = f"pair|{doc}|" + hashlib.sha1(
                     _fact_lines(d["tot_facts"], True).encode("utf-8")).hexdigest()[:16]
@@ -686,10 +734,9 @@ def main():
             with ThreadPoolExecutor(max_workers=a.workers) as ex:
                 fut = {}
                 for kind, di, doc, pi, payload, k in todo:
-                    if kind == "claim":
-                        fn, args = llm_claims, (wb, doc, pi, payload[0], payload[1], a.model)
-                    elif kind == "audit":
-                        fn, args = llm_audit, (wb, doc, pi, payload[0], payload[1], a.model)
+                    if kind == "audit":
+                        fn, args = llm_page, (wb, doc, pi, payload[0], payload[1],
+                                              payload[2], a.model)
                     else:
                         fn, args = llm_pairs, (wb, doc, payload, a.model)
                     fut[ex.submit(fn, *args)] = (kind, di, doc, pi, k)
@@ -710,8 +757,10 @@ def main():
         f, npages = d["file"], d["npages"]
         issues, checked, ref = d["issues"], d["checked"], d["ref"]
         md = outdir / f"{f.stem}.md"
-        audit = recheck(d["audit"], [x for x in issues if x.get("kind") in ("橫向", "直向")])
-        write_md(md, f, issues, checked, ref, npages, d["flags"], audit)
+        mech = [x for x in issues if x.get("kind") in ("橫向", "直向")]
+        audit = recheck(d["audit"], mech)
+        shown_mech = mech if (a.with_mech or a.no_llm) else []
+        write_md(md, f, shown_mech, checked, ref, npages, d["flags"], audit, len(mech))
         if not a.no_docx:
             try:
                 import md2doc
@@ -719,13 +768,14 @@ def main():
                                outdir / f"{f.stem}.docx", f.stem)
             except Exception as e:
                 tqdm.write(f"  ⚠ {f.name} 出唔到 docx：{str(e)[:100]}")
-        summary.append((f.name, npages, len(issues), sum(1 for c in checked if not c["ok"]),
-                        len(checked), len(audit), len(d["flags"])))
+        summary.append((f.name, npages, len(shown_mech),
+                        sum(1 for c in checked if not c["ok"]),
+                        len(checked), len(audit), len(mech)))
 
-    print(f"\n{'檔名':<40}{'頁':>4}{'機械對唔上':>11}{'LLM驗算':>9}{'跨表唔tie':>11}{'合理性':>8}")
+    print(f"\n{'檔名':<42}{'頁':>4}{'LLM揾到':>9}{'跨表唔tie':>11}{'機械層(背景)':>13}")
     print("-" * 96)
     for name, npg, ni, nx, nt, na, nf in summary:
-        print(f"{name[:38]:<40}{npg:>4}{ni:>11}{na:>9}{f'{nx}/{nt}':>11}{nf:>8}")
+        print(f"{name[:40]:<42}{npg:>4}{na:>9}{f'{nx}/{nt}':>11}{nf:>13}")
     print(f"\n✓ 報告寫咗落 {outdir.resolve()}")
 
 
