@@ -208,6 +208,42 @@ def adjustment_by_sub(df, bucket):
     return pd.DataFrame(rows)[cols]
 
 
+def finding_by_sub(df, adj_type):
+    """③ 主要發現逐版嗰張細表（對 scan p28）：
+       欄：萬澳門元 | 2025年度投資計劃 | 2024年度投資計劃期後事項 | 2023年度投資計劃期後事項 | 合計
+       行：逐個【範疇】（有金額先出）+ 合計。
+    ⚠ 只計該調整類型嘅【調整金額】，同 1.4／2.2／2.4 表嗰欄 tie 得返。"""
+    d = df.copy()
+    d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
+    d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = B.ADJ_POST
+    d = d[d["_adj"] == adj_type]
+    if d.empty:
+        return pd.DataFrame()
+    d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
+    BK = [("2025年度投資計劃", "2025年度投資計劃"),
+          ("2024年度計劃期後投資", "2024年度投資計劃期後事項"),
+          ("2023年度計劃期後投資", "2023年度投資計劃期後事項")]
+    cols = ["範疇"] + [lab for _b, lab in BK] + ["合計"]
+    rows = []
+    for sub in d.sort_values(["_scope", "_go", "_ngn", "_sub"])["_sub"].unique():
+        x = d[d["_sub"] == sub]
+        r = {"範疇": sub}
+        tot = 0.0
+        for bk, lab in BK:
+            v = round(float(x.loc[x["_bucket"] == bk, "_chg"].sum()), 1)
+            r[lab] = v; tot += v
+        r["合計"] = round(tot, 1)
+        if abs(r["合計"]) > 0.5:
+            rows.append(r)
+    if not rows:
+        return pd.DataFrame()
+    t = {"範疇": "合計"}
+    for lab in cols[1:]:
+        t[lab] = round(sum(r[lab] for r in rows), 1)
+    rows.append(t)
+    return pd.DataFrame(rows)[cols]
+
+
 def overview_formula_row(cols):
     """期後概覽表（2.1／2.3）表頭下面嗰行斜體公式：a | b | c=a+b（對 scan p20）。"""
     m = {"報告投資金額": "a", "潛在調整金額": "b", "潛在調整後投資金額": "c=a+b"}
