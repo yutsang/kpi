@@ -2082,6 +2082,43 @@ def adjustment_by_sub(df, bucket):
 
 
 # ── from build_overview_tables ──
+def finding_by_sub(df, adj_type):
+    """③ 主要發現逐版嗰張細表（對 scan p28）：
+       欄：萬澳門元 | 2025年度投資計劃 | 2024年度投資計劃期後事項 | 2023年度投資計劃期後事項 | 合計
+       行：逐個【範疇】（有金額先出）+ 合計。
+    ⚠ 只計該調整類型嘅【調整金額】，同 1.4／2.2／2.4 表嗰欄 tie 得返。"""
+    d = df.copy()
+    d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
+    d.loc[~d["_adj"].isin(ADJ7), "_adj"] = ADJ_POST
+    d = d[d["_adj"] == adj_type]
+    if d.empty:
+        return pd.DataFrame()
+    d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
+    BK = [("2025年度投資計劃", "2025年度投資計劃"),
+          ("2024年度計劃期後投資", "2024年度投資計劃期後事項"),
+          ("2023年度計劃期後投資", "2023年度投資計劃期後事項")]
+    cols = ["範疇"] + [lab for _b, lab in BK] + ["合計"]
+    rows = []
+    for sub in d.sort_values(["_scope", "_go", "_ngn", "_sub"])["_sub"].unique():
+        x = d[d["_sub"] == sub]
+        r = {"範疇": sub}
+        tot = 0.0
+        for bk, lab in BK:
+            v = round(float(x.loc[x["_bucket"] == bk, "_chg"].sum()), 1)
+            r[lab] = v; tot += v
+        r["合計"] = round(tot, 1)
+        if abs(r["合計"]) > 0.5:
+            rows.append(r)
+    if not rows:
+        return pd.DataFrame()
+    t = {"範疇": "合計"}
+    for lab in cols[1:]:
+        t[lab] = round(sum(r[lab] for r in rows), 1)
+    rows.append(t)
+    return pd.DataFrame(rows)[cols]
+
+
+# ── from build_overview_tables ──
 def overview_formula_row(cols):
     """期後概覽表（2.1／2.3）表頭下面嗰行斜體公式：a | b | c=a+b（對 scan p20）。"""
     m = {"報告投資金額": "a", "潛在調整金額": "b", "潛在調整後投資金額": "c=a+b"}
@@ -3428,7 +3465,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 17d18b9 · bundled 2026-08-17 16:57"
+BUILD_STAMP = "base 5e93ca9 · bundled 2026-08-26 09:21"
 
 
 # ── from make_report ──
@@ -4543,48 +4580,78 @@ def _finding_body(box, find, mgmt, grey=None):
 
 
 # ── from make_report ──
+def _finding_head(ent_up, adj, sub):
+    """③ 逐版導語（對 scan p28）：總額 + 三個 bucket 拆開講 + 建議剔除。"""
+    d = sub.copy()
+    d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
+    tot = abs(d["_chg"].sum())
+    seg = []
+    for bk, lab in (("2025年度投資計劃", "2025年度投資計劃報告投資金額"),
+                    ("2024年度計劃期後投資", "2024年度投資計劃期後投資金額"),
+                    ("2023年度計劃期後投資", "2023年度投資計劃期後投資金額")):
+        v = abs(d.loc[d["_bucket"] == bk, "_chg"].sum())
+        if v > 0.5:
+            seg.append(f"{lab}{v:,.0f}萬澳門元")
+    return (f"{ent_up}將{tot:,.0f}萬澳門元「{adj}」計入報告投資金額"
+            + (f"（其中{'，'.join(seg)}）" if seg else "")
+            + "。根據指引及施行細則，我們建議將這部分支出進行剔除。")
+
+
+# ── from make_report ──
 def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
-    """③ 主要發現：每 canonical 調整類型 → 受影響項目 card = navy 標題條(項目+金額) + body。
-    body 優先用 LLM 寫嘅『事項描述』（ground 住表2＋清單），管理層原話照樣保留；
-    冇 LLM 就 fallback 清單抄字（KPMG分析發現／管理層解釋）。"""
+    """③ 主要發現 —— 逐個調整類型【一版】（對 scan p28-40）：
+        「主要發現」小標 → navy 導語（總額 + 三個 bucket 拆開）
+        → caption 條「事項描述」→ 左邊「範疇 × 三個 bucket」細表 → 右邊 bullet 敘述。
+    ⚠ 之前做成【逐個項目一張 navy card】，報告冇呢種版（項目組 scan p28）。
+    項目層嘅描述（LLM／清單／表2）而家併入右欄 bullet，逐個項目一點。"""
     llm_proj = (llm or {}).get("proj", {})
     d = df.copy()
     d["_adj"] = d["調整一級"].map(CANON).fillna(d["調整一級"])
     d.loc[~d["_adj"].isin(ADJ7), "_adj"] = ADJ_POST     # 殘差＝第 8 類（同 1.4／2.2 表一致）
+    W, H = size_of(prs)
     for adj in ADJ_ALL:
         sub = d[(d["_adj"] == adj) & (pd.to_numeric(d["調整_萬"], errors="coerce") != 0)]
         if sub.empty:
             continue
-        projs = sub.groupby(["ng_scope", "dicj code"]).agg(名稱=("project", "first"),
-                             報告=("調整前_萬", "sum"), 調整=("調整_萬", "sum")).reset_index()
+        tbl = finding_by_sub(sub, adj)
+        # 右欄 bullet：逐個項目一點（金額大先），文字用 LLM／清單／表2
+        projs = sub.groupby(["ng_scope", "dicj code"]).agg(
+            名稱=("project", "first"), 報告=("調整前_萬", "sum"),
+            調整=("調整_萬", "sum")).reset_index()
         projs = projs.reindex(projs["調整"].abs().sort_values(ascending=False).index)
-        recs = []
-        for _, p in projs.iterrows():
-            nr = nlook(narr, p["ng_scope"], p["dicj code"])
-            desc = llm_proj.get(proj_key(adj, p["ng_scope"], p["dicj code"]), "")
-            if desc:      # LLM 寫嘅事項描述（ground 表2＋清單）＋ 管理層原話
-                items = [("事項描述：", desc)]
-                if nr.get("管理層解釋"):
-                    items.append(("管理層解釋：", nr["管理層解釋"]))
-            else:
-                # 標籤跟報告，唔好用清單嘅欄名（之前有啲 card 寫「KPMG分析發現」、
-                #   有啲寫「管理層解釋」做開頭，同其餘 card 嘅「事項描述」唔一致）
-                items = [(l + "：", t) for l, t in
-                         [("事項描述", nr.get("KPMG分析發現", "")),
-                          ("管理層解釋", nr.get("管理層解釋", "")),
-                          ("跨司工作組／KPMG意見", nr.get("跨司回覆", "") or nr.get("KPMG回覆", ""))] if t]
-                if not items and b2:      # 清單冇 → 用表2 抽到嘅原文頂住
-                    t2 = b2text(b2, p["ng_scope"], p["dicj code"])
-                    if t2:
-                        items = [("事項描述：", t2[:600])]
-            if not items:
-                items = [("", "清單未提供本項目之分析發現，待項目組補充。")]
-            recs.append((f"{p['dicj code']}　{str(p['名稱'])[:34]}　│　報告 "
-                         f"{fmt_money(p['報告'])}／潛在調整 {fmt_money(p['調整'])} 萬澳門元", items))
-        tot = sub["調整_萬"].sum()
-        head = (f"{ent_up} 報告的投資金額中，屬「{adj}」之潛在調減金額合計約{abs(tot):,.0f}萬澳門元，"
-                f"涉及{len(recs)}個投資項目，逐項說明如下：")
-        _cards(prs, 2, f"本年度審查工作的主要發現  |  {adj}", head, recs)
+        bul = []
+        for _, pj in projs.iterrows():
+            nr = nlook(narr, pj["ng_scope"], pj["dicj code"])
+            txt = (llm_proj.get(proj_key(adj, pj["ng_scope"], pj["dicj code"]), "")
+                   or _trim(nr.get("KPMG分析發現", "")) or _trim(nr.get("管理層解釋", ""))
+                   or (b2text(b2, pj["ng_scope"], pj["dicj code"])[:500] if b2 else ""))
+            head = (f"{pj['dicj code']}「{str(pj['名稱'])[:28]}」"
+                    f"（潛在調整 {fmt_money(pj['調整'])} 萬澳門元）：")
+            bul.append((head, txt or "待項目組補充分析發現。"))
+        crumb = f"本年度審查工作的主要發現  |  {adj}"
+        head = _finding_head(ent_up, adj, sub)
+        # 右欄裝唔晒就分版（表逐版重複，同 1.3／2.1 一樣）
+        lw = W * 0.42
+        rx = MARGIN + lw + 0.24
+        rw = W - MARGIN - rx
+        top0 = HEAD_Y + head_h(head, W)[0] + 0.10 + 0.40
+        pages = fit_prose([b for b in bul], rw, CONTENT_BOTTOM - top0,
+                            head_size=SZ_BODY_HEAD, body_size=SZ_BODY) or [bul]
+        for pi, chunk in enumerate(pages):
+            sfx = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
+            # scan p28 個「主要發現」小標 = 我哋 crumb 嗰行（crumb 仲寫埋調整類型，
+            #   資訊多過 scan，而且目錄要靠「章節 | 子題」呢個格式收集）→ 唔另外再畫，會疊字。
+            slide, W, H, top = _page(prs, 2, crumb, head + sfx)
+            top = caption_bar(slide, MARGIN, top, W - 2 * MARGIN, "事項描述")
+            if tbl is not None and not tbl.empty:
+                t2 = caption_bar(slide, MARGIN, top + 0.04, lw,
+                                   f"{ent_up} 報告投資金額中涵蓋的{adj}")
+                subs2, rows2, wid2, sup2 = _df_table(tbl.fillna(""), first_label="萬澳門元")
+                draw_table(slide, MARGIN, t2, lw, subs2, rows2, wid2, supers=sup2,
+                             font=SZ_TBL_WIDE, hfont=SZ_TBL_WIDE - 0.5, left_cols=1)
+            prose_box(slide, rx, top + 0.04, rw, CONTENT_BOTTOM - top - 0.10, chunk,
+                        head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
+            source_note(slide, W, more=(pi < len(pages) - 1))
 
 
 # ── from make_report ──
@@ -5230,7 +5297,14 @@ def main():
 
     # ③ 本年度審查工作的主要發現（報告 slide 28-40）
     S3 = "本年度審查工作的主要發現"
-    divider(prs, S3, "3")
+    # scan p27：呢版有 3.1-3.7 子項清單（逐個調整類型），唔係得個大標題
+    _d3 = sdf.copy()
+    _d3["_adj"] = _d3["調整一級"].map(CANON).fillna(_d3["調整一級"])
+    _d3.loc[~_d3["_adj"].isin(ADJ7), "_adj"] = ADJ_POST
+    _have = [t for t in ADJ_ALL
+             if abs(pd.to_numeric(_d3.loc[_d3["_adj"] == t, "調整_萬"],
+                                  errors="coerce").fillna(0).sum()) > 0.5]
+    divider(prs, S3, "3", [(f"3.{i}  {t}", "") for i, t in enumerate(_have, 1)])
     fs = finding_summary(sdf)
     if not fs.empty:
         render_generic(prs, f"{ent_up} 本年度審查工作的主要發現摘要", fs.fillna(""), sec=2,
