@@ -80,21 +80,39 @@ def _texts(slide, W):
 
 
 def _crumb(slide, W):
-    """「章節 | 子題」麵包屑（原報告固定 y≈0.50、含 ' | '）。回 (章, 子題)。"""
-    best = None
+    """一版嘅 (章, 子題)。子題優先讀【畫布外嗰個 UpSlide 章節標記】(y<0)：
+    原報告主要發現同附件嗰批版冇麵包屑，節名淨係收喺嗰度（目錄亦係靠佢生成）。
+    冇標記先退返讀 y≈0.50 嘅「章節 | 子題」麵包屑。章名喺分隔頁（≥30pt 大字）攞，
+    之後逐版帶落去 —— 由 caller 用 _scan() 串起。"""
+    marker, crumb, big = "", None, ""
     for sh in _walk(slide.shapes):
         if not sh.has_text_frame:
             continue
         t = (sh.text_frame.text or "").strip()
-        if "|" not in t and "｜" not in t:
+        if not t or any(m in t for m in MARKERS):
             continue
         y = _in(sh.top)
-        if 0.2 < y < 0.7 and (best is None or y < best[0]):
-            best = (y, t)
-    if not best:
-        return ("", "")
-    parts = re.split(r"\s*[|｜]\s*", best[1], maxsplit=1)
-    return (parts[0].strip(), parts[1].strip() if len(parts) > 1 else "")
+        if y < 0 and len(t) <= 40 and not marker:          # UpSlide 章節標記
+            marker = t
+        if ("|" in t or "｜" in t) and 0.2 < y < 0.7 and (crumb is None or y < crumb[0]):
+            crumb = (y, t)
+        if not big and 2 <= len(t) <= 30:                   # 分隔頁大標題 = 章名
+            try:
+                sz = max((r.font.size.pt for p in sh.text_frame.paragraphs
+                          for r in p.runs if r.font.size), default=0)
+            except Exception:
+                sz = 0
+            if sz >= 30:
+                big = t
+    ch = sub = ""
+    if crumb:
+        parts = re.split(r"\s*[|｜]\s*", crumb[1], maxsplit=1)
+        ch = parts[0].strip()
+        sub = parts[1].strip() if len(parts) > 1 else ""
+    return (big or ch, marker or sub, bool(big))
+
+
+BARE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
 def _nums(texts):
@@ -109,14 +127,55 @@ def _nums(texts):
     return got
 
 
+def _bare(texts):
+    """我哋表格入面嘅裸數字（單位喺欄名，唔會逐格寫「萬」）。"""
+    out = set()
+    for t in texts:
+        for m in BARE.finditer(t):
+            out.add(m.group(0).replace(",", ""))
+    return out
+
+
+def _fmt(v):
+    """3414.0 → '3414'；1.9 → '1.9'"""
+    return f"{v:.10g}"
+
+
+def _matched(key, pairs, bare):
+    """golden 一個 (數, 單位) 喺我哋度算唔算對到。
+    除咗原樣，仲要試【單位換算】—— golden 敘述寫「1.9億」，我哋表寫「19,000」（萬）；
+    golden 寫「3,414萬」，我哋表格淨寫「3,414」。呢啲係同一個數，唔應該當差異。"""
+    n, u = key
+    if key in pairs or n in bare:
+        return True
+    try:
+        v = float(n)
+    except ValueError:
+        return False
+    alts = []
+    if u == "億":
+        alts += [(_fmt(v * 10000), "萬"), (_fmt(v * 10000), None)]
+    elif u == "萬":
+        alts += [(_fmt(v / 10000), "億"), (_fmt(v / 10000), None)]
+    for a, au in alts:
+        if au and (a, au) in pairs:
+            return True
+        if au is None and a in bare:
+            return True
+    return False
+
+
 def _scan(path):
-    """→ [(版號, 章, 子題, [文字…])]"""
+    """→ [(版號, 章, 子題, [文字…])]。章名喺分隔頁定落，之後逐版帶落去
+    （原報告主要發現／附件嗰批版本身冇章名）。"""
     prs = Presentation(str(path))
     W = _in(prs.slide_width)
-    out = []
+    out, cur = [], ""
     for i, sl in enumerate(prs.slides, 1):
-        ch, sub = _crumb(sl, W)
-        out.append((i, ch, sub, _texts(sl, W)))
+        ch, sub, is_div = _crumb(sl, W)
+        if ch:
+            cur = ch
+        out.append((i, cur, "" if is_div else sub, _texts(sl, W)))
     return out
 
 
@@ -168,9 +227,10 @@ def run(gold_path, ours_path, canned_only=False):
         for ch in sorted(g_ch):
             if not ch:
                 continue
-            gn, on = _nums(g_ch[ch]), set(_nums(o_ch.get(ch, [])))
-            hit = [k for k in gn if k in on]
-            mis = [k for k in gn if k not in on]
+            gn = _nums(g_ch[ch])
+            pairs, bare = set(_nums(o_ch.get(ch, []))), _bare(o_ch.get(ch, []))
+            hit = [k for k in gn if _matched(k, pairs, bare)]
+            mis = [k for k in gn if not _matched(k, pairs, bare)]
             tot_hit += len(hit); tot_miss += len(mis)
             P(f"\n  ── {ch}　golden {len(gn)} 個數　對到 {len(hit)}　對唔到 {len(mis)}")
             if ch not in o_ch:

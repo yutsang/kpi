@@ -771,7 +771,8 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     S2 = "過往年度投資計劃在2025年繼續執行的審查跟進"
     tname = f"{ent_up} {yr}年度投資計劃於2025年申報的期後投資金額的潛在調整"
     W, H = L.size_of(prs)
-    crumb = f"{S2}  |  {yr}年度投資計劃報告投資金額的潛在調整事項匯總"
+    # 節名逐字跟原報告（diff_report ① 靠佢對版）：期後嗰兩節有「期後」兩個字
+    crumb = f"{S2}  |  {yr}年度投資計劃期後報告投資金額的潛在調整事項匯總"
     tbl = O.adjustment_by_sub(sdf, bk)
     if tbl.empty:
         tbl = _bucket_adj_table(ov)
@@ -1903,8 +1904,10 @@ def main():
     for bk in ["2024年度計劃期後投資", "2023年度計劃期後投資"]:
         ov = O.overview_by_bucket(sdf, bk, plan, cat, split)
         if not ov.empty:
+            # 節名逐字跟原報告：「2024年度【投資計劃】期後投資金額概覽」，唔係「2024年度計劃期後…」
+            sub = bk.replace("年度計劃期後投資", "年度投資計劃期後投資") + "金額概覽"
             render_generic(prs, f"{ent_up} {bk}金額概覽", ov.fillna(""), sec=1,
-                           crumb=f"{S2}  |  {bk}金額概覽",
+                           crumb=f"{S2}  |  {sub}",
                            headline=_bucket_headline(ent_up, bk, ov),
                            note="註：金額單位為萬澳門元；括號表示調減。",
                            llm=llm, tbl_id=tbl_key("期後概覽", bk))

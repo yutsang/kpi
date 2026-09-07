@@ -327,6 +327,22 @@ def head_h(headline, W, hsize=SZ_HEAD):
     return MAX_HEAD_H, hsize
 
 
+def subsec_marker(slide, crumb):
+    """畫布外嘅章節標記（原報告每版都有：x=0 y=-0.28 w=1.39 h=0.01，15pt）。
+    UpSlide 讀呢個生成目錄；原報告主要發現／附件嗰批版根本冇麵包屑，節名淨係喺呢度。
+    冇佢就砌唔到目錄，diff_report ① 亦對唔到版。"""
+    sub = re.split(r"\s*[|｜]\s*", str(crumb or ""), maxsplit=1)
+    sub = sub[1].strip() if len(sub) > 1 else str(crumb or "").strip()
+    if not sub:
+        return
+    box = _tb(slide, 0.0, -0.28, 1.39, 0.01, wrap=False)
+    box.left = Emu(0)
+    box.top = Emu(int(-0.28 * 914400))
+    r = box.text_frame.paragraphs[0].add_run(); r.text = sub
+    setfont(r, 15.0, color=NAVY)
+    _name(box, "upslide:subsection")
+
+
 def content_top(headline, W, hsize=SZ_HEAD):
     """page_head() 將會回嘅內容起始 y —— 分頁前想預算可用高度就用呢個，
     唔好自己砌 HEAD_Y + head_h + 常數（會同 page_head 行開，高估可用高度而爆版）。"""
@@ -340,6 +356,7 @@ def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
     ★ 原報告【每版】內容都由 CONTENT_Y(1.55) 開始，唔跟導語浮動 —— 所以固定回 1.55，
       只有導語真係長過上限先順延（避免疊字）。"""
     put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=SZ_TITLE, bold=True, color=NAVY)
+    subsec_marker(slide, crumb)
     if not headline:
         return CONTENT_Y
     h, hsize = head_h(headline, W, hsize)
