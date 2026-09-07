@@ -330,16 +330,20 @@ def run(gold_path, ours_path, canned_only=False, entity=None):
     P("\n\n══ ③ 罐頭文字（golden 有成段 ≥60 字、我哋全份都搵唔到）")
     ours_all = "".join(t for _, _, _, tx in ours for t in tx)
     ours_all = re.sub(r"\s+", "", ours_all)
-    n = 0
+    seen = {}                       # 同一段喺 golden 連續版重複（導語）→ 合併，唔好列幾次
     for i, ch, sub, tx in gold:
         for t in tx:
             body = re.sub(r"\s+", "", t)
             if len(body) < 60 or body[:40] in ours_all:
                 continue
-            n += 1
-            P(f"\n  [golden s{i}｜{ch or '—'}｜{sub or '—'}]  {len(body)} 字")
-            P(f"    {t[:180].replace(chr(10), ' ⏎ ')}…")
-    P(f"\n  → {n} 段罐頭未接")
+            e = seen.setdefault(body[:80], {"t": t, "n": len(body), "ch": ch,
+                                            "sub": sub, "s": []})
+            e["s"].append(i)
+    for e in seen.values():
+        P(f"\n  [golden s{_rng(e['s'])}｜{e['ch'] or '—'}｜{e['sub'] or '—'}]  {e['n']} 字"
+          + ("　（重複 %d 版）" % len(e["s"]) if len(e["s"]) > 1 else ""))
+        P(f"    {e['t'][:180].replace(chr(10), ' ⏎ ')}…")
+    P(f"\n  → {len(seen)} 段罐頭未接（去重後）")
 
     txt = "\n".join(L)
     dest = Path("results") if Path("results").is_dir() else Path(".")
