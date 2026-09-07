@@ -69,6 +69,22 @@ def _say(s):
         print(s.encode(enc, "replace").decode(enc, "replace"))
 
 
+def _tee(fn, path, name):
+    """跑 fn()，output 同時出 console 同 UTF-8 檔（user 唔使自己 `>`，Windows 亦唔會炸）。"""
+    import io
+    buf, old = io.StringIO(), sys.stdout
+    sys.stdout = buf
+    try:
+        fn()
+    finally:
+        sys.stdout = old
+    txt = buf.getvalue()
+    dest = Path("results") if Path("results").is_dir() else Path(path).resolve().parent
+    (dest / name).write_text(txt, encoding="utf-8")
+    _say(txt)
+    _say(f"\n✓ 已寫 {dest / name}（UTF-8）")
+
+
 def _shape_text(sh):
     try:
         return sh.text_frame.text if sh.has_text_frame else ""
@@ -1005,7 +1021,7 @@ def main():
         elif "--range" in args:
             a, b = args[args.index("--range") + 1].split("-")
             only = set(range(int(a), int(b) + 1))
-        fmt(path, only); return
+        _tee(lambda: fmt(path, only), path, "fmt_dump.txt"); return
     if "--dump" in args:
         b = int(args[args.index("--batch") + 1]) if "--batch" in args else 0
         dump(path, with_tables="--dump-tables" in args, batch=b); return
