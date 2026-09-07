@@ -97,7 +97,8 @@ def _crumb(slide, W):
             marker = t
         if ("|" in t or "｜" in t) and 0.2 < y < 0.7 and (crumb is None or y < crumb[0]):
             crumb = (y, t)
-        if not big and 2 <= len(t) <= 30:                   # 分隔頁大標題 = 章名
+        # 分隔頁大標題 = 章名；分隔頁仲有個 48pt 嘅章號「1.」，要隔走（至少 2 個中文字）
+        if not big and 2 <= len(t) <= 30 and len(re.findall(r"[一-鿿]", t)) >= 2:
             try:
                 sz = max((r.font.size.pt for p in sh.text_frame.paragraphs
                           for r in p.runs if r.font.size), default=0)
@@ -135,6 +136,51 @@ def _bare(texts):
         for m in BARE.finditer(t):
             out.add(m.group(0).replace(",", ""))
     return out
+
+
+def source_nums(entity):
+    """掃我哋【源頭】（表2 + 投資項目清單）嘅文字，出一個數字集。
+    用嚟拆開「對唔到」：源頭有 = 我哋 pipeline 掉咗（可修）；源頭都冇 = auditor 現場
+    做出嚟嘅數（feed 冇，收唔到，唔好再追）。"""
+    import glob
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return None, None, []
+    pats = []
+    for d in ("data/表2", "data/投資項目清單"):
+        for e in {entity, entity.upper(), entity.capitalize()}:
+            pats.append(f"{d}/*{e}*.xls*")
+    files = sorted({f for p in pats for f in glob.glob(p) if "~$" not in f})
+    if not files:
+        return None, None, []
+    pairs, bare = set(), set()
+    for f in files:
+        try:
+            wb = load_workbook(f, read_only=True, data_only=True)
+        except Exception:
+            continue
+        for ws in wb.worksheets:
+            try:
+                rows = ws.iter_rows(values_only=True)
+            except Exception:
+                continue
+            for row in rows:
+                for v in row:
+                    if v is None:
+                        continue
+                    s = str(v)
+                    if not any(c.isdigit() for c in s):
+                        continue
+                    for m in NUM.finditer(s):
+                        pairs.add((m.group(1).replace(",", ""), m.group(2)))
+                    for m in BARE.finditer(s):
+                        bare.add(m.group(0).replace(",", ""))
+        try:
+            wb.close()
+        except Exception:
+            pass
+    return pairs, bare, files
 
 
 def _fmt(v):
@@ -200,9 +246,10 @@ def _norm_sub(s):
     return re.sub(r"\s+", "", s)
 
 
-def run(gold_path, ours_path, canned_only=False):
+def run(gold_path, ours_path, canned_only=False, entity=None):
     L = []
     P = L.append
+    entity = entity or re.split(r"[_.]", Path(ours_path).stem)[0].lower()
     gold, ours = _scan(gold_path), _scan(ours_path)
     P(f"### golden  {Path(gold_path).name}  {len(gold)} 版")
     P(f"### ours    {Path(ours_path).name}  {len(ours)} 版\n")
@@ -237,13 +284,19 @@ def run(gold_path, ours_path, canned_only=False):
         P(f"\n  → golden {len(g_by_sub)} 個子節，未做 {miss} 個，我哋多出 {len(extra)} 個")
 
         # ── ② 數字收斂 ───────────────────────────────────────────
+        s_pairs, s_bare, s_files = source_nums(entity)
         P("\n\n══ ② 數字收斂（golden 敘述帶單位嘅數字 → 我哋【同章】有冇同一個）")
+        if s_files:
+            P(f"   源頭掃咗 {len(s_files)} 個檔（表2＋清單）→ 對唔到嘅會標【源有】/【源冇】")
+        else:
+            P("   （搵唔到 data/表2、data/投資項目清單 → 唔標源頭）")
         g_ch, o_ch = defaultdict(list), defaultdict(list)
         for _, ch, _, tx in gold:
             g_ch[ch] += tx
         for _, ch, _, tx in ours:
             o_ch[ch] += tx
         tot_hit = tot_miss = 0
+        fixable, unfixable = [], []
         for ch in sorted(g_ch):
             if not ch:
                 continue
@@ -257,9 +310,21 @@ def run(gold_path, ours_path, canned_only=False):
                 P("     （我哋成章都未做）")
                 continue
             for k in mis:
-                P(f"     ✗ {k[0]}{k[1]}　…{gn[k]}…")
+                tag = ""
+                if s_pairs is not None:
+                    tag = "【源有】" if _matched(k, s_pairs, s_bare) else "【源冇】"
+                    (fixable if tag == "【源有】" else unfixable).append((ch, k))
+                P(f"     ✗ {tag}{k[0]}{k[1]}　…{gn[k]}…")
         P(f"\n  → 合計 對到 {tot_hit}、對唔到 {tot_miss}"
           f"（{tot_hit / max(1, tot_hit + tot_miss) * 100:.1f}% 收斂）")
+        if s_pairs is not None:
+            P(f"\n  ── 對唔到嘅拆開 ──")
+            P(f"  【源有】{len(fixable)} 個　表2／清單搵到，但我哋冇帶出報告 → 可修，呢批先係真 todo")
+            P(f"  【源冇】{len(unfixable)} 個　源頭都冇（auditor 現場／訪談得出）→ 收唔到，唔好再追")
+            if fixable:
+                P("\n  【源有】清單：")
+                for ch, k in fixable:
+                    P(f"    · [{ch}] {k[0]}{k[1]}")
 
     # ── ③ 罐頭文字 ───────────────────────────────────────────────
     P("\n\n══ ③ 罐頭文字（golden 有成段 ≥60 字、我哋全份都搵唔到）")
