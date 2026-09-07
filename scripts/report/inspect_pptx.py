@@ -1008,10 +1008,15 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-    args = [a for a in sys.argv[1:]]
+    args = ["--slide" if a == "--slides" else a for a in sys.argv[1:]]   # --slides 手誤照收
     if not args:
         print(__doc__); return
     path = args[0]
+    known = {"--layouts", "--brief", "--fmt", "--slide", "--range", "--dump", "--dump-tables",
+             "--batch", "--fonts", "--spec", "--render", "--preview"}
+    for a in args[1:]:
+        if a.startswith("--") and a not in known:
+            print(f"✗ 唔認得 {a}（可用：{' '.join(sorted(known))}）"); return
     if "--layouts" in args:
         layouts(path, brief="--brief" in args); return
     if "--fmt" in args:
