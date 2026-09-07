@@ -23,6 +23,10 @@ inspect_pptx.py — 報告 pptx 版面體檢（唔使開 PowerPoint 逐版睇）
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --spec  # 真報告嘅尺寸/字體/配色
     python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --fonts --range 10-63
                                                           # 真報告【逐個位置實際用幾多 pt】
+    python scripts\\report\\inspect_pptx.py "data\\reports\\MGM…初稿.pptx" --layouts
+                                            # master／layout 層有咩 shape（繼承落嚟嘅嘢
+                                            #   唔會出現喺 slide.shapes，--dump/--fmt 睇唔到）
+                                            #   → 知道邊啲表其實喺 master、根本唔使生成
 """
 import re
 import subprocess
@@ -856,11 +860,122 @@ def dump(path, with_tables=False, batch=0):
         print(txt)
 
 
+def _g(v):
+    """幾何：None = 由上一層繼承（placeholder 常見）。"""
+    return f"{_in(v):5.2f}" if v is not None else "  inh"
+
+
+def _sh_line(sh, i, maxtxt=60):
+    kind = str(sh.shape_type).split(" ")[0] if sh.shape_type is not None else "?"
+    ph = ""
+    if sh.is_placeholder:
+        pf = sh.placeholder_format
+        ph = f" PH[{str(pf.type).split(' ')[0]} idx={pf.idx}]"
+    out = (f"    [{i}] {kind:14s}{ph} x={_g(sh.left)} y={_g(sh.top)} "
+           f"w={_g(sh.width)} h={_g(sh.height)}")
+    if getattr(sh, "has_table", False):
+        t = sh.table
+        out += (f"  ★TABLE {len(t.rows)}x{len(t.columns)} "
+                f"欄闊={[round(_in(c.width), 2) for c in t.columns]}")
+    f = _fill_hex(sh)
+    if f:
+        out += f"  fill=#{f}"
+    txt = _shape_text(sh).replace("\n", " ⏎ ").strip()
+    if txt:
+        out += f"  「{txt[:maxtxt]}」"
+    return out
+
+
+def _tbl_peek(sh, nrow=2, w=18):
+    """繼承表嘅頭幾行內容（睇下係咪罐頭）。"""
+    t, lines = sh.table, []
+    for r in list(t.rows)[:nrow]:
+        lines.append("        " + " | ".join(c.text.strip().replace("\n", " ")[:w]
+                                             for c in r.cells))
+    if len(t.rows) > nrow:
+        lines.append(f"        …（尚有 {len(t.rows) - nrow} 行）")
+    return lines
+
+
+def layouts(path, brief=False):
+    """dump master／layout 層有咩 shape —— 由呢層繼承落嚟嘅嘢【唔會】出現喺 slide.shapes，
+    所以 --dump/--fmt 一路都睇唔到。想知「邊啲表其實喺 master、根本唔使我哋生成」就跑呢個。"""
+    prs = Presentation(str(path))
+    W, H = _in(prs.slide_width), _in(prs.slide_height)
+    slides = list(prs.slides)
+    print(f"### {Path(path).name}  {W:.2f}x{H:.2f}in  {len(slides)} 版\n")
+
+    # layout part → 用咗佢嘅 slide 版號
+    used = {}
+    for i, sl in enumerate(slides, 1):
+        used.setdefault(sl.slide_layout.part.partname, []).append(i)
+
+    inherited_tables = []
+    for mi, m in enumerate(prs.slide_masters, 1):
+        print(f"══ master {mi}　{len(m.slide_layouts)} 個 layout")
+        msp = [sh for sh in m.shapes]
+        print(f"  master 自身 shape（{len(msp)} 個，所有版都會繼承）：")
+        for i, sh in enumerate(msp, 1):
+            print(_sh_line(sh, i))
+            if getattr(sh, "has_table", False):
+                inherited_tables.append((f"master {mi}", sh, len(slides)))
+                print("\n".join(_tbl_peek(sh)))
+        for lay in m.slide_layouts:
+            u = used.get(lay.part.partname, [])
+            tag = f"← 用喺 {len(u)} 版 ({_rng(u)})" if u else "← 冇版用"
+            smsp = lay._element.get("showMasterSp")
+            note = "  [showMasterSp=0：唔顯示 master 圖形]" if smsp == "0" else ""
+            print(f"\n  ── layout「{lay.name}」  {tag}{note}")
+            if brief and not u:
+                continue
+            for i, sh in enumerate(lay.shapes, 1):
+                print(_sh_line(sh, i))
+                if getattr(sh, "has_table", False):
+                    inherited_tables.append((f"layout「{lay.name}」", sh, len(u)))
+                    print("\n".join(_tbl_peek(sh)))
+
+    print("\n\n══ 摘要 ══")
+    print(f"\n【繼承表】（喺 master／layout，slide 改唔到，但一定係固定內容）：{len(inherited_tables)} 個")
+    for src, sh, n in inherited_tables:
+        t = sh.table
+        print(f"  · {src}  {len(t.rows)}x{len(t.columns)}  → 影響 {n} 版")
+    if not inherited_tables:
+        print("  （冇 —— 即係報告全部表都係 slide 上面嘅真 shape，clone 得）")
+
+    print("\n【slide 層 showMasterSp=0】（呢啲版已經收起繼承圖形）：")
+    off = [i for i, sl in enumerate(slides, 1) if sl._element.get("showMasterSp") == "0"]
+    print("  " + (_rng(off) if off else "（冇）"))
+
+    print("\n【逐版 shape 數】slide 自身 / layout 繼承 / master 繼承　"
+          "（自身 0-2 個 = 個版幾乎全靠繼承）：")
+    for i, sl in enumerate(slides, 1):
+        lay = sl.slide_layout
+        n0, n1 = len(sl.shapes), len(lay.shapes)
+        n2 = len(lay.slide_master.shapes)
+        flag = "  ← 全靠繼承" if n0 <= 2 else ""
+        print(f"  slide {i:>3}  {n0:>3} / {n1:>3} / {n2:>3}   layout「{lay.name}」{flag}")
+
+
+def _rng(nums):
+    """[1,2,3,7,8] → '1-3,7-8'"""
+    if not nums:
+        return ""
+    out, s, p = [], nums[0], nums[0]
+    for n in nums[1:]:
+        if n == p + 1:
+            p = n; continue
+        out.append(f"{s}-{p}" if p > s else f"{s}"); s = p = n
+    out.append(f"{s}-{p}" if p > s else f"{s}")
+    return ",".join(out)
+
+
 def main():
     args = [a for a in sys.argv[1:]]
     if not args:
         print(__doc__); return
     path = args[0]
+    if "--layouts" in args:
+        layouts(path, brief="--brief" in args); return
     if "--fmt" in args:
         only = None
         if "--slide" in args:
