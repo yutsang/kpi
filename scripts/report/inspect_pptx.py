@@ -60,6 +60,15 @@ def _in(v):
     return (v or 0) / EMU_IN
 
 
+def _say(s):
+    """print 但唔會俾 Windows cp1252 炸親（`> file.txt` 重定向時 stdout 唔係 utf-8）。"""
+    try:
+        print(s)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "ascii"
+        print(s.encode(enc, "replace").decode(enc, "replace"))
+
+
 def _shape_text(sh):
     try:
         return sh.text_frame.text if sh.has_text_frame else ""
@@ -903,7 +912,9 @@ def layouts(path, brief=False):
     prs = Presentation(str(path))
     W, H = _in(prs.slide_width), _in(prs.slide_height)
     slides = list(prs.slides)
-    print(f"### {Path(path).name}  {W:.2f}x{H:.2f}in  {len(slides)} 版\n")
+    out = []                                   # 唔直接 print：Windows 重定向會用 cp1252 炸中文
+    P = out.append
+    P(f"### {Path(path).name}  {W:.2f}x{H:.2f}in  {len(slides)} 版\n")
 
     # layout part → 用咗佢嘅 slide 版號
     used = {}
@@ -912,48 +923,55 @@ def layouts(path, brief=False):
 
     inherited_tables = []
     for mi, m in enumerate(prs.slide_masters, 1):
-        print(f"══ master {mi}　{len(m.slide_layouts)} 個 layout")
+        P(f"══ master {mi}　{len(m.slide_layouts)} 個 layout")
         msp = [sh for sh in m.shapes]
-        print(f"  master 自身 shape（{len(msp)} 個，所有版都會繼承）：")
+        P(f"  master 自身 shape（{len(msp)} 個，所有版都會繼承）：")
         for i, sh in enumerate(msp, 1):
-            print(_sh_line(sh, i))
+            P(_sh_line(sh, i))
             if getattr(sh, "has_table", False):
                 inherited_tables.append((f"master {mi}", sh, len(slides)))
-                print("\n".join(_tbl_peek(sh)))
+                P("\n".join(_tbl_peek(sh)))
         for lay in m.slide_layouts:
             u = used.get(lay.part.partname, [])
             tag = f"← 用喺 {len(u)} 版 ({_rng(u)})" if u else "← 冇版用"
             smsp = lay._element.get("showMasterSp")
             note = "  [showMasterSp=0：唔顯示 master 圖形]" if smsp == "0" else ""
-            print(f"\n  ── layout「{lay.name}」  {tag}{note}")
+            P(f"\n  ── layout「{lay.name}」  {tag}{note}")
             if brief and not u:
                 continue
             for i, sh in enumerate(lay.shapes, 1):
-                print(_sh_line(sh, i))
+                P(_sh_line(sh, i))
                 if getattr(sh, "has_table", False):
                     inherited_tables.append((f"layout「{lay.name}」", sh, len(u)))
-                    print("\n".join(_tbl_peek(sh)))
+                    P("\n".join(_tbl_peek(sh)))
 
-    print("\n\n══ 摘要 ══")
-    print(f"\n【繼承表】（喺 master／layout，slide 改唔到，但一定係固定內容）：{len(inherited_tables)} 個")
+    P("\n\n══ 摘要 ══")
+    P(f"\n【繼承表】（喺 master／layout，slide 改唔到，但一定係固定內容）：{len(inherited_tables)} 個")
     for src, sh, n in inherited_tables:
         t = sh.table
-        print(f"  · {src}  {len(t.rows)}x{len(t.columns)}  → 影響 {n} 版")
+        P(f"  · {src}  {len(t.rows)}x{len(t.columns)}  → 影響 {n} 版")
     if not inherited_tables:
-        print("  （冇 —— 即係報告全部表都係 slide 上面嘅真 shape，clone 得）")
+        P("  （冇 —— 即係報告全部表都係 slide 上面嘅真 shape，clone 得）")
 
-    print("\n【slide 層 showMasterSp=0】（呢啲版已經收起繼承圖形）：")
+    P("\n【slide 層 showMasterSp=0】（呢啲版已經收起繼承圖形）：")
     off = [i for i, sl in enumerate(slides, 1) if sl._element.get("showMasterSp") == "0"]
-    print("  " + (_rng(off) if off else "（冇）"))
+    P("  " + (_rng(off) if off else "（冇）"))
 
-    print("\n【逐版 shape 數】slide 自身 / layout 繼承 / master 繼承　"
-          "（自身 0-2 個 = 個版幾乎全靠繼承）：")
+    P("\n【逐版 shape 數】slide 自身 / layout 繼承 / master 繼承　"
+      "（自身 0-2 個 = 個版幾乎全靠繼承）：")
     for i, sl in enumerate(slides, 1):
         lay = sl.slide_layout
         n0, n1 = len(sl.shapes), len(lay.shapes)
         n2 = len(lay.slide_master.shapes)
         flag = "  ← 全靠繼承" if n0 <= 2 else ""
-        print(f"  slide {i:>3}  {n0:>3} / {n1:>3} / {n2:>3}   layout「{lay.name}」{flag}")
+        P(f"  slide {i:>3}  {n0:>3} / {n1:>3} / {n2:>3}   layout「{lay.name}」{flag}")
+
+    txt = "\n".join(out)
+    dest = Path("results") if Path("results").is_dir() else Path(path).resolve().parent
+    f = dest / "layouts_dump.txt"
+    f.write_text(txt, encoding="utf-8")
+    _say(txt)
+    _say(f"\n✓ 已寫 {f}（UTF-8）")
 
 
 def _rng(nums):
@@ -970,6 +988,10 @@ def _rng(nums):
 
 
 def main():
+    try:                                       # Windows：`> file.txt` 預設 cp1252，中文會炸
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     args = [a for a in sys.argv[1:]]
     if not args:
         print(__doc__); return
