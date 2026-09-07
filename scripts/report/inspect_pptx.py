@@ -298,8 +298,11 @@ def audit(path, tol=0.02):
             if sh.has_table:
                 has_table = True
                 req, est = _table_h(sh.table)
-                if est > req + 0.05:
-                    issues.append(f"TABLE-GROW  表 requested {req:.2f}in → 估實際 {est:.2f}in")
+                # 長高咗但仲喺資料來源之上 = 冇後果（逐行 EMU 進位夾埋幾分之一寸），唔報。
+                # 只有長到壓住資料來源／出版底先係真問題。
+                if est > req + 0.05 and y + est > L.CONTENT_BOTTOM + 0.10:
+                    issues.append(f"TABLE-GROW  表 requested {req:.2f}in → 估實際 {est:.2f}in"
+                                  f"（底到 {y + est:.2f}in，壓住資料來源 {L.CONTENT_BOTTOM}in）")
                 if y + est > H + tol:
                     issues.append(f"TABLE-OVERFLOW 表底到 {y+est:.2f}in > {H:.2f}（會被切）")
             txt = _shape_text(sh)
@@ -308,7 +311,8 @@ def audit(path, tol=0.02):
                     bh, need = _text_h(sh)
                     if need > bh + 0.08 and y + need > H:
                         issues.append(f"TEXT-OVERFLOW 文字框 {bh:.2f}in → 需 {need:.2f}in（超版底）")
-                if "初稿" in txt:
+                # footer 認版權行／文檔分類（final 報告個頁碼淨係一個數字，唔再有「初稿」字樣）
+                if "©" in txt or "文檔分類" in txt or "初稿" in txt:
                     has_foot = True
                 if len(txt.strip()) > 40 and "初稿" not in txt and "©" not in txt:
                     has_prose = True
