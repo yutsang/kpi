@@ -1296,7 +1296,7 @@ ADJ7 = [
 
 
 # ── from build_project_review_table ──
-ADJ_POST = "不符合期後事項定義的投資支出"
+ADJ_POST = "不符合期後事項定義的投資金額"
 
 
 # ── from build_project_review_table ──
@@ -3504,7 +3504,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 74aeea6 · bundled 2026-09-07 14:28"
+BUILD_STAMP = "base 593ea72 · bundled 2026-09-07 14:50"
 
 
 # ── from make_report ──
@@ -4375,6 +4375,73 @@ def _move_slide(prs, frm, to):
     lst = prs.slides._sldIdLst
     ids = list(lst)
     lst.remove(ids[frm]); lst.insert(to, ids[frm])
+
+
+# ── from make_report ──
+def _load_canned(entity):
+    """conf/local/canned_{entity}.json —— extract_canned.py 由原報告抽嘅罐頭版
+    （法律聲明／呈送函／注意事項／縮寫定義／附件1 工作範圍／封底）。冇就回 None。"""
+    import json
+    for p in (Path("conf/local") / f"canned_{entity}.json",
+              Path(f"canned_{entity}.json")):
+        if p.exists():
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+                print(f"    罐頭：{p}（{len(d.get('slides', []))} 版）")
+                return d
+            except Exception as e:
+                print(f"    ⚠ 罐頭讀唔到 {p}：{e}")
+    return None
+
+
+# ── from make_report ──
+def _rgb(h):
+    if not h or len(str(h)) != 6:
+        return None
+    try:
+        return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except Exception:
+        return None
+
+
+# ── from make_report ──
+def render_canned(prs, canned, lo, hi, entity="mgm"):
+    """出返原報告嗰批純文字版（版號喺 [lo, hi] 之間）。逐個 shape 照原位置擺，
+    唔重新排版 —— 呢批版本身冇數據依賴，照抄就最準。回出咗幾多版。"""
+    if not canned:
+        return 0
+    W, H = size_of(prs)
+    n = 0
+    for s in canned.get("slides", []):
+        if not (lo <= s["n"] <= hi):
+            continue
+        slide = blank(prs)
+        for sh in s["shapes"]:
+            if sh["kind"] == "text":
+                put(slide, sh["x"], sh["y"], sh["w"], sh["h"], sh["text"],
+                      size=sh.get("size") or SZ_BODY, bold=sh.get("bold", False),
+                      color=_rgb(sh.get("color")) or INK)
+                continue
+            cells, colw = sh["cells"], sh["colw"]
+            if not cells or not colw:
+                continue
+            tbl = slide.shapes.add_table(len(cells), len(colw), Inches(sh["x"]),
+                                         Inches(sh["y"]), Inches(sh["w"]),
+                                         Inches(sh["h"])).table
+            tbl.first_row = False; tbl.horz_banding = False
+            for ci, cw in enumerate(colw):
+                tbl.columns[ci].width = Inches(cw)
+            for ri, row in enumerate(cells):
+                for ci, c in enumerate(row[:len(colw)]):
+                    set_cell(tbl.cell(ri, ci), c.get("t", ""),
+                               size=c.get("size") or SZ_TBL, bold=c.get("bold", False),
+                               fill=_rgb(c.get("fill")), align=PP_ALIGN.LEFT,
+                               color=_rgb(c.get("fg")))
+        if s.get("marker"):
+            subsec_marker(slide, s["marker"])
+        footer(slide, W, H, len(prs.slides._sldIdLst))
+        n += 1
+    return n
 
 
 # ── from make_report ──
@@ -5258,6 +5325,8 @@ def main():
     sdf = _load(feed, entity)     # 於2025發生 slice（概述 + 金額匯總 共用）
 
     render_cover(prs, entity)       # 封面（報告 p1）
+    canned = _load_canned(entity)
+    n_front = render_canned(prs, canned, 2, 7, entity)   # 致未授權者／呈送函／注意事項／縮寫定義
 
     # ① 2025年度投資計劃執行情況概述（報告 slide 8-18）
     S1 = "2025年度投資計劃執行情況概述"
@@ -5400,13 +5469,18 @@ def main():
                    entity)                      # 報告 slide 101 藝術品展出情況清單
 
     # 目錄（報告 slide 7）：起完全部版先知頁碼 → 砌好插去第 2 版，再全份重編頁碼
+    n_app = render_canned(prs, canned, 80, 999, entity)   # 附件1 工作範圍 + 封底
+    if n_app:
+        print(f"    罐頭附件：{n_app} 版")
+
     _W, _H = size_of(prs)
     toc = _collect_toc(prs, _W, _H)
     if toc:
         n0 = len(prs.slides._sldIdLst)
         render_toc(prs, ent_up, toc)
+        # 目錄擺喺前置罐頭之後（原報告：封面→致未授權者→呈送函→注意事項→縮寫定義→目錄）
         for k in range(len(prs.slides._sldIdLst) - n0):        # 目錄可能多過一版
-            _move_slide(prs, n0 + k, 1 + k)
+            _move_slide(prs, n0 + k, 1 + n_front + k)
         _renumber_footers(prs, _W, _H)
         print(f"    目錄：{sum(1 for e in toc if not e[2])} 章 / {sum(1 for e in toc if e[2])} 子項")
     wire_nav(prs, _sec_slides(prs, _W, _H), home=1 if toc else 0)   # ◀⌂▶ + 頁籤內部跳頁

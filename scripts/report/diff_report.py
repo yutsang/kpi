@@ -21,6 +21,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
 import re
 import sys
 from collections import defaultdict
+from difflib import SequenceMatcher as SM
 from pathlib import Path
 
 try:
@@ -162,6 +163,19 @@ def _matched(key, pairs, bare):
             return True
         if au is None and a in bare:
             return True
+    # golden 寫「約7.0億」係約數 —— 我哋表出 69,860（萬）就應該當對到。
+    # 只有【明寫小數】嘅先開容差（3,414萬 呢類整數仍然要一模一樣）。
+    if "." in n:
+        dec = len(n.split(".")[1])
+        for b in bare:
+            try:
+                bv = float(b)
+            except ValueError:
+                continue
+            if u == "億" and round(bv / 10000, dec) == v:
+                return True
+            if u in ("萬", "%") and round(bv, dec) == v:
+                return True
     return False
 
 
@@ -204,14 +218,20 @@ def run(gold_path, ours_path, canned_only=False):
 
     if not canned_only:
         P("══ ① 章節對照（golden 每個子節 → 我哋出咗未）")
-        miss = 0
+        miss, near = 0, set()
         for (ch, sub), gi in g_by_sub.items():
-            oi = o_by_sub.get(sub, [])
-            mark = "✓" if oi else "✗ 未做"
+            oi, note = o_by_sub.get(sub, []), ""
+            if not oi:                                  # 差一兩個字（簡繁／用詞）都當對到，另外標出嚟改
+                cand = max(o_by_sub, key=lambda s: SM(None, sub, s).ratio(), default=None)
+                if cand and SM(None, sub, cand).ratio() >= 0.8:
+                    oi, note = o_by_sub[cand], f"　⚠ 我哋叫「{cand}」"
+                    near.add(cand)
+            mark = "✓" if (oi and not note) else ("≈ 名唔同" if oi else "✗ 未做")
             miss += 0 if oi else 1
             P(f"  {mark}  [{ch}] {sub}"
-              f"　golden {_rng(gi)}　→ 我哋 {_rng(oi) if oi else '—'}")
-        extra = [s for s in o_by_sub if not any(s == k[1] for k in g_by_sub)]
+              f"　golden {_rng(gi)}　→ 我哋 {_rng(oi) if oi else '—'}{note}")
+        extra = [s for s in o_by_sub
+                 if s not in near and not any(s == k[1] for k in g_by_sub)]
         for s in extra:
             P(f"  +   我哋多咗：{s}　({_rng(o_by_sub[s])})")
         P(f"\n  → golden {len(g_by_sub)} 個子節，未做 {miss} 個，我哋多出 {len(extra)} 個")
