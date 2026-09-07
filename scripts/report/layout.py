@@ -4,8 +4,15 @@
 layout.py — 報告 pptx 版式引擎（KPMG house style）。全部版式常數集中喺呢度，
 make_report / render_review_table_pptx 只負責「派數字」，唔再各自砌 formatting。
 
-版式對齊 mgm_2025_report scan（10.83 x 7.5 in、每版：頂 breadcrumb → 灰色「章節 | 子題」
-→ navy 粗體導語 → navy caption bar + 表／敘述 → 資料來源 → footer）。
+版式對齊 MGM 2025 final 報告 pptx（10.83 x 7.5 in）。2026-09-07 由 `inspect_pptx --fmt`
+逐 109 版實測校準，唔再係掃描件目測值。每版：頂 nav → 「章節 | 子題」(y=0.50, 12pt)
+→ navy 導語 (y=0.70) → 內容【固定由 y=1.55 起】→ 資料來源 (y=6.72) → footer (y=6.85)。
+
+★ 兩種表要分清楚：
+  · 敘述框表（事項描述／附件工作範圍／現場走訪）＝ 原報告 native，表頭底 00338D、
+    全表 9pt、框線 00338D 虛線。
+  · 數字表 ＝ 原報告係 Tableau 截圖，冇 native 版可抄；表頭沿用項目組指定 1E49E2／098E7E。
+    （user 2026-09-07 拍板：我哋出 native 表，唔複製截圖。）
 
 顏色跟 KPMG Visual identity overview（品牌手冊）：
     Primary   KPMG Blue 00338D｜Medium Blue 005EB8｜Light Blue 0091DA
@@ -63,11 +70,11 @@ FONT_HEAD = "KPMG Bold"                     # 標題 latin（中文照樣行 ea�
 #     （報告 1.3 有 4 版、1.4 有 3 版，我哋之前一版塞晒）。
 SZ_CRUMB = 7.0      # ① 頂 breadcrumb（scan 睇落細，唔跟 body）
 SZ_TITLE = 12.0     # ② 章節｜子題
-SZ_HEAD = 13.0      # ③ 導語 strapline
+SZ_HEAD = 12.0      # ③ 導語 strapline（1.x／2.x／3.x 全部 12pt；4.x／附件見 HEAD_SIZE）
 SZ_BODY = 9.0       # ④ 內文 body（prose 段落）
 SZ_BODY_HEAD = 9.5  # ④ 內文小標題
-SZ_TBL = 7.5        # 表身（一般表；真報告 native 表 9pt，但佢哋大表係圖）
-SZ_TBL_HDR = 7.0    # 表頭
+SZ_TBL = 9.0        # 表身（final 報告 native 表【全部】9pt —— 2026-09-07 --fmt 實測）
+SZ_TBL_HDR = 9.0    # 表頭（同樣 9pt，白色粗體、底 00338D）
 SZ_TBL_WIDE = 6.0   # 表身（>16 欄嘅大表，9pt 塞唔落 18 欄）
 SZ_CAPTION = 7.5    # 表頂 navy caption bar
 SZ_NOTE = 7.0       # ⑤ 資料來源 / 註
@@ -80,11 +87,16 @@ SLIDE_H = 7.5
 # 版面錨點（吋）
 MARGIN = 0.53          # template 實測：內容 x=0.53、闊 9.76（--spec）
 COL_GAP = 0.21         # template 兩欄 gap 實測
-CRUMB_Y = 0.13
-SUBTITLE_Y = 0.34
-HEAD_Y = 0.56
-FOOT_Y = 7.16
-CONTENT_BOTTOM = 6.98                       # 內容最底（資料來源之上）
+# ★ 以下 y 全部由 final 報告 109 版逐版量（inspect_pptx --fmt，2026-09-07），唔再係 scan 估值。
+CRUMB_Y = 0.10         # 頂 nav 條（原報告係 UpSlide GROUP y=0.10 h=0.21）
+SUBTITLE_Y = 0.50      # 「章 | 節」 12pt（原報告 x=0.53 y=0.50 w=9.76 h=0.17）
+HEAD_Y = 0.70          # 導語 strapline（原報告 y=0.62~0.80，h≈0.84）
+CONTENT_Y = 1.55       # ★ 內容起始線 —— 原報告【每一版】表／文字都由 1.53~1.58 開始
+FOOT_Y = 6.85          # 版權行（原報告 © y=6.85、頁碼 y=6.84、文檔分類 y=6.88）
+CONTENT_BOTTOM = 6.72  # 資料來源 pin 底時嘅 y（原報告 6.72~6.74）
+
+# 導語字號按章節（原報告實測）：概述／期後／主要發現 12pt，4.x 大細唔同，附件最大。
+HEAD_SIZE = {0: 12.0, 1: 12.0, 2: 12.0, 3: 18.0, 4: 18.0, 5: 24.0}
 
 SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
             "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
@@ -286,19 +298,21 @@ def wire_nav(prs, sec_slide=None, home=0):
 
 
 def footer(slide, W, H, page):
-    """底：KPMG 字標 + 版權 + 初稿/頁碼（對 scan）。"""
-    kb = _tb(slide, MARGIN - 0.23, H - 0.34, 0.7, 0.22)
+    """底：KPMG 字標 + 版權 + 文檔分類 + 頁碼。
+    位置對 final 報告 master（© x=1.68 y=6.85、文檔分類 x=7.97 y=6.88、頁碼 x=9.73 y=6.84）。"""
+    kb = _tb(slide, MARGIN, FOOT_Y, 0.7, 0.22)
     kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
     setfont(kr, 11, bold=True, italic=True, color=NAVY)
-    put(slide, MARGIN + 0.5, H - 0.30, W - 2.2, 0.2,
+    put(slide, 1.68, FOOT_Y, 5.74, 0.2,
         "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。",
         size=SZ_FOOT, color=LGREY)
+    put(slide, 7.97, FOOT_Y + 0.03, 1.66, 0.16, "文檔分類: 保密", size=SZ_FOOT, color=LGREY)
     if page is not None:
-        put(slide, W - 1.15, H - 0.32, 0.95, 0.2, f"初稿　{page}", size=SZ_PAGE, bold=True,
+        put(slide, W - 1.15, FOOT_Y, 0.95, 0.2, str(page), size=SZ_PAGE, bold=True,
             color=NAVY, align=PP_ALIGN.RIGHT)
 
 
-MAX_HEAD_H = 1.35      # 導語最多食呢咁多高（scan 一般 2-4 行）；再長就縮字，唔可以食晒成版
+MAX_HEAD_H = 0.85      # 導語高度上限：HEAD_Y 0.70 + 0.85 = 1.55 ＝ 原報告內容起始線
 
 
 def head_h(headline, W, hsize=SZ_HEAD):
@@ -313,17 +327,27 @@ def head_h(headline, W, hsize=SZ_HEAD):
     return MAX_HEAD_H, hsize
 
 
+def content_top(headline, W, hsize=SZ_HEAD):
+    """page_head() 將會回嘅內容起始 y —— 分頁前想預算可用高度就用呢個，
+    唔好自己砌 HEAD_Y + head_h + 常數（會同 page_head 行開，高估可用高度而爆版）。"""
+    if not headline:
+        return CONTENT_Y
+    return max(CONTENT_Y, HEAD_Y + head_h(headline, W, hsize)[0] + 0.06)
+
+
 def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
-    """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。"""
+    """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。
+    ★ 原報告【每版】內容都由 CONTENT_Y(1.55) 開始，唔跟導語浮動 —— 所以固定回 1.55，
+      只有導語真係長過上限先順延（避免疊字）。"""
     put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=SZ_TITLE, bold=True, color=NAVY)
     if not headline:
-        return HEAD_Y + 0.06
+        return CONTENT_Y
     h, hsize = head_h(headline, W, hsize)
     box = _tb(slide, MARGIN, HEAD_Y, W - 2 * MARGIN, h)
     p = box.text_frame.paragraphs[0]
     r = p.add_run(); r.text = str(headline)
     setfont(r, hsize, bold=True, color=NAVY, heading=True)
-    return HEAD_Y + h + 0.10
+    return max(CONTENT_Y, HEAD_Y + h + 0.06)
 
 
 def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):

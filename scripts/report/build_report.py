@@ -113,7 +113,7 @@ SZ_TITLE = 12.0
 
 
 # ── from layout ──
-SZ_HEAD = 13.0
+SZ_HEAD = 12.0
 
 
 # ── from layout ──
@@ -125,11 +125,11 @@ SZ_BODY_HEAD = 9.5
 
 
 # ── from layout ──
-SZ_TBL = 7.5
+SZ_TBL = 9.0
 
 
 # ── from layout ──
-SZ_TBL_HDR = 7.0
+SZ_TBL_HDR = 9.0
 
 
 # ── from layout ──
@@ -169,23 +169,31 @@ COL_GAP = 0.21
 
 
 # ── from layout ──
-CRUMB_Y = 0.13
+CRUMB_Y = 0.10
 
 
 # ── from layout ──
-SUBTITLE_Y = 0.34
+SUBTITLE_Y = 0.50
 
 
 # ── from layout ──
-HEAD_Y = 0.56
+HEAD_Y = 0.70
 
 
 # ── from layout ──
-FOOT_Y = 7.16
+CONTENT_Y = 1.55
 
 
 # ── from layout ──
-CONTENT_BOTTOM = 6.98
+FOOT_Y = 6.85
+
+
+# ── from layout ──
+CONTENT_BOTTOM = 6.72
+
+
+# ── from layout ──
+HEAD_SIZE = {0: 12.0, 1: 12.0, 2: 12.0, 3: 18.0, 4: 18.0, 5: 24.0}
 
 
 # ── from layout ──
@@ -408,20 +416,22 @@ def wire_nav(prs, sec_slide=None, home=0):
 
 # ── from layout ──
 def footer(slide, W, H, page):
-    """底：KPMG 字標 + 版權 + 初稿/頁碼（對 scan）。"""
-    kb = _tb(slide, MARGIN - 0.23, H - 0.34, 0.7, 0.22)
+    """底：KPMG 字標 + 版權 + 文檔分類 + 頁碼。
+    位置對 final 報告 master（© x=1.68 y=6.85、文檔分類 x=7.97 y=6.88、頁碼 x=9.73 y=6.84）。"""
+    kb = _tb(slide, MARGIN, FOOT_Y, 0.7, 0.22)
     kr = kb.text_frame.paragraphs[0].add_run(); kr.text = "KPMG"
     setfont(kr, 11, bold=True, italic=True, color=NAVY)
-    put(slide, MARGIN + 0.5, H - 0.30, W - 2.2, 0.2,
+    put(slide, 1.68, FOOT_Y, 5.74, 0.2,
         "© 2026畢馬威會計師事務所 — 澳門特別行政區合夥制事務所。版權所有，不得轉載。",
         size=SZ_FOOT, color=LGREY)
+    put(slide, 7.97, FOOT_Y + 0.03, 1.66, 0.16, "文檔分類: 保密", size=SZ_FOOT, color=LGREY)
     if page is not None:
-        put(slide, W - 1.15, H - 0.32, 0.95, 0.2, f"初稿　{page}", size=SZ_PAGE, bold=True,
+        put(slide, W - 1.15, FOOT_Y, 0.95, 0.2, str(page), size=SZ_PAGE, bold=True,
             color=NAVY, align=PP_ALIGN.RIGHT)
 
 
 # ── from layout ──
-MAX_HEAD_H = 1.35
+MAX_HEAD_H = 0.85
 
 
 # ── from layout ──
@@ -438,17 +448,28 @@ def head_h(headline, W, hsize=SZ_HEAD):
 
 
 # ── from layout ──
+def content_top(headline, W, hsize=SZ_HEAD):
+    """page_head() 將會回嘅內容起始 y —— 分頁前想預算可用高度就用呢個，
+    唔好自己砌 HEAD_Y + head_h + 常數（會同 page_head 行開，高估可用高度而爆版）。"""
+    if not headline:
+        return CONTENT_Y
+    return max(CONTENT_Y, HEAD_Y + head_h(headline, W, hsize)[0] + 0.06)
+
+
+# ── from layout ──
 def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
-    """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。"""
+    """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。
+    ★ 原報告【每版】內容都由 CONTENT_Y(1.55) 開始，唔跟導語浮動 —— 所以固定回 1.55，
+      只有導語真係長過上限先順延（避免疊字）。"""
     put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=SZ_TITLE, bold=True, color=NAVY)
     if not headline:
-        return HEAD_Y + 0.06
+        return CONTENT_Y
     h, hsize = head_h(headline, W, hsize)
     box = _tb(slide, MARGIN, HEAD_Y, W - 2 * MARGIN, h)
     p = box.text_frame.paragraphs[0]
     r = p.add_run(); r.text = str(headline)
     setfont(r, hsize, bold=True, color=NAVY, heading=True)
-    return HEAD_Y + h + 0.10
+    return max(CONTENT_Y, HEAD_Y + h + 0.06)
 
 
 # ── from layout ──
@@ -3465,7 +3486,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 5e93ca9 · bundled 2026-08-26 09:21"
+BUILD_STAMP = "base 5b3a46d · bundled 2026-09-07 13:25"
 
 
 # ── from make_report ──
@@ -3913,7 +3934,7 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     left_w = W * 0.60
     rx = MARGIN + left_w + 0.22
     colw = W - rx - MARGIN
-    top = HEAD_Y + head_h(f"{headline}（1/9）", W)[0] + 0.10 + (0.20 if table_name else 0)
+    top = content_top(f"{headline}（1/9）", W) + (0.20 if table_name else 0)
     avail = CONTENT_BOTTOM - top
     pages = []
     for grp in (bullets if grouped else [(None, bullets)]):
@@ -4129,7 +4150,7 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     rx = MARGIN + left_w + 0.22
     rw = W - MARGIN - rx
     # 先【唔起版】計好第 1 版右欄裝得落邊幾項 → 先知總頁數，導語尾寫得出「（1/2）」
-    top0 = HEAD_Y + head_h(head, W)[0] + 0.10
+    top0 = content_top(head, W)
     rlim = CONTENT_BOTTOM - top0 - 0.22          # 減右欄頂嗰行小標題
     first, rest, used = [], [], 0.0
     for it in items:
@@ -4341,7 +4362,7 @@ def _move_slide(prs, frm, to):
 def render_toc(prs, ent_up, entries):
     """報告 slide 7 目錄：六大章節 + 子項 + 頁碼（頁碼喺 build 完先知 → 由 caller 傳）。
     子項多過一版就自動分版。"""
-    avail = CONTENT_BOTTOM - (HEAD_Y + 0.06) - 0.55
+    avail = CONTENT_BOTTOM - CONTENT_Y - 0.55
     pages, cur, used = [], [], 0.0
     for e in entries:
         h = 0.30 if e[2] else 0.34
@@ -4509,7 +4530,7 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     head = headline or _total_line(df)
     crumb = crumb or title
     # 先用一版試高度（導語行數會食掉可用高）
-    probe_top = HEAD_Y + head_h(head, W)[0] + 0.10
+    probe_top = content_top(head, W)
     avail = CONTENT_BOTTOM - probe_top - 0.24
     # 欄多（4.2 = 19 欄）→ 字要細啲，唔係 PowerPoint 會自動長高 row 爆版（TABLE-GROW）
     fz = SZ_TBL if len(subs) <= 13 else SZ_TBL_WIDE
@@ -4537,7 +4558,7 @@ def _cards(prs, sec, crumb, headline, recs, *, note=None):
     recs = [(bar_text, [(label, body)])]。"""
     W, H = size_of(prs)
     cw = W - 2 * MARGIN
-    probe = HEAD_Y + head_h(headline, W)[0] + 0.10
+    probe = content_top(headline, W)
     avail = CONTENT_BOTTOM - probe
 
     def card_h(items):
@@ -4634,7 +4655,7 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
         lw = W * 0.42
         rx = MARGIN + lw + 0.24
         rw = W - MARGIN - rx
-        top0 = HEAD_Y + head_h(head, W)[0] + 0.10 + 0.40
+        top0 = content_top(head, W) + 0.40
         pages = fit_prose([b for b in bul], rw, CONTENT_BOTTOM - top0,
                             head_size=SZ_BODY_HEAD, body_size=SZ_BODY) or [bul]
         for pi, chunk in enumerate(pages):
@@ -4687,7 +4708,7 @@ def _prose_slide(prs, title, bullets, headline=None, *, sec=0):
     """一版敘述（crumb + navy 導語 + 段落），按估算高度自動分頁。"""
     W, H = size_of(prs)
     cw = W - 2 * MARGIN
-    probe = HEAD_Y + head_h(headline, W)[0] + 0.10
+    probe = content_top(headline, W)
     pages = fit_prose(bullets, cw, CONTENT_BOTTOM - probe, head_size=8, body_size=8)
     for pi, page in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
@@ -4862,7 +4883,7 @@ def _prose_pages(prs, bullets, headline=None, subtitle=None):
     numbered = len(bullets[0]) == 3
     W, _ = size_of(prs)
     colw = (W - 2 * MARGIN - COL_GAP) / 2
-    probe = HEAD_Y + head_h(headline, W)[0] + 0.10
+    probe = content_top(headline, W)
     avail = CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
     if not numbered:
         return fit_prose(bullets, colw, avail * 2, head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
@@ -4887,7 +4908,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
     numbered = bool(bullets) and len(bullets[0]) == 3      # (no, head, body) = scan 編號清單
     W, H = size_of(prs)
     colw = (W - 2 * MARGIN - COL_GAP) / 2
-    probe = HEAD_Y + head_h(headline, W)[0] + 0.10
+    probe = content_top(headline, W)
     avail = CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
     half_pages = _prose_pages(prs, bullets, headline, subtitle)
     n_all = pgn or len(half_pages)

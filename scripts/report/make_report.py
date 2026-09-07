@@ -573,7 +573,7 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     left_w = W * 0.60
     rx = L.MARGIN + left_w + 0.22
     colw = W - rx - L.MARGIN
-    top = L.HEAD_Y + L.head_h(f"{headline}（1/9）", W)[0] + 0.10 + (0.20 if table_name else 0)
+    top = L.content_top(f"{headline}（1/9）", W) + (0.20 if table_name else 0)
     avail = L.CONTENT_BOTTOM - top
     pages = []
     for grp in (bullets if grouped else [(None, bullets)]):
@@ -782,7 +782,7 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     rx = L.MARGIN + left_w + 0.22
     rw = W - L.MARGIN - rx
     # 先【唔起版】計好第 1 版右欄裝得落邊幾項 → 先知總頁數，導語尾寫得出「（1/2）」
-    top0 = L.HEAD_Y + L.head_h(head, W)[0] + 0.10
+    top0 = L.content_top(head, W)
     rlim = L.CONTENT_BOTTOM - top0 - 0.22          # 減右欄頂嗰行小標題
     first, rest, used = [], [], 0.0
     for it in items:
@@ -986,7 +986,7 @@ def _move_slide(prs, frm, to):
 def render_toc(prs, ent_up, entries):
     """報告 slide 7 目錄：六大章節 + 子項 + 頁碼（頁碼喺 build 完先知 → 由 caller 傳）。
     子項多過一版就自動分版。"""
-    avail = L.CONTENT_BOTTOM - (L.HEAD_Y + 0.06) - 0.55
+    avail = L.CONTENT_BOTTOM - L.CONTENT_Y - 0.55
     pages, cur, used = [], [], 0.0
     for e in entries:
         h = 0.30 if e[2] else 0.34
@@ -1149,7 +1149,7 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     head = headline or _total_line(df)
     crumb = crumb or title
     # 先用一版試高度（導語行數會食掉可用高）
-    probe_top = L.HEAD_Y + L.head_h(head, W)[0] + 0.10
+    probe_top = L.content_top(head, W)
     avail = L.CONTENT_BOTTOM - probe_top - 0.24
     # 欄多（4.2 = 19 欄）→ 字要細啲，唔係 PowerPoint 會自動長高 row 爆版（TABLE-GROW）
     fz = L.SZ_TBL if len(subs) <= 13 else L.SZ_TBL_WIDE
@@ -1176,7 +1176,7 @@ def _cards(prs, sec, crumb, headline, recs, *, note=None):
     recs = [(bar_text, [(label, body)])]。"""
     W, H = L.size_of(prs)
     cw = W - 2 * L.MARGIN
-    probe = L.HEAD_Y + L.head_h(headline, W)[0] + 0.10
+    probe = L.content_top(headline, W)
     avail = L.CONTENT_BOTTOM - probe
 
     def card_h(items):
@@ -1270,7 +1270,7 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
         lw = W * 0.42
         rx = L.MARGIN + lw + 0.24
         rw = W - L.MARGIN - rx
-        top0 = L.HEAD_Y + L.head_h(head, W)[0] + 0.10 + 0.40
+        top0 = L.content_top(head, W) + 0.40
         pages = L.fit_prose([b for b in bul], rw, L.CONTENT_BOTTOM - top0,
                             head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY) or [bul]
         for pi, chunk in enumerate(pages):
@@ -1321,7 +1321,7 @@ def _prose_slide(prs, title, bullets, headline=None, *, sec=0):
     """一版敘述（crumb + navy 導語 + 段落），按估算高度自動分頁。"""
     W, H = L.size_of(prs)
     cw = W - 2 * L.MARGIN
-    probe = L.HEAD_Y + L.head_h(headline, W)[0] + 0.10
+    probe = L.content_top(headline, W)
     pages = L.fit_prose(bullets, cw, L.CONTENT_BOTTOM - probe, head_size=8, body_size=8)
     for pi, page in enumerate(pages):
         suffix = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
@@ -1484,7 +1484,7 @@ def _prose_pages(prs, bullets, headline=None, subtitle=None):
     numbered = len(bullets[0]) == 3
     W, _ = L.size_of(prs)
     colw = (W - 2 * L.MARGIN - L.COL_GAP) / 2
-    probe = L.HEAD_Y + L.head_h(headline, W)[0] + 0.10
+    probe = L.content_top(headline, W)
     avail = L.CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
     if not numbered:
         return L.fit_prose(bullets, colw, avail * 2, head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
@@ -1508,7 +1508,7 @@ def _prose_2col(prs, title, bullets, per=12, subtitle=None, *, sec=0, headline=N
     numbered = bool(bullets) and len(bullets[0]) == 3      # (no, head, body) = scan 編號清單
     W, H = L.size_of(prs)
     colw = (W - 2 * L.MARGIN - L.COL_GAP) / 2
-    probe = L.HEAD_Y + L.head_h(headline, W)[0] + 0.10
+    probe = L.content_top(headline, W)
     avail = L.CONTENT_BOTTOM - probe - (0.2 if subtitle else 0)
     half_pages = _prose_pages(prs, bullets, headline, subtitle)
     n_all = pgn or len(half_pages)
