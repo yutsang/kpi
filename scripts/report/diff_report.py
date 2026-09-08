@@ -227,17 +227,17 @@ def _matched_src(key, pairs, bare):
     n, u = key
     if key in pairs:
         return True
-    if u in ("%", "次", "個", "項", "家", "間", "版"):
+    # ★ 2026-09-08 最後收緊：一律要【連單位】喺源頭文字出現，唔再夾裸數字。
+    #   之前萬／億 容許夾裸數字（值≥100），結果表2 任何一格有個 356，golden 嘅
+    #   「［金額］」就當【源有】—— 但「某格有 356」≠「表2 有段文字寫住
+    #   『［金額］』並講明佢係乜」。照住嗰張清單改 LLM prompt，改極都冇反應
+    #   （對到 161 → 161），就係因為呢批根本唔係真嘅「源頭有」。
+    if u != "億":
         return False
-    try:
-        v = float(n)
+    try:                                   # 億 ⇄ 萬 只做【單位換算】，仍然要 pair
+        return (_fmt(float(n) * 10000), "萬") in pairs
     except ValueError:
         return False
-    cands = [v] + ([v * 10000] if u == "億" else [])
-    for c in cands:
-        if c >= 100 and (_fmt(c) in bare or (_fmt(c), "萬") in pairs):
-            return True
-    return False
 
 
 def _matched(key, pairs, bare):
