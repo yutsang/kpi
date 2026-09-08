@@ -147,11 +147,17 @@ def source_nums(entity):
         from openpyxl import load_workbook
     except ImportError:
         return None, None, []
-    pats = []
-    for d in ("data/表2", "data/投資項目清單"):
-        for e in {entity, entity.upper(), entity.capitalize()}:
-            pats.append(f"{d}/*{e}*.xls*")
-    files = sorted({f for p in pats for f in glob.glob(p) if "~$" not in f})
+    # 唔靠 glob 嘅 pattern 大細楷（Windows 唔敏感、Mac 敏感）—— 自己列 dir 再比對。
+    files, e = [], entity.lower()
+    for d in ("data/表2", "data/投資項目清單", "data/表二", "data"):
+        p = Path(d)
+        if not p.is_dir():
+            continue
+        for f in p.glob("*.xls*"):
+            if f.name.startswith("~$") or e not in f.name.lower():
+                continue
+            files.append(str(f))
+    files = sorted(set(files))
     if not files:
         return None, None, []
     pairs, bare = set(), set()
@@ -186,6 +192,27 @@ def source_nums(entity):
 def _fmt(v):
     """3414.0 → '3414'；1.9 → '1.9'"""
     return f"{v:.10g}"
+
+
+def _matched_src(key, pairs, bare):
+    """判斷 golden 個數喺唔喺我哋源頭 —— 比 _matched 嚴好多。
+    源頭係 spreadsheet，成千上萬個裸數字，隨便一格有個 70 就會令「70%」當中咗。所以：
+      · %／次／個／項／家／間／版 —— 一定要【連單位一齊】喺源頭文字出現先算
+      · 萬／億 —— 可以夾裸數字，但值要 ≥100（唔好俾「12萬」撞到一個 12）"""
+    n, u = key
+    if key in pairs:
+        return True
+    if u in ("%", "次", "個", "項", "家", "間", "版"):
+        return False
+    try:
+        v = float(n)
+    except ValueError:
+        return False
+    cands = [v] + ([v * 10000] if u == "億" else [])
+    for c in cands:
+        if c >= 100 and (_fmt(c) in bare or (_fmt(c), "萬") in pairs):
+            return True
+    return False
 
 
 def _matched(key, pairs, bare):
@@ -288,6 +315,8 @@ def run(gold_path, ours_path, canned_only=False, entity=None):
         P("\n\n══ ② 數字收斂（golden 敘述帶單位嘅數字 → 我哋【同章】有冇同一個）")
         if s_files:
             P(f"   源頭掃咗 {len(s_files)} 個檔（表2＋清單）→ 對唔到嘅會標【源有】/【源冇】")
+            for f in s_files:
+                P(f"     · {Path(f).name}")
         else:
             P("   （搵唔到 data/表2、data/投資項目清單 → 唔標源頭）")
         g_ch, o_ch = defaultdict(list), defaultdict(list)
@@ -312,7 +341,7 @@ def run(gold_path, ours_path, canned_only=False, entity=None):
             for k in mis:
                 tag = ""
                 if s_pairs is not None:
-                    tag = "【源有】" if _matched(k, s_pairs, s_bare) else "【源冇】"
+                    tag = "【源有】" if _matched_src(k, s_pairs, s_bare) else "【源冇】"
                     (fixable if tag == "【源有】" else unfixable).append((ch, k))
                 P(f"     ✗ {tag}{k[0]}{k[1]}　…{gn[k]}…")
         P(f"\n  → 合計 對到 {tot_hit}、對唔到 {tot_miss}"
