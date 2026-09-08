@@ -14,7 +14,11 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
 
 用法：
     python scripts\\report\\diff_report.py "MGM…報告.pptx" mgm_report_llm.pptx
+    python scripts\\report\\diff_report.py golden.pptx ours.pptx --brief    # 只出摘要（貼返用）
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --canned   # 淨係出 ③
+
+⚠ --brief 只影響【印出嚟】嘅嘢；`results/diff_report.txt` 一樣係嗰份摘要，
+  想睇逐項就唔好加 --brief。
 
 出 results\\diff_report.txt（UTF-8）。每輪修完重跑，✗ 數應該一路跌 —— 呢個就係停機條件。
 """
@@ -298,7 +302,7 @@ def _norm_sub(s):
     return re.sub(r"\s+", "", s)
 
 
-def run(gold_path, ours_path, canned_only=False, entity=None):
+def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
     L = []
     P = L.append
     entity = entity or re.split(r"[_.]", Path(ours_path).stem)[0].lower()
@@ -327,8 +331,9 @@ def run(gold_path, ours_path, canned_only=False, entity=None):
                     near.add(cand)
             mark = "✓" if (oi and not note) else ("≈ 名唔同" if oi else "✗ 未做")
             miss += 0 if oi else 1
-            P(f"  {mark}  [{ch}] {sub}"
-              f"　golden {_rng(gi)}　→ 我哋 {_rng(oi) if oi else '—'}{note}")
+            if not brief or mark != "✓":       # brief：淨印有問題嗰啲
+                P(f"  {mark}  [{ch}] {sub}"
+                  f"　golden {_rng(gi)}　→ 我哋 {_rng(oi) if oi else '—'}{note}")
         extra = [s for s in o_by_sub
                  if s not in near and not any(s == k[1] for k in g_by_sub)]
         for s in extra:
@@ -368,7 +373,8 @@ def run(gold_path, ours_path, canned_only=False, entity=None):
                 if s_pairs is not None:
                     tag = "【源有】" if _matched_src(k, s_pairs, s_bare) else "【源冇】"
                     (fixable if tag == "【源有】" else unfixable).append((ch, k))
-                P(f"     ✗ {tag}{k[0]}{k[1]}　…{gn[k]}…")
+                if not brief:
+                    P(f"     ✗ {tag}{k[0]}{k[1]}　…{gn[k]}…")
         P(f"\n  → 合計 對到 {tot_hit}、對唔到 {tot_miss}"
           f"（{tot_hit / max(1, tot_hit + tot_miss) * 100:.1f}% 收斂）")
         if s_pairs is not None:
@@ -393,7 +399,7 @@ def run(gold_path, ours_path, canned_only=False, entity=None):
             e = seen.setdefault(body[:80], {"t": t, "n": len(body), "ch": ch,
                                             "sub": sub, "s": []})
             e["s"].append(i)
-    for e in seen.values():
+    for e in (() if brief else seen.values()):
         P(f"\n  [golden s{_rng(e['s'])}｜{e['ch'] or '—'}｜{e['sub'] or '—'}]  {e['n']} 字"
           + ("　（重複 %d 版）" % len(e["s"]) if len(e["s"]) > 1 else ""))
         P(f"    {e['t'][:180].replace(chr(10), ' ⏎ ')}…")
@@ -427,7 +433,7 @@ def main():
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
     if len(a) < 2:
         print(__doc__); return
-    run(a[0], a[1], canned_only="--canned" in sys.argv)
+    run(a[0], a[1], canned_only="--canned" in sys.argv, brief="--brief" in sys.argv)
 
 
 if __name__ == "__main__":
