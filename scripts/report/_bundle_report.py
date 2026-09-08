@@ -98,8 +98,11 @@ try:
 except Exception:
     _sha = "?"
 # ⚠ 呢個 sha 係「bundle 嗰刻嘅 HEAD」＝ 呢份 build_report.py 入面嘅 commit 嘅【父】，
-#   唔係佢自己個 commit（bundle 一定早過 commit 一步）。標明 base 免得睇錯版本。
-_stamp = f"base {_sha} · bundled {time.strftime('%Y-%m-%d %H:%M')}"
+#   唔係佢自己個 commit（bundle 一定早過 commit 一步）→ 唔可以攞嚟判斷「有冇 sync 到」。
+#   所以再加一個【內容 hash】：內容一唔同 hash 就一定唔同，一眼分得出版本。
+import hashlib
+_body = hashlib.sha256(assembled.encode("utf-8")).hexdigest()[:8]
+_stamp = f"base {_sha} · content {_body} · bundled {time.strftime('%Y-%m-%d %H:%M')}"
 assembled = assembled.replace('BUILD_STAMP = "dev"', f'BUILD_STAMP = "{_stamp}"')
 
 seen_imp, imp_lines = set(), []
