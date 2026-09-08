@@ -405,12 +405,56 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
         P(f"    {e['t'][:180].replace(chr(10), ' ⏎ ')}…")
     P(f"\n  → {len(seen)} 段罐頭未接（去重後）")
 
+    # ── ④ 文字量 ────────────────────────────────────────────────
+    # 項目組講過「他們的文字明顯較多」。②只數【數字】對唔對得上，數字全中都可以寫得好薄，
+    # 所以另外量【敘述字數】。只計 ≥40 字嘅段（表格格仔、頁腳、breadcrumb 唔算敘述）。
+    P("\n\n══ ④ 文字量（每章敘述字數：golden vs 我哋）")
+
+    def _body(rows):
+        out = defaultdict(int)
+        for _, ch, _, tx in rows:
+            for t in tx:
+                b = re.sub(r"\s+", "", t)
+                if len(b) >= 40:
+                    out[ch or "—"] += len(b)
+        return out
+
+    def _pad(s, n):
+        """中文字係雙寬 —— 用顯示寬度補位，唔係字元數，否則欄對唔齊。"""
+        w = sum(2 if ord(c) > 0x2E7F else 1 for c in s)
+        return s + " " * max(1, n - w)
+
+    gb, ob = _body(gold), _body(ours)
+    P(f"  {_pad('章節', 40)}{'golden':>9}{'我哋':>8}{'比例':>7}")
+    for ch in SECTIONS_ORDER(gb, ob):
+        g, o = gb.get(ch, 0), ob.get(ch, 0)
+        r = (o / g) if g else None
+        flag = "" if r is None or r >= 0.8 else ("　← 薄好多" if r < 0.5 else "　← 偏薄")
+        P(f"  {_pad(ch, 40)}{g:>9,}{o:>9,}"
+          f"{('%.0f%%' % (r * 100)) if r is not None else '—':>8}{flag}")
+    tg, to = sum(gb.values()), sum(ob.values())
+    P(f"  {_pad('合計', 40)}{tg:>9,}{to:>9,}{(to / tg * 100 if tg else 0):>7.0f}%")
+    P("\n  ②數字全中都可以寫得薄 —— 呢度低過 80% 就係要加內容嘅章。")
+
     txt = "\n".join(L)
     dest = Path("results") if Path("results").is_dir() else Path(".")
     f = dest / "diff_report.txt"
     f.write_text(txt, encoding="utf-8")
     print(txt)
     print(f"\n✓ 已寫 {f}（UTF-8）")
+
+
+def SECTIONS_ORDER(*maps):
+    """章節排序：跟 layout.SECTIONS 嘅次序，唔喺入面嘅排最後。"""
+    try:
+        import layout as _L
+        order = list(_L.SECTIONS)
+    except Exception:
+        order = []
+    keys = set()
+    for m in maps:
+        keys |= set(m)
+    return sorted(keys, key=lambda c: (order.index(c) if c in order else 99, c))
 
 
 def _rng(nums):

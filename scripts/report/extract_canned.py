@@ -27,7 +27,11 @@ except ImportError:
     print("✗ pip install python-pptx"); sys.exit(1)
 
 EMU_IN = 914400.0
-DEFAULT_SLIDES = "2-6,88-96,109"
+# 前置(2-6)｜1.1 股權架構圖(9)｜4.4 執行管理流程(68)｜4.5 編制基礎(69-70)｜
+# 第5章 六項KPI(77-86)｜附件1 工作範圍(88-96)｜封底(109)
+# ★ 9 / 68 / 77-86 呢批係圖同流程，冇底層數據砌得出（架構圖同 swimlane 本身就係人手畫）
+#   → 連圖一齊抽落嚟原位擺返，係唯一做得到「同原報告一樣」嘅方法。
+DEFAULT_SLIDES = "2-6,9,68-70,77-86,88-96,109"
 
 # 模板 placeholder／工作痕跡：唔算內容
 SKIP = ("已更新表格", "定稿後還需手動更新", "目錄手動修改為繁體字", "DO NOT DELETE",
@@ -83,6 +87,23 @@ def _cell(c):
     return {"t": c.text, "fill": fill, "fg": col, "size": sz, "bold": bold}
 
 
+def _fill_hex(sh):
+    """實色填充 → hex；漸變／圖片／無填充回 None。"""
+    try:
+        if sh.fill.type is not None and int(sh.fill.type) == 1:      # MSO_FILL.SOLID
+            return _hex(sh.fill.fore_color.rgb)
+    except Exception:
+        pass
+    return None
+
+
+def _line_hex(sh):
+    try:
+        return _hex(sh.line.color.rgb)
+    except Exception:
+        return None
+
+
 def _parse_slides(spec):
     out = set()
     for part in str(spec).split(","):
@@ -99,8 +120,9 @@ def _parse_slides(spec):
 
 def extract(path, want, out_path):
     prs = Presentation(str(path))
-    W = _in(prs.slide_width)
-    slides = []
+    W, H = _in(prs.slide_width), _in(prs.slide_height)
+    img_dir = out_path.parent / (out_path.stem + "_img")
+    slides, n_img = [], 0
     for i, sl in enumerate(prs.slides, 1):
         if i not in want:
             continue
@@ -109,6 +131,16 @@ def extract(path, want, out_path):
             x, w = _in(sh.left), _in(sh.width)
             y, h = _in(sh.top), _in(sh.height)
             if x + w < 0.05 and y >= 0:            # 畫布外泊住嘅舊嘢
+                continue
+            try:                                    # 圖（架構圖／流程圖截圖）：blob 抽出嚟做檔
+                blob, ext = sh.image.blob, (sh.image.ext or "png").lower()
+            except Exception:
+                blob = None
+            if blob:
+                img_dir.mkdir(parents=True, exist_ok=True)
+                fn = f"s{i}_{len(shapes)}.{ext}"
+                (img_dir / fn).write_bytes(blob); n_img += 1
+                shapes.append({"kind": "pic", "x": x, "y": y, "w": w, "h": h, "file": fn})
                 continue
             if getattr(sh, "has_table", False):
                 t = sh.table
@@ -119,34 +151,45 @@ def extract(path, want, out_path):
                     "cells": [[_cell(c) for c in r.cells] for r in t.rows],
                 })
                 continue
-            if not sh.has_text_frame:
+            fill = _fill_hex(sh)
+            txt = (sh.text_frame.text or "").strip() if sh.has_text_frame else ""
+            if any(s in txt for s in SKIP):
                 continue
-            txt = (sh.text_frame.text or "").strip()
-            if not txt or any(s in txt for s in SKIP):
+            if not txt and not fill:                # 冇字又冇底色 → 冇嘢可以重畫
                 continue
+            if fill and not txt and w * h > W * H * 0.95:
+                continue                            # 成版咁大嘅底色 → 背景，唔好蓋住其他 shape
             if y < 0:                               # 畫布外嘅 UpSlide 章節標記
                 marker = marker or txt
                 continue
-            sz, bold, col = _run_style(sh.text_frame)
+            sz, bold, col = (_run_style(sh.text_frame) if sh.has_text_frame
+                             else (None, False, None))
             if (sz or 0) >= 16 and not title:       # 版標題
                 title = txt
-            shapes.append({"kind": "text", "x": x, "y": y, "w": w, "h": h,
-                           "size": sz, "bold": bold, "color": col, "text": txt})
+            # 有底色 = 流程圖／架構圖嘅方框（要連框一齊重畫）；冇底色 = 淨文字框
+            shapes.append({"kind": "shape" if fill else "text", "x": x, "y": y, "w": w, "h": h,
+                           "size": sz, "bold": bold, "color": col, "text": txt,
+                           "fill": fill, "line": _line_hex(sh)})
         if shapes:
             slides.append({"n": i, "title": title, "marker": marker, "shapes": shapes})
 
     data = {"source": Path(path).name, "slide_w": W, "slides": slides}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    n_t = sum(1 for s in slides for x in s["shapes"] if x["kind"] == "text")
-    n_b = sum(1 for s in slides for x in s["shapes"] if x["kind"] == "table")
+    cnt = {k: sum(1 for s in slides for x in s["shapes"] if x["kind"] == k)
+           for k in ("text", "shape", "table", "pic")}
     print(f"✓ {out_path}")
     print(f"  {len(slides)} 版：{', '.join(str(s['n']) for s in slides)}")
-    print(f"  文字框 {n_t} 個、表 {n_b} 張")
+    print(f"  文字框 {cnt['text']}｜方框(有底色) {cnt['shape']}｜表 {cnt['table']}｜圖 {cnt['pic']}")
+    if n_img:
+        print(f"  圖檔寫咗 {n_img} 個入 {img_dir}（同 JSON 一齊抄去 Windows）")
     for s in slides:
-        print(f"   · s{s['n']:>3}  {s['title'][:44] or '（冇標題）'}"
-              f"　{len(s['shapes'])} shape")
-    print("\n⚠ 呢個 JSON 含客戶報告原文 —— 唔好 commit（conf/local/ 已 gitignore）")
+        k = {}
+        for x in s["shapes"]:
+            k[x["kind"]] = k.get(x["kind"], 0) + 1
+        print(f"   · s{s['n']:>3}  {s['title'][:40] or '（冇標題）'}"
+              f"　{'、'.join(f'{v}{n}' for n, v in k.items())}")
+    print("\n⚠ 呢個 JSON 同圖檔含客戶報告原文 —— 唔好 commit（conf/local/ 已 gitignore）")
 
 
 def main():

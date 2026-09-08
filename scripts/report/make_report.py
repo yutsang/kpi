@@ -999,6 +999,7 @@ def _load_canned(entity):
         if p.exists():
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
+                d["_imgdir"] = str(p.parent / (p.stem + "_img"))   # 圖檔喺隔籬個 _img 資料夾
                 print(f"    罐頭：{p}（{len(d.get('slides', []))} 版）")
                 return d
             except Exception as e:
@@ -1021,12 +1022,29 @@ def render_canned(prs, canned, lo, hi, entity="mgm"):
     if not canned:
         return 0
     W, H = L.size_of(prs)
-    n = 0
+    imgdir = Path(canned.get("_imgdir") or "conf/local")
+    n, missing = 0, []
     for s in canned.get("slides", []):
         if not (lo <= s["n"] <= hi):
             continue
         slide = L.blank(prs)
         for sh in s["shapes"]:
+            if sh["kind"] == "pic":                 # 架構圖／流程圖：原尺寸原位貼返
+                f = imgdir / sh["file"]
+                if f.exists():
+                    slide.shapes.add_picture(str(f), Inches(sh["x"]), Inches(sh["y"]),
+                                             Inches(sh["w"]), Inches(sh["h"]))
+                else:
+                    missing.append(sh["file"])
+                continue
+            if sh["kind"] == "shape":               # 流程圖方框：底色 + 框線，字另外疊上去
+                L._rect(slide, sh["x"], sh["y"], sh["w"], sh["h"],
+                        _rgb(sh.get("fill")) or L.BAND, _rgb(sh.get("line")))
+                if sh.get("text"):
+                    L.put(slide, sh["x"], sh["y"], sh["w"], sh["h"], sh["text"],
+                          size=sh.get("size") or L.SZ_BODY, bold=sh.get("bold", False),
+                          color=_rgb(sh.get("color")) or L.INK, align=PP_ALIGN.CENTER)
+                continue
             if sh["kind"] == "text":
                 L.put(slide, sh["x"], sh["y"], sh["w"], sh["h"], sh["text"],
                       size=sh.get("size") or L.SZ_BODY, bold=sh.get("bold", False),
@@ -1051,6 +1069,9 @@ def render_canned(prs, canned, lo, hi, entity="mgm"):
             L.subsec_marker(slide, s["marker"])
         L.footer(slide, W, H, len(prs.slides._sldIdLst))
         n += 1
+    if missing:
+        print(f"    ⚠ 罐頭圖檔搵唔到 {len(missing)} 個（{imgdir}）：{', '.join(missing[:4])}"
+              f"{' …' if len(missing) > 4 else ''} → 嗰幾版會缺圖，記得連 _img 資料夾一齊抄")
     return n
 
 
@@ -1916,6 +1937,9 @@ def main():
         ("1.3  2025年度投資項目的整體執行概況", ""),
         ("1.4  2025年度投資計劃報告投資金額的潛在調整事項匯總", ""),
     ])
+    # 1.1 股權架構簡圖 —— 架構圖係人手畫，冇底層數據砌得出 → 由原報告罐頭連圖抽返
+    if render_canned(prs, canned, 9, 9, entity):
+        print("    罐頭 1.1 股權架構簡圖：1 版")
     budget = _load_budget(entity)
     ov = O.overview_by_bucket(sdf, "2025年度投資計劃", plan, cat, split)
     adj = O.adjustment_bridge(sdf)
@@ -2040,6 +2064,18 @@ def main():
                            ent_up=ent_up, sec=3, crumb=f"{S4}  |  單個項目審查結果匯總")
 
     render_visit_summary(prs, ent_up, sdf)      # 報告 slide 71 走訪情況匯總（樣本標準+樣本量）
+    # 4.4 執行管理流程（swimlane）+ 4.5 編制基礎 —— 講承批公司內部流程，靠訪談，數據砌唔出
+    n4 = render_canned(prs, canned, 68, 70, entity)
+    if n4:
+        print(f"    罐頭 4.4 管理流程／4.5 編制基礎：{n4} 版")
+
+    # ⑤ 投資計劃執行報告的六項KPI分析（原報告 slide 77-86）——之前成章缺席
+    #   分隔頁我哋自己出（同 1/2/3/4/6 章一致），內容係 KPI 定義同計算方式，罐頭抽返
+    if canned and any(77 <= s["n"] <= 86 for s in canned.get("slides", [])):
+        divider(prs, L.SECTIONS[4], "5",
+                [("5.1  投資計劃執行報告的六項KPI的計算方式分析", "")])
+        n5 = render_canned(prs, canned, 77, 86, entity)
+        print(f"    罐頭 ⑤ 六項KPI分析：{n5} 版")
 
     # ⑥ 附件（slide 93-105）
     divider(prs, "附件", "6")
@@ -2049,7 +2085,8 @@ def main():
                    entity)                      # 報告 slide 101 藝術品展出情況清單
 
     # 目錄（報告 slide 7）：起完全部版先知頁碼 → 砌好插去第 2 版，再全份重編頁碼
-    n_app = render_canned(prs, canned, 80, 999, entity)   # 附件1 工作範圍 + 封底
+    n_app = render_canned(prs, canned, 87, 999, entity)   # 附件1 工作範圍 + 封底
+    #  ↑ 由 80 改做 87：⑤ 六項KPI 抽到 s86，範圍再由 80 起會出多次
     if n_app:
         print(f"    罐頭附件：{n_app} 版")
 
