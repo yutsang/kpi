@@ -98,6 +98,24 @@ CONTENT_BOTTOM = 6.72  # 資料來源 pin 底時嘅 y（原報告 6.72~6.74）
 # 導語字號按章節（原報告實測）：概述／期後／主要發現 12pt，4.x 大細唔同，附件最大。
 HEAD_SIZE = {0: 12.0, 1: 12.0, 2: 12.0, 3: 18.0, 4: 18.0, 5: 24.0}
 
+# ── 表左＋敘述右嘅兩欄版 ────────────────────────────────────────────────
+# 原報告實測（s10/s20/s24）：表 4.47~4.60in、gap 0.14、敘述 5.09~5.19in
+#   → 表約佔 46%、敘述 52%。我哋之前 W*0.60 = 6.50 / 3.05，表霸咗成版，
+#     敘述擠喺右邊窄條，係「似但唔一樣」最搶眼嗰項。
+# ⚠ 但原報告嗰啲表係 Tableau 截圖（可任意縮細唔理可讀性），我哋係 native 表，
+#   欄多就一定要闊啲先讀得到 → ≤6 欄跟足原報告，再多就按欄數放寬。
+SPLIT_TBL_W = 4.55      # 表闊（≤6 欄）
+SPLIT_GAP = 0.14        # 表同敘述之間
+
+
+def split_left(ncol):
+    """兩欄版嘅表闊（吋）。"""
+    return min(6.50, SPLIT_TBL_W + max(0, ncol - 6) * 0.35)
+
+
+# 原報告【冇】表頂 navy 標題條，表直接由 CONTENT_Y 開始。想要返就改 True。
+SHOW_TABLE_CAPTION = False
+
 SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
             "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
 
@@ -368,8 +386,10 @@ def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
 
 
 def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
-    """表頂 caption bar（重覆表名，對 scan 每張表都有）。
-    ⚠ 用深色 HDR2 —— IMG_0441 量到 caption 條比表頭嗰排藍【深啲】，唔係同一隻色。"""
+    """表頂 caption bar。★ 2026-09-08：原報告實測【冇】呢條 —— 表直接由 y=1.55 開始，
+    表名喺 Tableau 截圖入面。SHOW_TABLE_CAPTION=False 就 no-op（回原 y，唔佔高度）。"""
+    if not SHOW_TABLE_CAPTION:
+        return y
     bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.17))
     bar.fill.solid(); bar.fill.fore_color.rgb = CAPTION_FILL
     bar.line.fill.background(); bar.shadow.inherit = False

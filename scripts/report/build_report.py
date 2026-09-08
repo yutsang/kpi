@@ -197,6 +197,24 @@ HEAD_SIZE = {0: 12.0, 1: 12.0, 2: 12.0, 3: 18.0, 4: 18.0, 5: 24.0}
 
 
 # ── from layout ──
+SPLIT_TBL_W = 4.55
+
+
+# ── from layout ──
+SPLIT_GAP = 0.14
+
+
+# ── from layout ──
+def split_left(ncol):
+    """兩欄版嘅表闊（吋）。"""
+    return min(6.50, SPLIT_TBL_W + max(0, ncol - 6) * 0.35)
+
+
+# ── from layout ──
+SHOW_TABLE_CAPTION = False
+
+
+# ── from layout ──
 SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
             "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
 
@@ -492,8 +510,10 @@ def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
 
 # ── from layout ──
 def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
-    """表頂 caption bar（重覆表名，對 scan 每張表都有）。
-    ⚠ 用深色 HDR2 —— IMG_0441 量到 caption 條比表頭嗰排藍【深啲】，唔係同一隻色。"""
+    """表頂 caption bar。★ 2026-09-08：原報告實測【冇】呢條 —— 表直接由 y=1.55 開始，
+    表名喺 Tableau 截圖入面。SHOW_TABLE_CAPTION=False 就 no-op（回原 y，唔佔高度）。"""
+    if not SHOW_TABLE_CAPTION:
+        return y
     bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.17))
     bar.fill.solid(); bar.fill.fore_color.rgb = CAPTION_FILL
     bar.line.fill.background(); bar.shadow.inherit = False
@@ -3504,7 +3524,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 593ea72 · bundled 2026-09-07 14:50"
+BUILD_STAMP = "base fec8f3f · bundled 2026-09-08 11:13"
 
 
 # ── from make_report ──
@@ -3892,13 +3912,14 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
                          note=None):
     """報告概述式 2 欄版（對 scan slide 10/15）：crumb + navy 導語，左 表，右 敘述。"""
     slide, W, H, top = _page(prs, sec, crumb, headline)
-    left_w = W * 0.60
+    left_w = split_left(6)          # 冇表就當窄表；有表下面按欄數覆寫
     tbl_bot = top
     if table_df is not None and not table_df.empty:
-        if table_name:
-            top = caption_bar(slide, MARGIN, top, left_w, table_name)
         disp = _overview_display(table_df)
         subs, rows, widths, supers = _df_table(disp)
+        left_w = split_left(len(subs))
+        if table_name:
+            top = caption_bar(slide, MARGIN, top, left_w, table_name)
         if "潛在調整金額" in list(table_df.columns):      # 期後表：表頭下面加斜體公式行
             rows = [("formula", overview_formula_row(list(disp.columns)))] + rows
         wid = [w * left_w / sum(widths) for w in widths]
@@ -3916,7 +3937,7 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         nh = 0.16 * (1 + note.count("\n")) + 0.16
         put(slide, MARGIN, min(tbl_bot + 0.06, CONTENT_BOTTOM - nh), left_w, nh,
               note, size=SZ_NOTE - 1, italic=True, color=GREY)
-    rx = MARGIN + left_w + 0.22
+    rx = MARGIN + left_w + SPLIT_GAP
     prose_box(slide, rx, top - 0.02, W - rx - MARGIN, CONTENT_BOTTOM - top, bullets)
     source_note(slide, W)
 
@@ -3949,8 +3970,8 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     if not bullets:
         return
     W, _H = size_of(prs)
-    left_w = W * 0.60
-    rx = MARGIN + left_w + 0.22
+    left_w = split_left(8)
+    rx = MARGIN + left_w + SPLIT_GAP
     colw = W - rx - MARGIN
     top = content_top(f"{headline}（1/9）", W) + (0.20 if table_name else 0)
     avail = CONTENT_BOTTOM - top
@@ -4165,8 +4186,8 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     # ★ 版式跟 scan p21-22（同 1.4 個 p15 唔一樣！）：
     #     第 1 版 = 表【左】+ 逐類說明【右】（右欄裝得落幾多就幾多）
     #     之後   = 全闊兩欄續版（p22），左右欄頂各有 navy 小標題（右邊加「（續）」）
-    left_w = W * 0.60
-    rx = MARGIN + left_w + 0.22
+    left_w = split_left(len(tbl.columns))
+    rx = MARGIN + left_w + SPLIT_GAP
     rw = W - MARGIN - rx
     # 先【唔起版】計好第 1 版右欄裝得落邊幾項 → 先知總頁數，導語尾寫得出「（1/2）」
     top0 = content_top(head, W)
@@ -4598,8 +4619,8 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
         side = len(df.columns) <= 8 and bool(bullets)
     if side and bullets:
         W, _H = size_of(prs)
-        lw = W * 0.60
         s2, r2, w2, sp2 = _df_table(df)
+        lw = split_left(len(s2))       # 同 render_overview_page 一致，否則預估同實際行開
         wid2 = [w * lw / sum(w2) for w in w2]
         need = header_h(sp2, s2, wid2, 5.0) + sum(row_h(c, wid2, 5.0) for _, c in r2)
         if need <= CONTENT_BOTTOM - 1.9:              # 一版放得落先用 2 欄，否則落返全闊分頁

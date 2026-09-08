@@ -515,13 +515,14 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
                          note=None):
     """報告概述式 2 欄版（對 scan slide 10/15）：crumb + navy 導語，左 表，右 敘述。"""
     slide, W, H, top = _page(prs, sec, crumb, headline)
-    left_w = W * 0.60
+    left_w = L.split_left(6)          # 冇表就當窄表；有表下面按欄數覆寫
     tbl_bot = top
     if table_df is not None and not table_df.empty:
-        if table_name:
-            top = L.caption_bar(slide, L.MARGIN, top, left_w, table_name)
         disp = _overview_display(table_df)
         subs, rows, widths, supers = _df_table(disp)
+        left_w = L.split_left(len(subs))
+        if table_name:
+            top = L.caption_bar(slide, L.MARGIN, top, left_w, table_name)
         if "潛在調整金額" in list(table_df.columns):      # 期後表：表頭下面加斜體公式行
             rows = [("formula", O.overview_formula_row(list(disp.columns)))] + rows
         wid = [w * left_w / sum(widths) for w in widths]
@@ -539,7 +540,7 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
         nh = 0.16 * (1 + note.count("\n")) + 0.16
         L.put(slide, L.MARGIN, min(tbl_bot + 0.06, L.CONTENT_BOTTOM - nh), left_w, nh,
               note, size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
-    rx = L.MARGIN + left_w + 0.22
+    rx = L.MARGIN + left_w + L.SPLIT_GAP
     L.prose_box(slide, rx, top - 0.02, W - rx - L.MARGIN, L.CONTENT_BOTTOM - top, bullets)
     L.source_note(slide, W)
 
@@ -570,8 +571,8 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     if not bullets:
         return
     W, _H = L.size_of(prs)
-    left_w = W * 0.60
-    rx = L.MARGIN + left_w + 0.22
+    left_w = L.split_left(8)
+    rx = L.MARGIN + left_w + L.SPLIT_GAP
     colw = W - rx - L.MARGIN
     top = L.content_top(f"{headline}（1/9）", W) + (0.20 if table_name else 0)
     avail = L.CONTENT_BOTTOM - top
@@ -779,8 +780,8 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     # ★ 版式跟 scan p21-22（同 1.4 個 p15 唔一樣！）：
     #     第 1 版 = 表【左】+ 逐類說明【右】（右欄裝得落幾多就幾多）
     #     之後   = 全闊兩欄續版（p22），左右欄頂各有 navy 小標題（右邊加「（續）」）
-    left_w = W * 0.60
-    rx = L.MARGIN + left_w + 0.22
+    left_w = L.split_left(len(tbl.columns))
+    rx = L.MARGIN + left_w + L.SPLIT_GAP
     rw = W - L.MARGIN - rx
     # 先【唔起版】計好第 1 版右欄裝得落邊幾項 → 先知總頁數，導語尾寫得出「（1/2）」
     top0 = L.content_top(head, W)
@@ -1196,8 +1197,8 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
         side = len(df.columns) <= 8 and bool(bullets)
     if side and bullets:
         W, _H = L.size_of(prs)
-        lw = W * 0.60
         s2, r2, w2, sp2 = _df_table(df)
+        lw = L.split_left(len(s2))       # 同 render_overview_page 一致，否則預估同實際行開
         wid2 = [w * lw / sum(w2) for w in w2]
         need = L.header_h(sp2, s2, wid2, 5.0) + sum(L.row_h(c, wid2, 5.0) for _, c in r2)
         if need <= L.CONTENT_BOTTOM - 1.9:              # 一版放得落先用 2 欄，否則落返全闊分頁
