@@ -152,9 +152,16 @@ def source_nums(entity):
     root = Path("data")
     if not root.is_dir():
         return None, None, []
+    # ⚠ 只可以掃【項目組畀嘅源頭】—— 表2 同 投資項目清單。
+    #   data/ 下面仲有一大堆我哋自己 pipeline 嘅輸出（tableau_*/[ent]_master_audit_*/
+    #   *_kpi_report_* 等），掃咗佢哋等於自己對自己，咩數都撞到，【源有】會發脹。
+    SRC_KEY = ("表二", "表2", "投资项目清单", "投資項目清單", "投资項目清單", "投資项目清单")
     e, files = entity.lower(), []
     for f in root.rglob("*.xls*"):
         if f.name.startswith("~$") or e not in f.name.lower():
+            continue
+        hay = f.name + "|" + f.parent.name
+        if not any(k in hay for k in SRC_KEY):
             continue
         files.append(str(f))
     files = sorted(set(files))

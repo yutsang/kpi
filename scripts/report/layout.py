@@ -403,6 +403,23 @@ def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
     return y + 0.17
 
 
+SOURCE_LINE = "資料來源：管理層提供的項目投入明細表，管理層訪談；畢馬威分析"
+
+
+def table_footnote(slide, x, y, w, note=None, *, source=None):
+    """表底下嘅「資料來源＋註釋」—— 原報告係【一個 7pt 文字框】，闊度＝表闊，
+    緊貼表底（s10 y=5.94／s20 y=5.47／s24 y=5.37），唔係 pin 死版底、唔係兩個框。
+    回文字框底部 y。"""
+    txt = source or SOURCE_LINE
+    if note:
+        txt += "\n" + str(note).strip()
+    lines = sum(max(1, est_lines(seg, w, SZ_NOTE)) for seg in txt.split("\n"))
+    h = min(lines * SZ_NOTE * 1.3 / 72.0 + 0.04, max(0.16, CONTENT_BOTTOM + 0.16 - y))
+    y = min(y, CONTENT_BOTTOM + 0.16 - h)
+    put(slide, x, y, w, h, txt, size=SZ_NOTE, color=NOTE_FG)
+    return y + h
+
+
 def source_note(slide, W, y=None, *, note=None, more=False):
     """表下：資料來源（左）+（下頁待續）（右）。"""
     y = CONTENT_BOTTOM if y is None else y

@@ -536,13 +536,12 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
                                   fill_h=avail - 0.18, left_cols=2,   # 序號+範疇 左對齊；−0.18 安全位
                                   hdr_cols=_hdr_cols(subs, supers))
-    if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字（多行註要留夠位）
-        nh = 0.16 * (1 + note.count("\n")) + 0.16
-        L.put(slide, L.MARGIN, min(tbl_bot + 0.06, L.CONTENT_BOTTOM - nh), left_w, nh,
-              note, size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
+    # 原報告（s10/s20/s24 實測）：資料來源同註釋係【一個 7pt 文字框】，闊度＝表闊，
+    # 緊貼表底（y=5.37~5.94，唔係 pin 死版底）。之前我哋拆做兩個框、註 6pt 灰斜體、
+    # 資料來源 pin 死 6.72 橫跨成版 —— 兩樣都同原報告唔同。
+    L.table_footnote(slide, L.MARGIN, tbl_bot + 0.06, left_w, note)
     rx = L.MARGIN + left_w + L.SPLIT_GAP
     L.prose_box(slide, rx, top - 0.02, W - rx - L.MARGIN, L.CONTENT_BOTTOM - top, bullets)
-    L.source_note(slide, W)
 
 
 def _draw_adj_table(slide, x, y, w, adjdf, *, font=None):
@@ -796,12 +795,12 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     slide, W, H, top = _page(prs, 1, crumb, head + (f"（1/{n_all}）" if n_all > 1 else ""))
     t2 = L.caption_bar(slide, L.MARGIN, top, left_w, tname)
     tbot = (_draw_adj_table(slide, L.MARGIN, t2, left_w, tbl.fillna("")) or (t2, 0))[0]
-    L.put(slide, L.MARGIN, min(tbot + 0.06, L.CONTENT_BOTTOM - 0.26), left_w, 0.3,
-          "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
+    L.table_footnote(slide, L.MARGIN, tbot + 0.06, left_w,
+                     "註：金額單位為萬澳門元；括號表示調減。")
     L.put(slide, rx, top, rw, 0.18, tname, size=7, bold=True, color=L.NAVY)
     L.prose_numbered(L._tb(slide, rx, top + 0.22, rw, L.CONTENT_BOTTOM - top - 0.22),
                      first, size=L.SZ_BODY)
-    L.source_note(slide, W, more=(n_all > 1))
+    L.source_note(slide, W, note="", more=(n_all > 1))   # 資料來源已喺表底註腳，唔好重複
     _prose_2col(prs, crumb, rest, sec=1, headline=head, subtitle=tname, pg0=1, pgn=n_all)
 
 

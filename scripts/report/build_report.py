@@ -528,6 +528,25 @@ def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
 
 
 # ── from layout ──
+SOURCE_LINE = "資料來源：管理層提供的項目投入明細表，管理層訪談；畢馬威分析"
+
+
+# ── from layout ──
+def table_footnote(slide, x, y, w, note=None, *, source=None):
+    """表底下嘅「資料來源＋註釋」—— 原報告係【一個 7pt 文字框】，闊度＝表闊，
+    緊貼表底（s10 y=5.94／s20 y=5.47／s24 y=5.37），唔係 pin 死版底、唔係兩個框。
+    回文字框底部 y。"""
+    txt = source or SOURCE_LINE
+    if note:
+        txt += "\n" + str(note).strip()
+    lines = sum(max(1, est_lines(seg, w, SZ_NOTE)) for seg in txt.split("\n"))
+    h = min(lines * SZ_NOTE * 1.3 / 72.0 + 0.04, max(0.16, CONTENT_BOTTOM + 0.16 - y))
+    y = min(y, CONTENT_BOTTOM + 0.16 - h)
+    put(slide, x, y, w, h, txt, size=SZ_NOTE, color=NOTE_FG)
+    return y + h
+
+
+# ── from layout ──
 def source_note(slide, W, y=None, *, note=None, more=False):
     """表下：資料來源（左）+（下頁待續）（右）。"""
     y = CONTENT_BOTTOM if y is None else y
@@ -3524,7 +3543,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base fec8f3f · bundled 2026-09-08 11:13"
+BUILD_STAMP = "base d743057 · bundled 2026-09-08 11:40"
 
 
 # ── from make_report ──
@@ -3933,13 +3952,12 @@ def render_overview_page(prs, crumb, headline, table_df, bullets, *, sec=0, tabl
                                   supers=supers, font=font, hfont=max(4.5, font - 0.5),
                                   fill_h=avail - 0.18, left_cols=2,   # 序號+範疇 左對齊；−0.18 安全位
                                   hdr_cols=_hdr_cols(subs, supers))
-    if note:      # 「註」貼喺表底下，唔可以同底部嘅資料來源疊字（多行註要留夠位）
-        nh = 0.16 * (1 + note.count("\n")) + 0.16
-        put(slide, MARGIN, min(tbl_bot + 0.06, CONTENT_BOTTOM - nh), left_w, nh,
-              note, size=SZ_NOTE - 1, italic=True, color=GREY)
+    # 原報告（s10/s20/s24 實測）：資料來源同註釋係【一個 7pt 文字框】，闊度＝表闊，
+    # 緊貼表底（y=5.37~5.94，唔係 pin 死版底）。之前我哋拆做兩個框、註 6pt 灰斜體、
+    # 資料來源 pin 死 6.72 橫跨成版 —— 兩樣都同原報告唔同。
+    table_footnote(slide, MARGIN, tbl_bot + 0.06, left_w, note)
     rx = MARGIN + left_w + SPLIT_GAP
     prose_box(slide, rx, top - 0.02, W - rx - MARGIN, CONTENT_BOTTOM - top, bullets)
-    source_note(slide, W)
 
 
 # ── from make_report ──
@@ -4202,12 +4220,12 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     slide, W, H, top = _page(prs, 1, crumb, head + (f"（1/{n_all}）" if n_all > 1 else ""))
     t2 = caption_bar(slide, MARGIN, top, left_w, tname)
     tbot = (_draw_adj_table(slide, MARGIN, t2, left_w, tbl.fillna("")) or (t2, 0))[0]
-    put(slide, MARGIN, min(tbot + 0.06, CONTENT_BOTTOM - 0.26), left_w, 0.3,
-          "註：金額單位為萬澳門元；括號表示調減。", size=SZ_NOTE - 1, italic=True, color=GREY)
+    table_footnote(slide, MARGIN, tbot + 0.06, left_w,
+                     "註：金額單位為萬澳門元；括號表示調減。")
     put(slide, rx, top, rw, 0.18, tname, size=7, bold=True, color=NAVY)
     prose_numbered(_tb(slide, rx, top + 0.22, rw, CONTENT_BOTTOM - top - 0.22),
                      first, size=SZ_BODY)
-    source_note(slide, W, more=(n_all > 1))
+    source_note(slide, W, note="", more=(n_all > 1))   # 資料來源已喺表底註腳，唔好重複
     _prose_2col(prs, crumb, rest, sec=1, headline=head, subtitle=tname, pg0=1, pgn=n_all)
 
 
