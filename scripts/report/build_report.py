@@ -137,6 +137,10 @@ SZ_TBL_WIDE = 6.0
 
 
 # ── from layout ──
+SZ_TBL_MID = 7.5
+
+
+# ── from layout ──
 SZ_CAPTION = 7.5
 
 
@@ -202,6 +206,15 @@ SPLIT_TBL_W = 4.55
 
 # ── from layout ──
 SPLIT_GAP = 0.14
+
+
+# ── from layout ──
+def tbl_font(ncol):
+    """表身字號按欄數分三級。原本得 9pt／6pt 兩級，15 欄嘅表用緊 9pt，
+    塞唔落 → 23 年單項審查表出到 12 版（原報告 7 版）。"""
+    if ncol <= 10:
+        return SZ_TBL
+    return SZ_TBL_MID if ncol <= 14 else SZ_TBL_WIDE
 
 
 # ── from layout ──
@@ -367,25 +380,13 @@ def _name(shape, nm):
 def breadcrumb(slide, W, active=0, entity="MGM"):
     """頂 nav（對 scan p-23 放大）：白底、頁籤用「｜」分隔，當前頁籤 navy 粗體、其餘淺灰，
     右邊 entity + ◀ ⌂ ▶ 三粒圓掣。shape 改名做 nav:* ，wire_nav() 事後駁內部 hyperlink。"""
+    # ★ 原報告冇 ◀⌂▶ 圓掣（實測：淨係一條 UpSlide 導航條 x=0.54 w=8.62 + 右邊 entity
+    #   x=9.20）→ 圓掣已拎走，只保留頁籤本身嘅內部跳頁。
     x0 = MARGIN - 0.23
-    d, gapc = 0.185, 0.05                                  # 圓掣直徑 / 間距
-    right = W - x0
-    for i, (nm, ch) in enumerate((("next", "▶"), ("home", "⌂"), ("prev", "◀"))):
-        cx = right - d - i * (d + gapc)
-        sh = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(cx), Inches(CRUMB_Y - 0.035),
-                                    Inches(d), Inches(d))
-        sh.fill.solid(); sh.fill.fore_color.rgb = WHITE
-        sh.line.color.rgb = NAVY; sh.line.width = Pt(0.75); sh.shadow.inherit = False
-        _name(sh, f"nav:{nm}")
-        tf = sh.text_frame
-        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = Emu(0)
-        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
-        r = p.add_run(); r.text = ch
-        setfont(r, 6.0, bold=True, color=NAVY)
-    ex = right - 3 * (d + gapc)                            # entity 靠圓掣左邊
-    put(slide, ex - 0.85, CRUMB_Y, 0.8, 0.18, entity, size=SZ_CRUMB, bold=True,
-        color=INK, align=PP_ALIGN.RIGHT)
-    sep, avail = " ｜ ", (ex - 0.92) - x0
+    ex = 9.20                                              # entity 位置對正原報告
+    put(slide, ex, CRUMB_Y, 1.10, 0.18, entity, size=SZ_CRUMB, bold=True,
+        color=INK, align=PP_ALIGN.LEFT)
+    sep, avail = " ｜ ", (ex - 0.10) - x0
     # ×1.08：text_w 對粗體中文估細咗少少，唔留鬆位頁籤會撞埋一齊
     widths = [text_w(t, SZ_CRUMB) * 1.08 / 72.0 for t in SECTIONS]
     sw = text_w(sep, SZ_CRUMB) / 72.0
@@ -492,10 +493,22 @@ def content_top(headline, W, hsize=SZ_HEAD):
 
 
 # ── from layout ──
-def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
+def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD, label_only=False):
     """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。
     ★ 原報告【每版】內容都由 CONTENT_Y(1.55) 開始，唔跟導語浮動 —— 所以固定回 1.55，
       只有導語真係長過上限先順延（避免疊字）。"""
+    if label_only:
+        # ★ 原報告主要發現版（s30-44）：y=0.30 淨寫「主要發現」（冇「|」），
+        #   導語落到 y=0.50、高 1.05。同其他章唔同，所以獨立一條路。
+        put(slide, MARGIN, 0.30, W - 2 * MARGIN, 0.19, "主要發現",   # 原報告淨寫呢四個字
+            size=SZ_TITLE, color=NAVY)
+        subsec_marker(slide, crumb)
+        if not headline:
+            return CONTENT_Y
+        box = _tb(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 1.05)
+        r = box.text_frame.paragraphs[0].add_run(); r.text = str(headline)
+        setfont(r, hsize, bold=True, color=NAVY, heading=True)
+        return CONTENT_Y
     put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=SZ_TITLE, bold=True, color=NAVY)
     subsec_marker(slide, crumb)
     if not headline:
@@ -1184,7 +1197,7 @@ def render_sheet(prs, sheet_name, df, cols, *, ent_up="MGM", sec=3, crumb=None, 
         while cj + 1 < ncol and col_group(cols[cj + 1]) == g:
             cj += 1
         supers.append((GROUP_LABEL[g], ci, cj + 1)); ci = cj + 1
-    font = SZ_TBL_WIDE if ncol > 16 else SZ_TBL
+    font = tbl_font(ncol)
     yr = "20" + (sheet_name[-2:] if sheet_name[-2:].isdigit() else "25")
     head = (f"下表匯總了我們在審查{ent_up} {yr}年度投資計劃各項目投資執行情況時，識別出的各項目"
             f"投資支出涉及的潛在調整事項，以及相關的影響金額。")
@@ -3574,7 +3587,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 6163cec · content dd4e8665 · bundled 2026-09-08 14:42"
+BUILD_STAMP = "base 04aa8e5 · content 70a9c841 · bundled 2026-09-08 14:46"
 
 
 # ── from make_report ──
@@ -3667,7 +3680,9 @@ def _page(prs, section_idx=0, crumb=None, headline=None, *, hsize=None):
     breadcrumb(slide, W, section_idx, ENT_UP)
     footer(slide, W, H, len(prs.slides._sldIdLst))
     hs = hsize or HEAD_SIZE.get(section_idx, SZ_HEAD)
-    top = page_head(slide, W, crumb, headline, hsize=hs) if crumb else 0.5
+    top = (page_head(slide, W, crumb, headline, hsize=hs,
+                       label_only=(section_idx == 2))     # ③ 主要發現版式唔同
+           if crumb else 0.5)
     return slide, W, H, top
 
 
@@ -3999,7 +4014,7 @@ def _draw_adj_table(slide, x, y, w, adjdf, *, font=None):
     """報告 1.4／2.2／2.4 個表：範疇 × 七大類 + 表頭下面嗰行斜體公式（對 scan slide 15）。"""
     subs, rows, widths, supers = _df_table(adjdf, first_label="萬澳門元")
     rows = [("formula", adj_formula_row(list(adjdf.columns)))] + rows
-    f = font or (SZ_TBL_WIDE if len(subs) > 11 else SZ_TBL)
+    f = font or tbl_font(len(subs))
     avail = CONTENT_BOTTOM - y - 0.28
     wid = [v * w / sum(widths) for v in widths]
     while f > 4.0:      # 加咗公式行同「涉及項目數量」行之後會高咗 → 自動縮到放得落
@@ -4693,7 +4708,7 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     probe_top = content_top(head, W)
     avail = CONTENT_BOTTOM - probe_top - 0.24
     # 欄多（4.2 = 19 欄）→ 字要細啲，唔係 PowerPoint 會自動長高 row 爆版（TABLE-GROW）
-    fz = SZ_TBL if len(subs) <= 13 else SZ_TBL_WIDE
+    fz = tbl_font(len(subs))
     #   留 0.30in headroom：draw_table 派嘅 row 高同 PowerPoint 實際 wrap 有少少落差
     while fz > 4.0 and (header_h(supers, subs, wid, max(4.5, fz - 0.5))
                         + sum(row_h(c, wid, fz) for _k, c in rows)) > avail - 0.30:

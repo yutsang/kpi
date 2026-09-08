@@ -76,6 +76,7 @@ SZ_BODY_HEAD = 9.5  # ④ 內文小標題
 SZ_TBL = 9.0        # 表身（final 報告 native 表【全部】9pt —— 2026-09-07 --fmt 實測）
 SZ_TBL_HDR = 9.0    # 表頭（同樣 9pt，白色粗體、底 00338D）
 SZ_TBL_WIDE = 6.0   # 表身（>16 欄嘅大表，9pt 塞唔落 18 欄）
+SZ_TBL_MID = 7.5    # 表身（11-14 欄）
 SZ_CAPTION = 7.5    # 表頂 navy caption bar
 SZ_NOTE = 7.0       # ⑤ 資料來源 / 註
 SZ_FOOT = 6.0       # ⑥ footer 版權
@@ -106,6 +107,14 @@ HEAD_SIZE = {0: 12.0, 1: 12.0, 2: 12.0, 3: 18.0, 4: 18.0, 5: 24.0}
 #   欄多就一定要闊啲先讀得到 → ≤6 欄跟足原報告，再多就按欄數放寬。
 SPLIT_TBL_W = 4.55      # 表闊（≤6 欄）
 SPLIT_GAP = 0.14        # 表同敘述之間
+
+
+def tbl_font(ncol):
+    """表身字號按欄數分三級。原本得 9pt／6pt 兩級，15 欄嘅表用緊 9pt，
+    塞唔落 → 23 年單項審查表出到 12 版（原報告 7 版）。"""
+    if ncol <= 10:
+        return SZ_TBL
+    return SZ_TBL_MID if ncol <= 14 else SZ_TBL_WIDE
 
 
 def split_left(ncol):
@@ -252,25 +261,13 @@ def _name(shape, nm):
 def breadcrumb(slide, W, active=0, entity="MGM"):
     """頂 nav（對 scan p-23 放大）：白底、頁籤用「｜」分隔，當前頁籤 navy 粗體、其餘淺灰，
     右邊 entity + ◀ ⌂ ▶ 三粒圓掣。shape 改名做 nav:* ，wire_nav() 事後駁內部 hyperlink。"""
+    # ★ 原報告冇 ◀⌂▶ 圓掣（實測：淨係一條 UpSlide 導航條 x=0.54 w=8.62 + 右邊 entity
+    #   x=9.20）→ 圓掣已拎走，只保留頁籤本身嘅內部跳頁。
     x0 = MARGIN - 0.23
-    d, gapc = 0.185, 0.05                                  # 圓掣直徑 / 間距
-    right = W - x0
-    for i, (nm, ch) in enumerate((("next", "▶"), ("home", "⌂"), ("prev", "◀"))):
-        cx = right - d - i * (d + gapc)
-        sh = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(cx), Inches(CRUMB_Y - 0.035),
-                                    Inches(d), Inches(d))
-        sh.fill.solid(); sh.fill.fore_color.rgb = WHITE
-        sh.line.color.rgb = NAVY; sh.line.width = Pt(0.75); sh.shadow.inherit = False
-        _name(sh, f"nav:{nm}")
-        tf = sh.text_frame
-        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = Emu(0)
-        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
-        r = p.add_run(); r.text = ch
-        setfont(r, 6.0, bold=True, color=NAVY)
-    ex = right - 3 * (d + gapc)                            # entity 靠圓掣左邊
-    put(slide, ex - 0.85, CRUMB_Y, 0.8, 0.18, entity, size=SZ_CRUMB, bold=True,
-        color=INK, align=PP_ALIGN.RIGHT)
-    sep, avail = " ｜ ", (ex - 0.92) - x0
+    ex = 9.20                                              # entity 位置對正原報告
+    put(slide, ex, CRUMB_Y, 1.10, 0.18, entity, size=SZ_CRUMB, bold=True,
+        color=INK, align=PP_ALIGN.LEFT)
+    sep, avail = " ｜ ", (ex - 0.10) - x0
     # ×1.08：text_w 對粗體中文估細咗少少，唔留鬆位頁籤會撞埋一齊
     widths = [text_w(t, SZ_CRUMB) * 1.08 / 72.0 for t in SECTIONS]
     sw = text_w(sep, SZ_CRUMB) / 72.0
@@ -369,10 +366,22 @@ def content_top(headline, W, hsize=SZ_HEAD):
     return max(CONTENT_Y, HEAD_Y + head_h(headline, W, hsize)[0] + 0.06)
 
 
-def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD):
+def page_head(slide, W, crumb, headline=None, *, hsize=SZ_HEAD, label_only=False):
     """灰色「章節 | 子題」+ navy 粗體導語 → 回內容起始 y。
     ★ 原報告【每版】內容都由 CONTENT_Y(1.55) 開始，唔跟導語浮動 —— 所以固定回 1.55，
       只有導語真係長過上限先順延（避免疊字）。"""
+    if label_only:
+        # ★ 原報告主要發現版（s30-44）：y=0.30 淨寫「主要發現」（冇「|」），
+        #   導語落到 y=0.50、高 1.05。同其他章唔同，所以獨立一條路。
+        put(slide, MARGIN, 0.30, W - 2 * MARGIN, 0.19, "主要發現",   # 原報告淨寫呢四個字
+            size=SZ_TITLE, color=NAVY)
+        subsec_marker(slide, crumb)
+        if not headline:
+            return CONTENT_Y
+        box = _tb(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 1.05)
+        r = box.text_frame.paragraphs[0].add_run(); r.text = str(headline)
+        setfont(r, hsize, bold=True, color=NAVY, heading=True)
+        return CONTENT_Y
     put(slide, MARGIN, SUBTITLE_Y, W - 2 * MARGIN, 0.2, crumb, size=SZ_TITLE, bold=True, color=NAVY)
     subsec_marker(slide, crumb)
     if not headline:

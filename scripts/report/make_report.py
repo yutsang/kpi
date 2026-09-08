@@ -231,7 +231,9 @@ def _page(prs, section_idx=0, crumb=None, headline=None, *, hsize=None):
     L.breadcrumb(slide, W, section_idx, ENT_UP)
     L.footer(slide, W, H, len(prs.slides._sldIdLst))
     hs = hsize or L.HEAD_SIZE.get(section_idx, L.SZ_HEAD)
-    top = L.page_head(slide, W, crumb, headline, hsize=hs) if crumb else 0.5
+    top = (L.page_head(slide, W, crumb, headline, hsize=hs,
+                       label_only=(section_idx == 2))     # ③ 主要發現版式唔同
+           if crumb else 0.5)
     return slide, W, H, top
 
 
@@ -551,7 +553,7 @@ def _draw_adj_table(slide, x, y, w, adjdf, *, font=None):
     """報告 1.4／2.2／2.4 個表：範疇 × 七大類 + 表頭下面嗰行斜體公式（對 scan slide 15）。"""
     subs, rows, widths, supers = _df_table(adjdf, first_label="萬澳門元")
     rows = [("formula", O.adj_formula_row(list(adjdf.columns)))] + rows
-    f = font or (L.SZ_TBL_WIDE if len(subs) > 11 else L.SZ_TBL)
+    f = font or L.tbl_font(len(subs))
     avail = L.CONTENT_BOTTOM - y - 0.28
     wid = [v * w / sum(widths) for v in widths]
     while f > 4.0:      # 加咗公式行同「涉及項目數量」行之後會高咗 → 自動縮到放得落
@@ -1221,7 +1223,7 @@ def render_generic(prs, title, df, *, sec=3, crumb=None, headline=None, note=Non
     probe_top = L.content_top(head, W)
     avail = L.CONTENT_BOTTOM - probe_top - 0.24
     # 欄多（4.2 = 19 欄）→ 字要細啲，唔係 PowerPoint 會自動長高 row 爆版（TABLE-GROW）
-    fz = L.SZ_TBL if len(subs) <= 13 else L.SZ_TBL_WIDE
+    fz = L.tbl_font(len(subs))
     #   留 0.30in headroom：draw_table 派嘅 row 高同 PowerPoint 實際 wrap 有少少落差
     while fz > 4.0 and (L.header_h(supers, subs, wid, max(4.5, fz - 0.5))
                         + sum(L.row_h(c, wid, fz) for _k, c in rows)) > avail - 0.30:
