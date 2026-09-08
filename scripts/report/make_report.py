@@ -1467,7 +1467,7 @@ def _cn(n):
 
 
 def _amt(wan):
-    """萬 → 報告用字。scan：≥1億寫『［金額］』，<1億寫『［金額］』。"""
+    """萬 → 報告用字。≥1億寫『X.X億澳門元』（一位小數），<1億寫『X,XXX萬澳門元』（整數千分位）。"""
     try:
         w = abs(float(wan or 0))
     except (TypeError, ValueError):

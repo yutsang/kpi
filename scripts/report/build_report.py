@@ -1509,7 +1509,7 @@ def load_split(path: Path, log=print) -> dict:
          "actual": {yr: {(gaming, 碼): (設施建設, 活動舉辦)}},
          "in_plan":{yr: {(gaming, 碼), …}}}
 
-    ⚠ in_plan 唔可以用「計劃金額 > 0」——報告 ［項目數］入面有 6 個計劃金額係 0
+    ⚠ in_plan 唔可以用「計劃金額 > 0」——原報告嗰批項目入面有幾個計劃金額係 0
       （scan p10 註釋2）。用【該年 block 嘅「項目狀況」有冇填】做判斷：
       唔屬該年計劃嘅項目，成個 block 都係空白。
     """
@@ -3620,7 +3620,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 1c9c88f · content f54b17da · bundled 2026-09-08 16:23"
+BUILD_STAMP = "base 94c06a0 · content 90a23d16 · bundled 2026-09-08 16:24"
 
 
 # ── from make_report ──
@@ -4996,7 +4996,7 @@ def _cn(n):
 
 # ── from make_report ──
 def _amt(wan):
-    """萬 → 報告用字。scan：≥1億寫『［金額］』，<1億寫『［金額］』。"""
+    """萬 → 報告用字。≥1億寫『X.X億澳門元』（一位小數），<1億寫『X,XXX萬澳門元』（整數千分位）。"""
     try:
         w = abs(float(wan or 0))
     except (TypeError, ValueError):
