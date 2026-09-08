@@ -931,8 +931,14 @@ def _cum_extra(tbl, budget):
 
 def _collect_toc(prs, W, H):
     """由【已起好嘅版】反推目錄：深色分隔頁 = 章節；內容頁 crumb「章節 | 子題」= 子項。
-    頁碼 = 插入目錄之後嘅位置（+1）。"""
-    ent, last = [], None
+    頁碼 = 插入目錄之後嘅位置（+1）。
+
+    ⚠ 子題行嘅 y 一定要跟 L.SUBTITLE_Y —— 寫死過 0.28~0.46，後尾照原報告校準
+    將 SUBTITLE_Y 搬去 0.50，個窗就漏空咗，目錄變咗「6 章 / 0 子項」。
+    罐頭版（1.1 架構圖／4.4 流程／4.5 編制基礎／⑤ KPI）冇呢條 crumb，
+    佢哋靠畫布外嘅 UpSlide 章節標記（y < 0）出子項。"""
+    lo_y, hi_y = L.SUBTITLE_Y - 0.24, L.SUBTITLE_Y + 0.14
+    ent, done, seen_ch = [], set(), False       # done = 本章已入目錄嘅子題（分頁／插版都唔會重覆）
     for i, sl in enumerate(prs.slides, 1):
         full = any(sh.width / 914400.0 > W - 0.1 and sh.height / 914400.0 > H - 0.1
                    for sh in sl.shapes)
@@ -944,15 +950,22 @@ def _collect_toc(prs, W, H):
             ttl = next((t for t in texts if len(t) >= 2 and t != "KPMG"
                         and not re.fullmatch(r"\d+\.", t)), "")
             if no and ttl:
-                ent.append((no, ttl.split("\n")[0], False, pg)); last = None
+                ent.append((no, ttl.split("\n")[0], False, pg))
+                done, seen_ch = set(), True
             continue
+        sub = ""
         for sh in sl.shapes:
-            if sh.has_text_frame and 0.28 < sh.top / 914400.0 < 0.46 and "  |  " in sh.text_frame.text:
+            if not sh.has_text_frame:
+                continue
+            top = sh.top / 914400.0
+            if lo_y < top < hi_y and "  |  " in sh.text_frame.text:
                 sub = sh.text_frame.text.split("  |  ")[-1].strip()
-                sub = re.sub(r"（\d+/\d+）$", "", sub).strip()
-                if sub and sub != last:
-                    ent.append(("", sub, True, pg)); last = sub
                 break
+            if top < 0 and not sub:            # 罐頭版：畫布外嘅 UpSlide 章節標記
+                sub = sh.text_frame.text.strip()
+        sub = re.sub(r"（\d+/\d+）$", "", sub).strip()
+        if sub and sub not in done and seen_ch:  # 第 1 章之前嘅前置罐頭版唔入目錄
+            ent.append(("", sub, True, pg)); done.add(sub)
     return ent
 
 
@@ -2051,8 +2064,12 @@ def main():
         fa = S.facility_activity(sdf, bk, split)
         if not fa.empty:
             # scan p43-45：4.2 三版【全部淨係表、冇右邊敘述】→ side=False；表頭下有公式行
+            # ⚠ 原報告呢一節【兩個名】：2025年度計劃嗰版(s47)叫「2025年度投資計劃區分…的投資金額」，
+            #   兩版期後(s48-49)叫「2025年發生的投資金額區分…」。要逐版跟返，唔可以三版一個名。
+            sub42 = ("2025年度投資計劃區分設施建設/活動舉辦的投資金額"
+                     if bk == "2025年度投資計劃" else "2025年發生的投資金額區分設施建設/活動舉辦")
             render_generic(prs, f"{ent_up} {bk}的投資支出 — 區分設施建設/活動舉辦", fa.fillna(""), sec=3,
-                           crumb=f"{S4}  |  2025年發生的投資金額區分設施建設/活動舉辦", side=False,
+                           crumb=f"{S4}  |  {sub42}", side=False,
                            formula=S.fa_formula_row,
                            headline=(f"{ent_up} {bk}區分設施建設/活動舉辦的投資金額"),
                            note="註：金額為潛在調整後金額，單位為萬澳門元。",
