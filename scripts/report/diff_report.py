@@ -31,6 +31,10 @@ except ImportError:
 
 EMU_IN = 914400.0
 
+# 報告六大章（用嚟由「主要發現」呢類短標籤還原返章名）
+SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
+            "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
+
 # 初稿／模板留低嘅工作痕跡同 placeholder —— 唔算內容
 MARKERS = ("已更新表格", "定稿後還需手動更新", "目錄手動修改為繁體字",
            "DO NOT DELETE", "Workspace (", "Click to edit", "单击以编辑",
@@ -111,6 +115,20 @@ def _crumb(slide, W):
         parts = re.split(r"\s*[|｜]\s*", crumb[1], maxsplit=1)
         ch = parts[0].strip()
         sub = parts[1].strip() if len(parts) > 1 else ""
+    if not ch and not big:
+        # 主要發現版（原報告 s30-44 同我哋）冇麵包屑，只喺 y≈0.30 寫「主要發現」。
+        # 攞嗰個短標籤去 SECTIONS 做「包含」配對，還原章名 —— 唔還原就成章 91 個數
+        # 當「未做」，收斂率會無端跌 18 個百分點。
+        for sh in _walk(slide.shapes):
+            if not sh.has_text_frame:
+                continue
+            t = (sh.text_frame.text or "").strip()
+            if not (2 <= len(t) <= 12) or not (0.2 < _in(sh.top) < 0.45):
+                continue
+            hit = [s for s in SECTIONS if t in s or s in t]
+            if hit:
+                ch = hit[0]
+                break
     return (big or ch, marker or sub, bool(big))
 
 
