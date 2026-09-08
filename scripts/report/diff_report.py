@@ -147,16 +147,16 @@ def source_nums(entity):
         from openpyxl import load_workbook
     except ImportError:
         return None, None, []
-    # 唔靠 glob 嘅 pattern 大細楷（Windows 唔敏感、Mac 敏感）—— 自己列 dir 再比對。
-    files, e = [], entity.lower()
-    for d in ("data/表2", "data/投資項目清單", "data/表二", "data"):
-        p = Path(d)
-        if not p.is_dir():
+    # 由 data/ 遞歸搵，唔好寫死 folder 名（之前寫死 "data/表2" 撞唔到，得清單入到，
+    # 表2 七個檔全部漏咗，令【源冇】報大數）。
+    root = Path("data")
+    if not root.is_dir():
+        return None, None, []
+    e, files = entity.lower(), []
+    for f in root.rglob("*.xls*"):
+        if f.name.startswith("~$") or e not in f.name.lower():
             continue
-        for f in p.glob("*.xls*"):
-            if f.name.startswith("~$") or e not in f.name.lower():
-                continue
-            files.append(str(f))
+        files.append(str(f))
     files = sorted(set(files))
     if not files:
         return None, None, []
