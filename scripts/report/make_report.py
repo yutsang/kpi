@@ -221,14 +221,17 @@ def _dump_pptx_text(prs, entity, with_tables=False):
 ENT_UP = "MGM"      # 由 main() 設；breadcrumb 右上角用（章節清單見 layout.SECTIONS）
 
 
-def _page(prs, section_idx=0, crumb=None, headline=None):
+def _page(prs, section_idx=0, crumb=None, headline=None, *, hsize=None):
     """開一版內容頁 = breadcrumb + footer(+頁碼) + 灰標題 + navy 導語。
-    回 (slide, W, H, top_y)：top_y = 內容可以由邊開始。"""
+    回 (slide, W, H, top_y)：top_y = 內容可以由邊開始。
+    ★ 導語字號跟返原報告【按章節】分（L.HEAD_SIZE）：①②③ 12pt、④ 18pt、⑤⑥ 24pt。
+      之前一律 12pt，4.x 同附件嘅標題細過原報告一大截。"""
     slide = L.blank(prs)
     W, H = L.size_of(prs)
     L.breadcrumb(slide, W, section_idx, ENT_UP)
     L.footer(slide, W, H, len(prs.slides._sldIdLst))
-    top = L.page_head(slide, W, crumb, headline) if crumb else 0.5
+    hs = hsize or L.HEAD_SIZE.get(section_idx, L.SZ_HEAD)
+    top = L.page_head(slide, W, crumb, headline, hsize=hs) if crumb else 0.5
     return slide, W, H, top
 
 
@@ -795,7 +798,8 @@ def render_bucket_adjustment(prs, ent_up, bk, sdf, ov, narr, llm=None):
     slide, W, H, top = _page(prs, 1, crumb, head + (f"（1/{n_all}）" if n_all > 1 else ""))
     t2 = L.caption_bar(slide, L.MARGIN, top, left_w, tname)
     tbot = (_draw_adj_table(slide, L.MARGIN, t2, left_w, tbl.fillna("")) or (t2, 0))[0]
-    L.table_footnote(slide, L.MARGIN, tbot + 0.06, left_w,
+    _y = L.adj_note(slide, tbot + 0.06, L.ADJ_NOTE_POST, w=left_w)   # 原報告 s22/s26
+    L.table_footnote(slide, L.MARGIN, _y + 0.04, left_w,
                      "註：金額單位為萬澳門元；括號表示調減。")
     L.put(slide, rx, top, rw, 0.18, tname, size=7, bold=True, color=L.NAVY)
     L.prose_numbered(L._tb(slide, rx, top + 0.22, rw, L.CONTENT_BOTTOM - top - 0.22),
@@ -1947,10 +1951,10 @@ def main():
         _tw = _W - 2 * L.MARGIN
         _t2 = L.caption_bar(_sl, L.MARGIN, _top, _tw,
                             f"{ent_up} 2025年度投資計劃報告投資金額潛在調整")
-        _draw_adj_table(_sl, L.MARGIN, _t2, _tw, adj2.fillna(""))
-        L.put(_sl, L.MARGIN, L.CONTENT_BOTTOM - 0.26, _tw, 0.3,
-              "註：金額單位為萬澳門元；括號表示調減。", size=L.SZ_NOTE - 1, italic=True, color=L.GREY)
-        L.source_note(_sl, _W)
+        _bot = (_draw_adj_table(_sl, L.MARGIN, _t2, _tw, adj2.fillna("")) or (_t2, 0))[0]
+        _y = L.adj_note(_sl, _bot + 0.06, L.ADJ_NOTE_1_4)      # 原報告 s15 個白底說明框
+        L.table_footnote(_sl, L.MARGIN, _y + 0.04, _tw,
+                         "註：金額單位為萬澳門元；括號表示調減。")
     else:
         render_overview_page(prs, _c14, ahl + _sfx14, adj.fillna(""), ab, sec=0,
                              table_name=f"{ent_up} 2025年度投資計劃報告投資金額的潛在調整事項匯總",

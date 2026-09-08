@@ -405,6 +405,30 @@ def caption_bar(slide, x, y, w, text, *, size=SZ_CAPTION):
 
 SOURCE_LINE = "資料來源：管理層提供的項目投入明細表，管理層訪談；畢馬威分析"
 
+# 調整表（1.4／2.2／2.4）表底嘅說明框 —— 原報告 s15／s22／s26 都有，
+# 白底、8pt 粗體 navy、闊 7.3~7.6in。之前我哋完全冇呢一段。
+ADJ_NOTE_OVERLAP = ("上表的調整金額已考慮不同調整項之間的重合部分。"
+                    "若存在重合的金額，已在其中一項調整金額中列示，不會重複調整。")
+ADJ_NOTE_1_4 = ADJ_NOTE_OVERLAP + "關於上表列示的各項潛在調整事項詳情，請見下頁。"
+ADJ_NOTE_POST = (ADJ_NOTE_OVERLAP
+                 + "對於同一類調整，上表的調整序號與「2025年度投資計劃報告投資金額的"
+                   "潛在調整事項匯總」的調整序號一致。")
+
+
+def adj_note(slide, y, text, *, w=7.4):
+    """調整表下面嘅說明框（原報告 s15/s22/s26 實測：白底 8pt 粗體 navy）。回底部 y。"""
+    if not text:
+        return y
+    h = min(est_lines(text, w, 8.0) * 8.0 * 1.35 / 72.0 + 0.06,
+            max(0.18, CONTENT_BOTTOM + 0.30 - y))
+    y = min(y, CONTENT_BOTTOM + 0.30 - h)
+    box = _tb(slide, MARGIN, y, w, h)
+    box.fill.solid(); box.fill.fore_color.rgb = WHITE
+    p = box.text_frame.paragraphs[0]
+    r = p.add_run(); r.text = text
+    setfont(r, 8.0, bold=True, color=NAVY)
+    return y + h
+
 
 def table_footnote(slide, x, y, w, note=None, *, source=None):
     """表底下嘅「資料來源＋註釋」—— 原報告係【一個 7pt 文字框】，闊度＝表闊，
