@@ -2627,21 +2627,57 @@ except ImportError:
 
 
 # ── from inspect_biao2 ──
-PASSWORD = os.environ.get("KPI_XLSX_PW", "")
+def _xlsx_pw():
+    """表2／清單嘅加密密碼。呢個 repo 係 public，唔可以寫死喺 code，所以兩個來源：
+        1. 環境變數 KPI_XLSX_PW
+        2. conf/local/credentials.yml 嘅 `xlsx_password:`（gitignored，同 workbench key 同一個檔）
+    兩個都冇 → 回 ""，load_wb 會出一句講得清楚嘅錯，唔會淨係 msoffcrypto 嗰句
+    「No key specified」（見過一次，睇唔出係密碼未設定）。"""
+    v = os.environ.get("KPI_XLSX_PW", "").strip()
+    if v:
+        return v
+    for p in (Path("conf/local/credentials.yml"), Path("credentials.yml")):
+        if not p.exists():
+            continue
+        try:                                # 唔想為咗一行字 import yaml（有時冇裝）
+            for line in p.read_text(encoding="utf-8").splitlines():
+                k, _, val = line.partition(":")
+                if k.strip() in ("xlsx_password", "xlsx_pw") and val.strip():
+                    return val.strip().strip('"').strip("'")
+        except Exception:
+            pass
+    return ""
 
 
 # ── from inspect_biao2 ──
-def load_wb(path, password=PASSWORD):
+PASSWORD = _xlsx_pw()
+
+
+# ── from inspect_biao2 ──
+_PW_WARNED = False
+
+
+# ── from inspect_biao2 ──
+def load_wb(path, password=None):
     """開 xlsx；『not a zip file』＝加密 → msoffcrypto 用密碼解。回 openpyxl workbook。"""
     try:
         return openpyxl.load_workbook(path, data_only=True, read_only=True)
     except Exception:
         pass
+    pw = password if password is not None else PASSWORD
+    if not pw:
+        global _PW_WARNED
+        if not _PW_WARNED:
+            _PW_WARNED = True
+            print("  ✗ 加密檔密碼未設定 → 表2／加密清單全部開唔到（敘述會少咗最權威嗰個來源）。"
+                  "\n     設定方法（二擇一）：環境變數 KPI_XLSX_PW，"
+                  "或者 conf/local/credentials.yml 加一行 `xlsx_password: \"…\"`")
+        raise RuntimeError("加密檔密碼未設定（KPI_XLSX_PW 或 credentials.yml xlsx_password）")
     import msoffcrypto
     buf = io.BytesIO()
     with open(path, "rb") as f:
         off = msoffcrypto.OfficeFile(f)
-        off.load_key(password=password)
+        off.load_key(password=pw)
         off.decrypt(buf)
     buf.seek(0)
     return openpyxl.load_workbook(buf, data_only=True, read_only=True)
@@ -3620,7 +3656,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base cb764b0 · content 6822738f · bundled 2026-09-08 17:16"
+BUILD_STAMP = "base 0279805 · content bff5793b · bundled 2026-09-08 17:35"
 
 
 # ── from make_report ──
