@@ -14,13 +14,14 @@ dump_qingdan.py — 望實 data\\投資項目清單 6 個清單檔（+ 任何指
   - sheet 名、維度
   - 頭 ~3 行（當表頭）逐欄文字
   - 之後 ~6 行資料（逐欄），等睇到「項目編號」欄喺邊、咩格式（76 / CE001 / 項目3 / B11.1…）
-加密檔自動用 $KPI_XLSX_PW 解。
+加密檔自動用 KPI_XLSX_PW 解。
 """
+import os
 import io
 import sys
 from pathlib import Path
 
-PASSWORD = "$KPI_XLSX_PW"
+PASSWORD = os.environ.get("KPI_XLSX_PW", "")  # 加密檔密碼：set 環境變數 KPI_XLSX_PW（呢個 repo 係 public，唔寫死）
 
 
 def _open(path: Path):

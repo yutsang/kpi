@@ -10,12 +10,13 @@ inspect_headers.py — adhoc：對齊 表頭.xlsx 前，先 inspect source_1 / s
 做乜：
   1. 讀 <root>\\表頭.xlsx → 目標欄（standard header）。
   2. 行勻 <root>\\source_1 所有 Excel/CSV（**跳過任何叫 ss 嘅 subfolder**），
-     開密碼檔用 $KPI_XLSX_PW，偵測 header 行，同 表頭 對欄（缺/多/次序）。
+     開密碼檔用 KPI_XLSX_PW，偵測 header 行，同 表頭 對欄（缺/多/次序）。
   3. source_2 一齊列（結構 + 欄），佢係「有問題/要挑出嚟」嗰批。
   4. 出：資料夾樹 + 每檔欄 diff + summary。寫 <root>\\_inspect_report.txt，同時印出嚟。
 
 report 貼返嚟俾我（或者放 Mac results/），我再設計對齊。純讀，唔改任何檔。
 """
+import os
 from __future__ import annotations
 
 import argparse
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import openpyxl
 
-PASSWORD = "$KPI_XLSX_PW"
+PASSWORD = os.environ.get("KPI_XLSX_PW", "")  # 加密檔密碼：set 環境變數 KPI_XLSX_PW（呢個 repo 係 public，唔寫死）
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
 DATA_EXT = EXCEL_EXT | {".csv"}
 SKIP_DIRS = {"ss"}          # user：source_1 內 ss subfolder 唔理
@@ -37,7 +38,7 @@ def _norm(x) -> str:
 
 
 def load_wb(path: Path):
-    """開 workbook（read-only）。加密就用 $KPI_XLSX_PW 解。回 (wb, encrypted_bool)。"""
+    """開 workbook（read-only）。加密就用 KPI_XLSX_PW 解。回 (wb, encrypted_bool)。"""
     try:
         return openpyxl.load_workbook(path, read_only=True, data_only=True), False
     except Exception:

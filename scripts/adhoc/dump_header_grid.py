@@ -17,6 +17,7 @@ Windows 跑：
 
 純讀，唔改檔。輸出寫 <root>\\_header_grid.txt。
 """
+import os
 from __future__ import annotations
 
 import argparse
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import openpyxl
 
-PASSWORD = "$KPI_XLSX_PW"
+PASSWORD = os.environ.get("KPI_XLSX_PW", "")  # 加密檔密碼：set 環境變數 KPI_XLSX_PW（呢個 repo 係 public，唔寫死）
 DEFAULT_FILES = [
     "表頭.xlsx",
     r"source_1\其他範疇\MGM-投資計劃執行情況表二（其他範疇）.xlsx",
@@ -35,7 +36,7 @@ DEFAULT_FILES = [
 
 
 def load_wb(path: Path):
-    """非 read-only（要攞 merged_cells）；加密就 $KPI_XLSX_PW 解。"""
+    """非 read-only（要攞 merged_cells）；加密就 KPI_XLSX_PW 解。"""
     try:
         return openpyxl.load_workbook(path, data_only=True)
     except Exception:

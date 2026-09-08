@@ -8,11 +8,12 @@ Usage (Windows):
 Prints for each non-empty cell in sheet 1:
   row | col | value[:35] | cell.font.bold | in_rich_lookup | rt_runs_bold
 """
+import os
 import sys, io, zipfile, xml.etree.ElementTree as ET
 from pathlib import Path
 from copy import copy
 
-PASSWORD = "$KPI_XLSX_PW"
+PASSWORD = os.environ.get("KPI_XLSX_PW", "")  # 加密檔密碼：set 環境變數 KPI_XLSX_PW（呢個 repo 係 public，唔寫死）
 NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 
 

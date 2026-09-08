@@ -14,14 +14,15 @@ dump_qingdan_codes.py — 專睇『投資項目清單』每個檔嘅「項目編
     python scripts\\adhoc\\dump_qingdan_codes.py "ad-hoc\\workspace\\data\\投資項目清單"
     或指定單一檔（例如淨睇 SJM）：
     python scripts\\adhoc\\dump_qingdan_codes.py "…\\3.SJM.2025年度…投资项目清单.xlsx"
-加密檔自動用 $KPI_XLSX_PW 解。
+加密檔自動用 KPI_XLSX_PW 解。
 """
+import os
 import io
 import re
 import sys
 from pathlib import Path
 
-PASSWORD = "$KPI_XLSX_PW"
+PASSWORD = os.environ.get("KPI_XLSX_PW", "")  # 加密檔密碼：set 環境變數 KPI_XLSX_PW（呢個 repo 係 public，唔寫死）
 _CODE_HINT = re.compile(r"序號|編號|編碼|名稱|項目")
 
 

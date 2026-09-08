@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-biao2.py — 由「表2」(審查底稿，加密 $KPI_XLSX_PW) 逐項目抽 finding，做第 2 個 narrative source
+biao2.py — 由「表2」(審查底稿，加密 （密碼由環境變數 KPI_XLSX_PW 提供）) 逐項目抽 finding，做第 2 個 narrative source
 （配清單一齊餵 LLM）。表2＝最權威嘅調整/發現來源。
 
 ★ structured 抽（2026-08-12 起）：表2 有標準兩層表頭 —— group 行 +【下面嗰行】先係 detail

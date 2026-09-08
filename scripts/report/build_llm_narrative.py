@@ -11,8 +11,12 @@ header + charge-code/region）。本 repo 已有 client：src/kpi/lib/workbench.
 要 KPMG 網 + creds：conf/local/credentials.yml『workbench:』或 env WB_API_KEY/WB_BASE_URL/…。
 用法（Windows，KPMG 網內）：
     python scripts\\report\\build_llm_narrative.py "tableau_combined_25.csv" --entity mgm ^
-        --qingdan "data\\投資項目清單\\3. MGM.…投资项目清单.xlsx" [--workers 3] [--model 5.5]
+        --qingdan "data\\投資項目清單\\<清單檔>.xlsx" [--workers 3] [--model 5.5]
     # 唔想出網，先驗 config： ... --config
+
+★ prompt 入面嘅【示範句式】（few-shot）係原報告節錄，屬客戶內容，唔入 repo（呢個 repo 係
+  public）。真示範放 conf/local/fewshot.json（gitignored，Mac→Win 手抄）；搵唔到就用下面
+  去識別化嘅通用示範 —— 句式一樣，只係唔點名、數字係假。冇 conf 都跑得，只係文字冇咁貼。
 """
 import json
 import re
@@ -33,6 +37,33 @@ import build_overview_tables as O
 import build_narrative as N
 import biao2 as B2
 from kpi.lib.workbench import Workbench
+
+_FEWSHOT = None
+
+
+def fewshot(key, default=""):
+    """示範句式：先揾 conf/local/fewshot.json（真報告節錄，gitignored），冇就用通用版。"""
+    global _FEWSHOT
+    if _FEWSHOT is None:
+        try:
+            _FEWSHOT = json.loads(Path("conf/local/fewshot.json").read_text(encoding="utf-8"))
+        except Exception:
+            _FEWSHOT = {}
+    v = _FEWSHOT.get(key)
+    return v if isinstance(v, str) and v.strip() else default
+
+
+# 通用示範（fewshot.json 冇嗰陣用）：句式／單位寫法同真示範一樣，項目名同數字全部係假。
+DEMO_BKT = (
+    "　『在2024年度投資計劃期後投資金額中，承批公司申報了某展覽場館開幕營運後的營運成本"
+    "（XXX萬澳門元）。』\n"
+    "　『在2024年度投資計劃期後投資金額中，承批公司仍申報了酒店客房改造支出，主要包括："
+    "1）非博彩項目XX某演藝場地（娛樂表演範疇）的相關支出XXX萬澳門元；"
+    "2）非博彩項目XX某康養中心的相關支出X,XXX萬澳門元。』")
+DEMO_TBL = (
+    "　『…在2025年度執行報告中申報的「因發生期後事項需作後續調整之2024年度博彩／非博彩項目」"
+    "投資金額為X.X億澳門元，主要包括…以及…。本次審查工作識別潛在調減金額約X.X億澳門元，"
+    "調減後金額為X.X億澳門元，主要涉及會議展覽、文化藝術、社區旅遊等非博彩投資範疇的XX個項目。』")
 
 # 調整事項節（S16-17）：KPMG 審計角度，可講剔除/調減建議
 #  ⚠ ADJ_TAIL 抽咗做常數 —— SYS_TBL_ADJ 靠 .replace(ADJ_TAIL, "") 剝走佢，寫死字串好易失聯。
@@ -103,13 +134,10 @@ def _bkt_prompt(yr, adj_type, amt_wan, projects):
         elif find:
             seg += f"；KPMG分析發現：{find[:300]}"
         lines.append(seg)
+    demo = fewshot("bkt", DEMO_BKT)
     return ("請寫【一句至兩句】開場描述，講清楚喺該年度期後投資金額中，承批公司申報咗啲乜"
             "而我哋認為要調整。示範句式（要用返下面嘅真數同項目，唔好照抄）：\n"
-            "　『在2024年度投資計劃期後投資金額中，MGM申報了［項目名］"
-            "營運後的營運成本（［金額］）。』\n"
-            "　『在2024年度投資計劃期後投資金額中，MGM仍申報了酒店客房改造支出，主要包括："
-            "1）非博彩項目111［項目名］（娛樂表演範疇）的相關支出［金額］；"
-            "2）非博彩項目21［項目名］的相關支出［金額］。』\n"
+            f"{demo}\n"
             "★只寫呢一兩句，唔好寫調整建議／跨司意見／結論（後面有固定句接落去）。\n\n"
             + "\n".join(lines))
 
@@ -148,9 +176,7 @@ def _tbl_prompt(title, df, sources, unit="萬澳門元"):
     src = ("\n".join(f"- {s}" for s in sources[:6])) if sources else "（無額外資料，只根據表格數字撰寫）"
     return (f"以下係報告入面一張表，請寫佢【旁邊】嘅敘述，同埋成版最頂嗰句【導語】。\n\n"
             f"★導語要跟返呢份報告一貫句式（示範，唔好照抄字眼，要用返下面表格嘅真數）：\n"
-            f"　『…在2025年度執行報告中申報的「因發生期後事項需作後續調整之2024年度博彩／非博彩項目」"
-            f"投資金額為［金額］，主要包括…以及…。本次審查工作識別潛在調減金額約［金額］，"
-            f"調減後金額為［金額］，主要涉及會議展覽、文化藝術、社區旅遊等非博彩投資範疇的［項目數］。』\n"
+            f"{fewshot('tbl', DEMO_TBL)}\n"
             f"　金額單位跟報告習慣：≥1億寫『X.X億澳門元』（一位小數），唔夠1億寫『X,XXX萬澳門元』"
             f"（【整數、千分位、冇小數】—— 唔可以寫『5,528.9萬澳門元』，要寫『5,529萬澳門元』）。\n\n"
             f"表名：{title}\n金額單位：{unit}（括號 = 負數／調減，「-」= 零）\n\n"
@@ -161,9 +187,9 @@ def _tbl_prompt(title, df, sources, unit="萬澳門元"):
 def _adj_prompt(adj_type, amt_wan, projects):
     lines = [f"潛在調整類型：{adj_type}", f"涉及潛在調減金額：約{abs(amt_wan):,.0f}萬澳門元",
              "涉及項目及審查發現（審查底稿表2 為最權威來源，優先採用其跨司裁決及具體內容）："]
-    # ★ 之前 [:6] × 900 字：golden 逐類說明會點名 6-8 個事項（例如「其他日常營運支出調整」
-    #   拆《［項目名］》人工/營運、珍寶博物館人工/營運、［項目名］座椅、餐飲概念 356萬、
-    #   諮詢費 120萬、［項目名］…），我哋餵唔夠料，LLM 唯有概括 → diff 見到嗰批「源有但冇寫」。
+    # ★ 之前 [:6] × 900 字：原報告逐類說明會點名 6-8 件事（一類調整拆到演出項目人工／
+    #   場館營運／設備採購／餐飲概念／諮詢費…逐筆寫金額），我哋餵唔夠料，LLM 唯有概括
+    #   → diff 見到嗰批「源有但冇寫」。
     for name, find, mgmt, b2, ruling in projects[:10]:
         seg = f"- 項目「{name}」"
         if b2:      # 表2＝審查底稿，最可信，放最前、俾最多
@@ -183,8 +209,8 @@ def _adj_prompt(adj_type, amt_wan, projects):
             f"請寫報告正文（250-550字，事實愈齊愈好，唔好為咗短而略去項目／金額／理據）："
             f"說明該調整類型、金額、【逐個】主要涉及嘅投資項目（點名 + 各自金額 + 具體投資內容）同調減原因。"
             f"★涉及多個項目／多筆支出時，用「1）…；2）…；3）…」逐項列出，跟原報告寫法。"
-            f"★資料入面出現嘅具體金額／件數／比例，【原文照引】（例如「［金額］」「［金額］」"
-            f"「佔比93%」），唔好改寫成「約數」或者略去 —— 原報告係逐筆寫出金額嘅。"
+            f"★資料入面出現嘅具體金額／件數／比例，【原文照引】（例如「X,XXX萬澳門元」「佔比XX%」"
+            f"「涉及X個項目」），唔好改寫成「約數」或者略去 —— 原報告係逐筆寫出金額嘅。"
             f"★之後另起一段講審查過程同結論（我們就上述事項已取得…的明確回覆／結合跨司工作組意見及我們對上述項目支出的審查，我們認為…）。"
             f"★用字須跟原報告：如有向跨司工作組諮詢得到嘅回覆，用『跨司工作組』集體稱呼帶出其立場"
             f"（例如『根據我們向跨司工作組諮詢得到的回覆，跨司工作組認為／未同意…』），"

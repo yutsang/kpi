@@ -28,6 +28,7 @@ Windows 跑：
     # 3) 冇問題先批全部
     python scripts\\adhoc\\align_to_header.py --root ad-hoc\\workspace --all --with-overlay
 """
+import os
 from __future__ import annotations
 
 import argparse
@@ -46,11 +47,11 @@ try:
 except ImportError:
     _CellRichText = _TextBlock = _InlineFont = None  # openpyxl < 3.1 冇 CellRichText
 
-PASSWORD = "$KPI_XLSX_PW"
+PASSWORD = os.environ.get("KPI_XLSX_PW", "")  # 加密檔密碼：set 環境變數 KPI_XLSX_PW（呢個 repo 係 public，唔寫死）
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls"}
 HDR_SCAN = 12                       # 掃頭幾行揾子表頭行
 GATE_NOADJ = True                   # 冇調整嘅項目 → 建議調整欄留空（唔填 0）；--fill-zero-adj 關掉
-ENCRYPT_OUT = True                  # 輸出用 $KPI_XLSX_PW 重新加密（保留 source 密碼）；--no-encrypt 關掉
+ENCRYPT_OUT = True                  # 輸出用同一個密碼重新加密（保留 source 密碼）；--no-encrypt 關掉
 INSERT_XSGZ_FB_COL = True           # #1：輸出喺『承批公司的反饋意見』後插空白『跨司工作組的反饋意見』欄；--no-extra-col 關掉
 ADD_PROJ_CODE_COL = True            # #2(0720)：輸出最右加 helper 欄『項目編號』（按項目合併，提取項目碼）；--no-code-col 關掉
 _THIN = Side(style="thin", color="BFBFBF")
@@ -427,7 +428,7 @@ def copy_full_cell(dst, src_cell) -> None:
 
 
 def encrypt_file(plain: Path, enc: Path, log) -> bool:
-    """用 $KPI_XLSX_PW 重新加密（保留 source 密碼保護）。msoffcrypto-tool CLI -e。"""
+    """用同一個密碼（KPI_XLSX_PW）重新加密（保留 source 密碼保護）。msoffcrypto-tool CLI -e。"""
     import subprocess
     import sys
     base = [str(plain), str(enc), "-e", "-p", PASSWORD]
@@ -552,7 +553,7 @@ NO_MERGE_SUBS = {nkey("是否需進一步與跨司工作組溝通")}
 
 # ── I/O ──────────────────────────────────────────────────────────────────
 def load_wb(path: Path):
-    """非 read-only（要 merged_cells）；加密就 $KPI_XLSX_PW 解。
+    """非 read-only（要 merged_cells）；加密就 KPI_XLSX_PW 解。
     load 後立即 build rich-text lookup（zip 仍開，archive 未關），cache 到 wb._kpi_rich_table。
     wb._kpi_src_zip_src 儲 source ZIP（Path 或解密 BytesIO），供 post-save drawing injection 用。"""
     try:
@@ -1571,7 +1572,7 @@ def process_file(root: Path, rel: str, tpl: Template, out_dir: Path,
                 _inject_sheet_drawings_raw(src_zip_src, sn, tmp)
         if encrypt_file(tmp, out_path, log):
             tmp.unlink(missing_ok=True)
-            log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}（已加密 $KPI_XLSX_PW）")
+            log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}（已加密 （密碼由環境變數 KPI_XLSX_PW 提供））")
         else:
             shutil.move(str(tmp), str(out_path))
             log(f"  ✓ 寫入 {out_path.relative_to(root).as_posix()}（未加密）")
@@ -1692,7 +1693,7 @@ def audit(root: Path, tpl: Template, log):
         log(f"    - {x}")
     log(f"F 附件(best-effort 照抄)           : {len(fAtt)}")
     log(f"✓ 全對齊冇 flag 嘅 sheet           : {len(ok)}")
-    log("D 加密：audit 唔加密；實跑每檔會用 $KPI_XLSX_PW 重加密，只有 log 出「⚠ 加密失敗」先算 fail")
+    log("D 加密：audit 唔加密；實跑每檔會用同一個密碼重加密，只有 log 出「⚠ 加密失敗」先算 fail")
 
 
 # ── read-only 數字對數（reconciliation）：唔寫檔，查每個項目金額拼唔拼得返 ──────
@@ -1974,7 +1975,7 @@ def main():
     ap.add_argument("--fill-zero-adj", action="store_true",
                     help="冇調整都照抄 0（預設留空）")
     ap.add_argument("--no-encrypt", action="store_true",
-                    help="輸出唔加密（預設用 $KPI_XLSX_PW 重新加密）")
+                    help="輸出唔加密（預設用同一個密碼重新加密）")
     ap.add_argument("--no-extra-col", action="store_true",
                     help="唔插『跨司工作組的反饋意見』output-only 空白欄（#1）")
     ap.add_argument("--no-code-col", action="store_true",

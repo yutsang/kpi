@@ -6,7 +6,7 @@ Then conf/company_1 yearly_sources 2023 points at this file; the pipeline classi
 within NG) + H (predominant_rules on Account Code + Source). NG = 'NG11 Category' (given).
 
 Run (Windows):
-  python scripts/build_galaxy_23.py --pw $KPI_XLSX_PW
+  python scripts/build_galaxy_23.py --pw %KPI_XLSX_PW%
 Output → data/galaxy/raw/2023/galaxy_23_raw.xlsx  (sheet 'combine')
 """
 from __future__ import annotations

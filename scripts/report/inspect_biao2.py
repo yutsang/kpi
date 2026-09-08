@@ -12,6 +12,7 @@ inspect_biao2.py — 拆解「表2」(表二審查底稿) 結構。表2 = per-pr
   · 每欄：Excel字母 | 組標題(r上) | 欄名(r下) | 第一個非空樣本值
   · key 欄(投資項目序號及名稱) + 金額/調整/發現欄位置
 """
+import os
 import io
 import re
 import sys
@@ -23,7 +24,7 @@ try:
 except ImportError:
     print("✗ pip install openpyxl"); sys.exit(1)
 
-PASSWORD = "$KPI_XLSX_PW"     # 表2 同報告一樣加密（msoffcrypto）
+PASSWORD = os.environ.get("KPI_XLSX_PW", "")  # 加密檔密碼：set 環境變數 KPI_XLSX_PW（呢個 repo 係 public，唔寫死）     # 表2 同報告一樣加密（msoffcrypto）
 
 
 def load_wb(path, password=PASSWORD):
