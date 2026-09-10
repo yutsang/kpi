@@ -46,7 +46,8 @@ SUBTOT = RGBColor(0xD9, 0xE1, 0xF2)        # 小計
 TOTAL = RGBColor(0xBD, 0xD7, 0xEE)         # 總計
 BORDER = "BFBFBF"                          # 格線（srgbClr hex）
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-INK = RGBColor(0x22, 0x22, 0x22)           # 內文黑
+INK = RGBColor(0x00, 0x00, 0x00)           # 內文黑 —— 原報告實測係純黑 #000000
+#   （正文 9pt 微軟雅黑 #000000、附件表身都係 #000000）。之前寫 #222222 係估值。
 GREY = RGBColor(0x59, 0x59, 0x59)          # 註 / 資料來源
 DARK = RGBColor(0x0C, 0x23, 0x3C)          # 封面 / 章節分隔深底
 

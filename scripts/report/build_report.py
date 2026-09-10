@@ -73,7 +73,7 @@ WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 
 
 # ── from layout ──
-INK = RGBColor(0x22, 0x22, 0x22)
+INK = RGBColor(0x00, 0x00, 0x00)
 
 
 # ── from layout ──
@@ -3716,7 +3716,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base d4af49f · content 456b2698 · bundled 2026-09-10 17:32"
+BUILD_STAMP = "base 21868bf · content df73ad52 · bundled 2026-09-10 18:15"
 
 
 # ── from make_report ──

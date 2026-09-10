@@ -100,6 +100,10 @@ GOLD_SPEC = [
     ("breadcrumb 非當前章", 0.02, 0.28, 9.0, 8.0, False, "E5E5E5"),
     ("breadcrumb 當前章", 0.02, 0.28, 9.0, 8.0, True, "00338D"),
     ("「章 | 節」副標題", 0.40, 0.60, 99.0, 12.0, None, "00338D"),
+    # 導語字號逐章唔同（1-3 章 12pt、4 章 18pt、附件 24pt）；呢度查【眾數】，
+    # 1-3 章版數最多所以應該係 12pt。個別章唔同唔算差異。
+    ("導語（眾數＝1-3章）", 0.62, 0.98, 99.0, 12.0, None, "00338D"),
+    ("正文 body", 1.05, 6.40, 99.0, 9.0, None, "000000"),
     ("資料來源／註", 6.50, 6.80, 99.0, 7.0, None, "00338D"),
 ]
 # 主題色索引 → RGB（三個 slideMaster 色盤一樣）
@@ -141,12 +145,17 @@ def _styled_runs(slide, W):
     return out
 
 
-def _crumb(slide, W):
+def _crumb(slide, W, H=7.5):
     """一版嘅 (章, 子題)。子題優先讀【畫布外嗰個 UpSlide 章節標記】(y<0)：
     原報告主要發現同附件嗰批版冇麵包屑，節名淨係收喺嗰度（目錄亦係靠佢生成）。
     冇標記先退返讀 y≈0.50 嘅「章節 | 子題」麵包屑。章名喺分隔頁（≥30pt 大字）攞，
     之後逐版帶落去 —— 由 caller 用 _scan() 串起。"""
     marker, crumb, big = "", None, ""
+    # 分隔頁靠【滿版底色】認，唔好靠字號 —— 字號門檻 30pt 認唔到我哋嘅分隔頁
+    # （實際 24/26pt），降到 22pt 又會把附件版嘅標題（24-26pt）當成章名，
+    # 一章俾拆成十幾個假章。滿版底色只有分隔頁先有。
+    full = any(_in(sh.width) > W - 0.1 and _in(sh.height) > H - 0.1
+               for sh in _walk(slide.shapes))
     for sh in _walk(slide.shapes):
         if not sh.has_text_frame:
             continue
@@ -168,7 +177,7 @@ def _crumb(slide, W):
                           for r in p.runs if r.font.size), default=0)
             except Exception:
                 sz = 0
-            if sz >= 22:
+            if sz >= (18 if full else 30):
                 big = t
     ch = sub = ""
     if crumb:
@@ -192,6 +201,10 @@ def _crumb(slide, W):
     # ★ crumb 行先，big 只做後備 —— 降咗門檻之後，內容版嘅大導語（4.x／附件 18-24pt）
     #   都可能觸到 big；有 crumb 就一定唔係分隔頁。
     return (ch or big, marker or sub, bool(big) and not ch)
+
+
+def _crumb_of(slide, W, H):
+    return _crumb(slide, W, H)
 
 
 BARE = re.compile(r"\d[\d,]*(?:\.\d+)?")
@@ -343,10 +356,10 @@ def _scan(path):
     """→ [(版號, 章, 子題, [文字…])]。章名喺分隔頁定落，之後逐版帶落去
     （原報告主要發現／附件嗰批版本身冇章名）。"""
     prs = Presentation(str(path))
-    W = _in(prs.slide_width)
+    W, H = _in(prs.slide_width), _in(prs.slide_height)
     out, cur = [], ""
     for i, sl in enumerate(prs.slides, 1):
-        ch, sub, is_div = _crumb(sl, W)
+        ch, sub, is_div = _crumb(sl, W, H)
         if ch:
             cur = ch
         out.append((i, cur, "" if is_div else sub, _texts(sl, W)))
