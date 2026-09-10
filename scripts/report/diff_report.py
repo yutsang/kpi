@@ -11,6 +11,8 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
   ① 章節對照   golden 有邊啲子節 → 我哋出咗未（捉「成節冇做」）
   ② 數字收斂   golden 敘述每個帶單位嘅數字 → 我哋同章有冇同一個數（捉「數唔啱／冇講」）
   ③ 罐頭文字   golden 有成段、我哋完全冇 → 直接就係要抄嘅 boilerplate 清單
+  ④ 文字量     逐章敘述字數 golden vs 我哋（②全中都可以寫得薄）
+  ⑤ 版式對照   我哋每個角色（breadcrumb／副標題／註…）嘅字號同顏色 vs 原報告實測值
 
 用法：
     python scripts\\report\\diff_report.py "MGM…報告.pptx" mgm_report_llm.pptx
@@ -24,7 +26,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
 """
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from difflib import SequenceMatcher as SM
 from pathlib import Path
 
@@ -85,6 +87,57 @@ def _texts(slide, W):
             t = (t or "").strip()
             if t and not any(m in t for m in MARKERS):
                 out.append(t)
+    return out
+
+
+# ── ⑤ 版式對照用 ────────────────────────────────────────────────────────
+# 原報告嘅版式規格（2026-09-10 實測：逐版量 run 樣式 + 解 theme1.xml clrScheme/clrMap
+# 換返 RGB）。②③④ 全部量緊【內容】，格式一直冇尺 —— 呢個係格式嗰把。
+# 每個角色 = (名, y 下限, y 上限, x 上限, 期望 pt, 期望 bold, 期望色 hex；None = 唔查)
+# ⚠ x 上限係必要嘅：右上角 entity 標籤（x=9.20）都係粗體、都喺 y≈0.10，
+#   唔設限就會被當成「breadcrumb 當前章」，量出嚟成日錯。
+GOLD_SPEC = [
+    ("breadcrumb 非當前章", 0.02, 0.28, 9.0, 8.0, False, "E5E5E5"),
+    ("breadcrumb 當前章", 0.02, 0.28, 9.0, 8.0, True, "00338D"),
+    ("「章 | 節」副標題", 0.40, 0.60, 99.0, 12.0, None, "00338D"),
+    ("資料來源／註", 6.50, 6.80, 99.0, 7.0, None, "00338D"),
+]
+# 主題色索引 → RGB（三個 slideMaster 色盤一樣）
+_THEME_RGB = {"BACKGROUND_1": "FFFFFF", "TEXT_1": "000000",
+              "BACKGROUND_2": "E5E5E5", "TEXT_2": "00338D",
+              "LIGHT_1": "FFFFFF", "DARK_1": "000000",
+              "LIGHT_2": "E5E5E5", "DARK_2": "00338D"}
+
+
+def _run_rgb(font):
+    """run 顏色 → hex。主題色用實測色盤換返 RGB；解唔到回 None（唔當差異）。"""
+    try:
+        c = font.color
+        if c.type is None:
+            return None
+        if str(c.type).startswith("SCHEME") or "THEME" in str(c.type):
+            return _THEME_RGB.get(str(c.theme_color).split(".")[-1].split(" ")[0])
+        return str(c.rgb)
+    except Exception:
+        return None
+
+
+def _styled_runs(slide, W):
+    """一版嘅 (y, x, pt, bold, hex) —— 只收文字框（表格格仔另計），畫布外唔要。"""
+    out = []
+    for sh in _walk(slide.shapes):
+        try:
+            x, w, y = _in(sh.left), _in(sh.width), _in(sh.top)
+        except Exception:
+            continue
+        if x + w < 0.05 or x > W - 0.05 or y < 0 or not sh.has_text_frame:
+            continue
+        for p in sh.text_frame.paragraphs:
+            for r in p.runs:
+                if not (r.text or "").strip():
+                    continue
+                f = r.font
+                out.append((y, x, f.size.pt if f.size else None, f.bold, _run_rgb(f)))
     return out
 
 
@@ -435,6 +488,32 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
     tg, to = sum(gb.values()), sum(ob.values())
     P(f"  {_pad('合計', 40)}{tg:>9,}{to:>9,}{(to / tg * 100 if tg else 0):>7.0f}%")
     P("\n  ②數字全中都可以寫得薄 —— 呢度低過 80% 就係要加內容嘅章。")
+
+    # ── ⑤ 版式對照 ──────────────────────────────────────────────
+    P("\n\n══ ⑤ 版式對照（我哋出嘅檔 vs 原報告實測規格）")
+    prs_o = Presentation(str(ours_path))
+    Wo = _in(prs_o.slide_width)
+    runs = [r for sl_ in prs_o.slides for r in _styled_runs(sl_, Wo)]
+    P(f"  {'角色':<26}{'原報告':<18}{'我哋（眾數）':<20}{'run':>6}  判定")
+    bad = 0
+    for name, y0, y1, x1, pt, bold, col in GOLD_SPEC:
+        hit = [r for r in runs if y0 <= r[0] <= y1 and r[1] <= x1
+               and (bold is None or bool(r[3]) == bold)]
+        want = f"{pt}pt #{col}"
+        if not hit:
+            P(f"  {_pad(name, 28)}{_pad(want, 20)}{_pad('（搵唔到）', 22)}{0:>6}  ⚠ 呢個角色我哋冇出")
+            bad += 1
+            continue
+        got = Counter((r[2], r[4]) for r in hit).most_common(1)[0]
+        (gpt, gcol), n = got
+        mine = f"{gpt if gpt is not None else '繼承'}pt #{gcol or '?'}"
+        ok = (gpt == pt) and (gcol is None or col is None or gcol.upper() == col.upper())
+        bad += 0 if ok else 1
+        P(f"  {_pad(name, 28)}{_pad(want, 20)}{_pad(mine, 22)}{len(hit):>6}  "
+          + ("✓" if ok else "✗ 唔一致"))
+    P(f"\n  → {len(GOLD_SPEC) - bad}/{len(GOLD_SPEC)} 個角色對得上"
+      + ("" if not bad else "　（✗ 嗰啲改 layout.py 嘅常數）"))
+    P("  ※ 呢節只查【文字框】嘅角色。表格格仔、罐頭版（原樣抄返原報告）唔喺度查。")
 
     txt = "\n".join(L)
     dest = Path("results") if Path("results").is_dir() else Path(".")

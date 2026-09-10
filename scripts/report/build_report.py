@@ -407,8 +407,11 @@ def breadcrumb(slide, W, active=0, entity="MGM"):
     put(slide, ex, CRUMB_Y, 1.10, 0.18, entity, size=SZ_CRUMB, bold=True,
         color=INK, align=PP_ALIGN.LEFT)
     sep, avail = " ｜ ", (ex - 0.10) - x0
-    # ×1.08：text_w 對粗體中文估細咗少少，唔留鬆位頁籤會撞埋一齊
-    widths = [text_w(t, SZ_CRUMB) * 1.08 / 72.0 for t in SECTIONS]
+    # 鬆位【只畀粗體嗰一格】—— 之前成排 ×1.08，8pt 之下估到 9.26in > 可用 8.80in，
+    # 於是自動縮成 7.6pt。但原報告個導航條實測 8.62in、字係 8pt，我哋唔加 fudge
+    # 估出嚟係 8.66in（同佢一致）＝ 裝得落。粗體只有當前嗰格，單獨放鬆就夠。
+    widths = [text_w(t, SZ_CRUMB) * (1.06 if i == active else 1.0) / 72.0
+              for i, t in enumerate(SECTIONS)]
     sw = text_w(sep, SZ_CRUMB) / 72.0
     scale = min(1.0, avail / (sum(widths) + sw * (len(SECTIONS) - 1)))
     x = x0
@@ -3713,7 +3716,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base ae4bf8d · content 3bd16ee5 · bundled 2026-09-10 16:40"
+BUILD_STAMP = "base e2a8ab8 · content 6ef7ae35 · bundled 2026-09-10 16:45"
 
 
 # ── from make_report ──
