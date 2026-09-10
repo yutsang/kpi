@@ -62,19 +62,42 @@ def _hex(c):
         return None
 
 
+# 原報告好多字同底色用【主題色】唔係直接 RGB。python-pptx 撞到主題色，.rgb 會拋錯 →
+# 之前一律當「冇色」存 None，render_canned 就 fallback 去 INK(#222222)，
+# 於是抄返出嚟嘅罐頭版顏色全部走樣（diff ⑤ 捉到 breadcrumb 變 #222222）。
+# 呢個色盤由 theme1.xml clrScheme + slideMaster clrMap 解出（三個 master 一樣）。
+_THEME_RGB = {"BACKGROUND_1": "FFFFFF", "LIGHT_1": "FFFFFF",
+              "TEXT_1": "000000", "DARK_1": "000000",
+              "BACKGROUND_2": "E5E5E5", "LIGHT_2": "E5E5E5",
+              "TEXT_2": "00338D", "DARK_2": "00338D"}
+
+
+def _color_hex(colorformat):
+    """ColorFormat → hex。直接 RGB 就照攞；主題色查色盤；都唔得回 None。"""
+    try:
+        if colorformat.type is None:
+            return None
+    except Exception:
+        return None
+    try:
+        return _hex(colorformat.rgb)
+    except Exception:
+        pass
+    try:
+        key = str(colorformat.theme_color).split(".")[-1].split(" ")[0]
+        return _THEME_RGB.get(key)
+    except Exception:
+        return None
+
+
 def _run_style(tf):
     """(pt, bold, 色) —— 攞第一個有字嘅 run。"""
     for p in tf.paragraphs:
         for r in p.runs:
             if not r.text.strip():
                 continue
-            col = None
-            try:
-                col = _hex(r.font.color.rgb)
-            except Exception:
-                pass
             return (round(r.font.size.pt, 1) if r.font.size else None,
-                    bool(r.font.bold), col)
+                    bool(r.font.bold), _color_hex(r.font.color))
     return (None, False, None)
 
 
@@ -103,7 +126,7 @@ def _cell_borders(c):
 def _cell(c):
     fill = None
     try:
-        fill = _hex(c.fill.fore_color.rgb)
+        fill = _color_hex(c.fill.fore_color)
     except Exception:
         pass
     sz, bold, col = _run_style(c.text_frame)
@@ -115,10 +138,10 @@ def _cell(c):
 
 
 def _fill_hex(sh):
-    """實色填充 → hex；漸變／圖片／無填充回 None。"""
+    """實色填充 → hex（主題色一樣解到）；漸變／圖片／無填充回 None。"""
     try:
         if sh.fill.type is not None and int(sh.fill.type) == 1:      # MSO_FILL.SOLID
-            return _hex(sh.fill.fore_color.rgb)
+            return _color_hex(sh.fill.fore_color)
     except Exception:
         pass
     return None
@@ -126,7 +149,7 @@ def _fill_hex(sh):
 
 def _line_hex(sh):
     try:
-        return _hex(sh.line.color.rgb)
+        return _color_hex(sh.line.color)
     except Exception:
         return None
 

@@ -3716,7 +3716,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base c928441 · content 456b2698 · bundled 2026-09-10 17:08"
+BUILD_STAMP = "base d4af49f · content 456b2698 · bundled 2026-09-10 17:32"
 
 
 # ── from make_report ──

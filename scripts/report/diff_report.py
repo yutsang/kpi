@@ -158,14 +158,17 @@ def _crumb(slide, W):
             marker = t
         if ("|" in t or "｜" in t) and 0.2 < y < 0.7 and (crumb is None or y < crumb[0]):
             crumb = (y, t)
-        # 分隔頁大標題 = 章名；分隔頁仲有個 48pt 嘅章號「1.」，要隔走（至少 2 個中文字）
+        # 分隔頁大標題 = 章名；分隔頁仲有個 40-44pt 嘅章號「1.」，要隔走（至少 2 個中文字）
+        # ⚠ 門檻本來寫 30pt，但分隔頁標題實際係 24pt(template)／26pt(fallback) —— 即係
+        #   一直都認唔到，章名全靠內容版嗰條「章 | 節」crumb 撐住。附件章一改成全罐頭
+        #   （冇 crumb）就成章冇人認，②④ 嗰章即刻變零。降到 22pt。
         if not big and 2 <= len(t) <= 30 and len(re.findall(r"[一-鿿]", t)) >= 2:
             try:
                 sz = max((r.font.size.pt for p in sh.text_frame.paragraphs
                           for r in p.runs if r.font.size), default=0)
             except Exception:
                 sz = 0
-            if sz >= 30:
+            if sz >= 22:
                 big = t
     ch = sub = ""
     if crumb:
@@ -186,7 +189,9 @@ def _crumb(slide, W):
             if hit:
                 ch = hit[0]
                 break
-    return (big or ch, marker or sub, bool(big))
+    # ★ crumb 行先，big 只做後備 —— 降咗門檻之後，內容版嘅大導語（4.x／附件 18-24pt）
+    #   都可能觸到 big；有 crumb 就一定唔係分隔頁。
+    return (ch or big, marker or sub, bool(big) and not ch)
 
 
 BARE = re.compile(r"\d[\d,]*(?:\.\d+)?")
