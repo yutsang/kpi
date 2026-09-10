@@ -1078,6 +1078,7 @@ def render_canned(prs, canned, lo, hi, entity="mgm"):
                                size=c.get("size") or L.SZ_TBL, bold=c.get("bold", False),
                                fill=_rgb(c.get("fill")), align=PP_ALIGN.LEFT,
                                color=_rgb(c.get("fg")))
+                    L.cell_border(tbl.cell(ri, ci), c.get("bd"))   # 原報告附件表四邊 navy 1pt
         if s.get("marker"):
             L.subsec_marker(slide, s["marker"])
         L.footer(slide, W, H, len(prs.slides._sldIdLst))

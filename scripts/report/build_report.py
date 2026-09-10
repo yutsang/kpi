@@ -81,11 +81,31 @@ GREY = RGBColor(0x59, 0x59, 0x59)
 
 
 # ── from layout ──
-LGREY = RGBColor(0x8C, 0x8C, 0x8C)
+DARK = RGBColor(0x0C, 0x23, 0x3C)
 
 
 # ── from layout ──
-DARK = RGBColor(0x0C, 0x23, 0x3C)
+TH_BG1 = RGBColor(0xFF, 0xFF, 0xFF)
+
+
+# ── from layout ──
+TH_TX1 = RGBColor(0x00, 0x00, 0x00)
+
+
+# ── from layout ──
+TH_BG2 = RGBColor(0xE5, 0xE5, 0xE5)
+
+
+# ── from layout ──
+TH_TX2 = NAVY
+
+
+# ── from layout ──
+CRUMB_OFF = TH_BG2
+
+
+# ── from layout ──
+LGREY = RGBColor(0x8C, 0x8C, 0x8C)
 
 
 # ── from layout ──
@@ -105,7 +125,7 @@ FONT_HEAD = "KPMG Bold"
 
 
 # ── from layout ──
-SZ_CRUMB = 7.0
+SZ_CRUMB = 8.0
 
 
 # ── from layout ──
@@ -395,11 +415,11 @@ def breadcrumb(slide, W, active=0, entity="MGM"):
     for i, t in enumerate(SECTIONS):
         if i:
             put(slide, x, CRUMB_Y, sw * scale + 0.03, 0.18, sep, size=SZ_CRUMB * scale,
-                color=LGREY, wrap=False)
+                color=CRUMB_OFF, wrap=False)
             x += sw * scale
         w = widths[i] * scale
         _name(put(slide, x, CRUMB_Y, w + 0.05, 0.18, t, size=SZ_CRUMB * scale, wrap=False,
-                  bold=(i == active), color=NAVY if i == active else LGREY), f"nav:sec{i}")
+                  bold=(i == active), color=NAVY if i == active else CRUMB_OFF), f"nav:sec{i}")
         x += w
 
 
@@ -691,6 +711,43 @@ def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.R
             continue
         r = p.add_run(); r.text = seg
         setfont(r, size, bold=bold, italic=italic, color=color)
+
+
+# ── from layout ──
+_NSA = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+# ── from layout ──
+def cell_border(cell, spec):
+    """寫格仔框線。spec = {"T": [hex, pt, dashed], …}（extract_canned 抽返嚟嗰個形狀）。
+    ⚠ 只用喺【罐頭表】—— 我哋自己生成嗰啲表係跟原報告嘅 Tableau 截圖樣式（冇全框、
+      只有指定橫線），照畫全框會走樣。"""
+    if not spec:
+        return
+    from lxml import etree
+    tc = cell._tc
+    tcPr = tc.find(f"{_NSA}tcPr")
+    if tcPr is None:
+        tcPr = etree.SubElement(tc, f"{_NSA}tcPr")
+    for side in "LRTB":                        # OOXML 次序：lnL lnR lnT lnB，錯序 PowerPoint 會當壞檔
+        v = spec.get(side)
+        if not v:
+            continue
+        hexv, pt, dashed = (list(v) + [1.0, False])[:3]
+        old = tcPr.find(f"{_NSA}ln{side}")
+        if old is not None:
+            tcPr.remove(old)
+        ln = etree.SubElement(tcPr, f"{_NSA}ln{side}")
+        ln.set("w", str(int(round(float(pt or 1.0) * 12700))))
+        ln.set("cap", "flat"); ln.set("cmpd", "sng"); ln.set("algn", "ctr")
+        fill = etree.SubElement(ln, f"{_NSA}solidFill")
+        etree.SubElement(fill, f"{_NSA}srgbClr").set("val", str(hexv or "000000"))
+        if dashed:
+            etree.SubElement(ln, f"{_NSA}prstDash").set("val", "dash")
+    # lnL/lnR/lnT/lnB 必須排喺 tcPr 最前（schema 次序），其餘子元素跟後
+    order = {f"{_NSA}ln{s}": i for i, s in enumerate("LRTB")}
+    for ch in sorted(list(tcPr), key=lambda e: order.get(e.tag, 99)):
+        tcPr.append(ch)
 
 
 # ── from layout ──
@@ -3656,7 +3713,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 0279805 · content bff5793b · bundled 2026-09-08 17:35"
+BUILD_STAMP = "base ae4bf8d · content 3bd16ee5 · bundled 2026-09-10 16:40"
 
 
 # ── from make_report ──
@@ -4626,6 +4683,7 @@ def render_canned(prs, canned, lo, hi, entity="mgm"):
                                size=c.get("size") or SZ_TBL, bold=c.get("bold", False),
                                fill=_rgb(c.get("fill")), align=PP_ALIGN.LEFT,
                                color=_rgb(c.get("fg")))
+                    cell_border(tbl.cell(ri, ci), c.get("bd"))   # 原報告附件表四邊 navy 1pt
         if s.get("marker"):
             subsec_marker(slide, s["marker"])
         footer(slide, W, H, len(prs.slides._sldIdLst))

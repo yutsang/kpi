@@ -77,6 +77,28 @@ def _run_style(tf):
     return (None, False, None)
 
 
+_NSA = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def _cell_borders(c):
+    """{"T": ["00338D", 1.0, dashed], …}。原報告附件表四邊都有 navy 1pt 線，
+    唔抄返出嚟嘅表會冇框，同原報告一睇就唔同。"""
+    tcPr = c._tc.find(f"{_NSA}tcPr")
+    if tcPr is None:
+        return None
+    out = {}
+    for side in "TBLR":
+        ln = tcPr.find(f"{_NSA}ln{side}")
+        if ln is None:
+            continue
+        clr = ln.find(f".//{_NSA}srgbClr")
+        w = ln.get("w")
+        out[side] = [(clr.get("val") if clr is not None else "000000"),
+                     round(int(w) / 12700.0, 2) if w else 1.0,
+                     ln.find(f"{_NSA}prstDash") is not None]
+    return out or None
+
+
 def _cell(c):
     fill = None
     try:
@@ -84,7 +106,11 @@ def _cell(c):
     except Exception:
         pass
     sz, bold, col = _run_style(c.text_frame)
-    return {"t": c.text, "fill": fill, "fg": col, "size": sz, "bold": bold}
+    d = {"t": c.text, "fill": fill, "fg": col, "size": sz, "bold": bold}
+    bd = _cell_borders(c)
+    if bd:
+        d["bd"] = bd
+    return d
 
 
 def _fill_hex(sh):

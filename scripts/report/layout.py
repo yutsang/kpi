@@ -48,8 +48,19 @@ BORDER = "BFBFBF"                          # 格線（srgbClr hex）
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 INK = RGBColor(0x22, 0x22, 0x22)           # 內文黑
 GREY = RGBColor(0x59, 0x59, 0x59)          # 註 / 資料來源
-LGREY = RGBColor(0x8C, 0x8C, 0x8C)         # breadcrumb 非當前
 DARK = RGBColor(0x0C, 0x23, 0x3C)          # 封面 / 章節分隔深底
+
+# ── 原報告主題色盤（2026-09-10 解 theme1.xml clrScheme + slideMaster clrMap 得出）──
+#   之前逐版量度出嚟嘅色好多係「THEME:xxx」索引，換唔到 RGB；解開之後先知係咩。
+#   三個 slideMaster 嘅色盤【完全一樣】，所以唔使分。
+TH_BG1 = RGBColor(0xFF, 0xFF, 0xFF)        # bg1 → lt1
+TH_TX1 = RGBColor(0x00, 0x00, 0x00)        # tx1 → dk1　正文黑（原報告內文係純黑，唔係 #222222）
+TH_BG2 = RGBColor(0xE5, 0xE5, 0xE5)        # bg2 → lt2　breadcrumb 非當前章
+TH_TX2 = NAVY                              # tx2 → dk2 = #00338D
+CRUMB_OFF = TH_BG2                         # breadcrumb 非當前章：原報告實測 8pt #E5E5E5（好淺）
+LGREY = RGBColor(0x8C, 0x8C, 0x8C)         # 頁腳（版權／文檔分類）
+#   ⚠ 之前 breadcrumb 同頁腳共用 LGREY。原報告 breadcrumb 係 #E5E5E5，但頁腳未量到，
+#     一齊改就會令版權行接近睇唔見 → 分開兩個常數，頁腳維持 #8C8C8C。
 
 # 負數用括號表示（KPMG palette 冇紅色）→ 唔另外上色。想要紅色改呢個做 RGBColor(0xC0,0,0)。
 NEG_COLOR = None
@@ -68,7 +79,7 @@ FONT_HEAD = "KPMG Bold"                     # 標題 latin（中文照樣行 ea�
 #   我哋原本細成 1.5 倍（8.5/8.5/8.0/6.0/6.5）→ 全部校準。
 #   ⚠ 字大咗，同一版塞唔到咁多 → 自動分頁會出多幾版，呢個【正合】報告嘅版數
 #     （報告 1.3 有 4 版、1.4 有 3 版，我哋之前一版塞晒）。
-SZ_CRUMB = 7.0      # ① 頂 breadcrumb（scan 睇落細，唔跟 body）
+SZ_CRUMB = 8.0      # ① 頂 breadcrumb —— 原報告實測 8pt（非當前 #E5E5E5、當前 8pt 粗 #00338D）
 SZ_TITLE = 12.0     # ② 章節｜子題
 SZ_HEAD = 12.0      # ③ 導語 strapline（1.x／2.x／3.x 全部 12pt；4.x／附件見 HEAD_SIZE）
 SZ_BODY = 9.0       # ④ 內文 body（prose 段落）
@@ -276,11 +287,11 @@ def breadcrumb(slide, W, active=0, entity="MGM"):
     for i, t in enumerate(SECTIONS):
         if i:
             put(slide, x, CRUMB_Y, sw * scale + 0.03, 0.18, sep, size=SZ_CRUMB * scale,
-                color=LGREY, wrap=False)
+                color=CRUMB_OFF, wrap=False)
             x += sw * scale
         w = widths[i] * scale
         _name(put(slide, x, CRUMB_Y, w + 0.05, 0.18, t, size=SZ_CRUMB * scale, wrap=False,
-                  bold=(i == active), color=NAVY if i == active else LGREY), f"nav:sec{i}")
+                  bold=(i == active), color=NAVY if i == active else CRUMB_OFF), f"nav:sec{i}")
         x += w
 
 
@@ -529,6 +540,41 @@ def set_cell(cell, text, *, size=SZ_TBL, bold=False, fill=None, align=PP_ALIGN.R
             continue
         r = p.add_run(); r.text = seg
         setfont(r, size, bold=bold, italic=italic, color=color)
+
+
+_NSA = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def cell_border(cell, spec):
+    """寫格仔框線。spec = {"T": [hex, pt, dashed], …}（extract_canned 抽返嚟嗰個形狀）。
+    ⚠ 只用喺【罐頭表】—— 我哋自己生成嗰啲表係跟原報告嘅 Tableau 截圖樣式（冇全框、
+      只有指定橫線），照畫全框會走樣。"""
+    if not spec:
+        return
+    from lxml import etree
+    tc = cell._tc
+    tcPr = tc.find(f"{_NSA}tcPr")
+    if tcPr is None:
+        tcPr = etree.SubElement(tc, f"{_NSA}tcPr")
+    for side in "LRTB":                        # OOXML 次序：lnL lnR lnT lnB，錯序 PowerPoint 會當壞檔
+        v = spec.get(side)
+        if not v:
+            continue
+        hexv, pt, dashed = (list(v) + [1.0, False])[:3]
+        old = tcPr.find(f"{_NSA}ln{side}")
+        if old is not None:
+            tcPr.remove(old)
+        ln = etree.SubElement(tcPr, f"{_NSA}ln{side}")
+        ln.set("w", str(int(round(float(pt or 1.0) * 12700))))
+        ln.set("cap", "flat"); ln.set("cmpd", "sng"); ln.set("algn", "ctr")
+        fill = etree.SubElement(ln, f"{_NSA}solidFill")
+        etree.SubElement(fill, f"{_NSA}srgbClr").set("val", str(hexv or "000000"))
+        if dashed:
+            etree.SubElement(ln, f"{_NSA}prstDash").set("val", "dash")
+    # lnL/lnR/lnT/lnB 必須排喺 tcPr 最前（schema 次序），其餘子元素跟後
+    order = {f"{_NSA}ln{s}": i for i, s in enumerate("LRTB")}
+    for ch in sorted(list(tcPr), key=lambda e: order.get(e.tag, 99)):
+        tcPr.append(ch)
 
 
 ROW_FILL = {"sec": None, "subtot": None, "tot": None, "data": None, "formula": None}   # 報告：body 全白，靠橫線分層
