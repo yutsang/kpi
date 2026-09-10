@@ -83,14 +83,26 @@ def schema_section(data, sl):
     P(f"  逐版 key（出現次數）：")
     for k, c in keys.most_common():
         P(f"     {k:<18} {c}")
-    if sl:
-        one = min(sl, key=lambda s: len(json.dumps(s, ensure_ascii=False)) if isinstance(s, dict) else 0)
-        txt = json.dumps(one, ensure_ascii=False, indent=1)
-        P(f"  最細嗰版嘅完整記錄（睇 field 形狀）：")
-        for line in txt.splitlines()[:40]:
-            P("     " + line[:150])
-        if len(txt.splitlines()) > 40:
-            P("     …")
+    # 逐個 key 嘅形狀 + 一個非空樣本 —— 我事先唔知 agent 出咗咩 field，
+    # 靠呢節先知點寫 extractor（唔使傳成份 5MB JSON 過嚟）。
+    P("\n  逐個 key 嘅形狀（type｜非空版數｜樣本）：")
+    for k in keys:
+        vals = [s.get(k) for s in sl if isinstance(s, dict)]
+        nonempty = [v for v in vals if v not in (None, "", [], {})]
+        t = type(nonempty[0]).__name__ if nonempty else "全部空"
+        extra = ""
+        if nonempty and isinstance(nonempty[0], list):
+            inner = next((x for v in nonempty for x in v), None)
+            extra = (f"　元素={type(inner).__name__}"
+                     + (f" keys={list(inner)[:10]}" if isinstance(inner, dict) else ""))
+            extra += f"　最長 {max(len(v) for v in nonempty)} 個"
+        elif nonempty and isinstance(nonempty[0], dict):
+            allk = Counter(kk for v in nonempty if isinstance(v, dict) for kk in v)
+            extra = f"　keys={[x for x, _ in allk.most_common(12)]}"
+        P(f"     {k:<16} {t:<8} {len(nonempty):>4}/{len(sl)}{extra}")
+        if nonempty:
+            smp = json.dumps(nonempty[0], ensure_ascii=False)
+            P(f"        樣本 {smp[:420]}" + ("…" if len(smp) > 420 else ""))
     P()
 
 
@@ -137,24 +149,44 @@ def run(path, schema_only=False):
           + ", ".join(where[k]))
     if len(sty) > 40:
         P(f"  …仲有 {len(sty) - 40} 個組合（次數 ≤ {sty.most_common(40)[-1][1]}）")
+    # 主題色／繼承字體解唔到 = 呢批數據等於冇 —— 要出聲，唔好當已經量度到
+    unres_c = Counter(); unres_f = Counter()
+    for (f, sz, b, col), c in sty.items():
+        if col.startswith("THEME") or col == "?":
+            unres_c[col] += c
+        if f in ("?",) or f.startswith("+"):
+            unres_f[f] += c
+    tot_run = sum(sty.values())
+    if unres_c or unres_f:
+        P(f"\n  ⚠ 未解析（占 run 總數 {tot_run}）：")
+        for k, v in unres_c.most_common():
+            P(f"     色 {k:<28} {v:>5} run（{v / tot_run * 100:.0f}%）→ 要查 theme1.xml clrScheme+clrMap 換 RGB")
+        for k, v in unres_f.most_common():
+            P(f"     字體 {k:<26} {v:>5} run（{v / tot_run * 100:.0f}%）→ 要沿 layout/master/theme 逐層繼承解析")
     P()
 
     # ── 3. 圖片 ────────────────────────────────────────────────
-    P("══ 3. 圖片（邊版有圖、幾大、像素）")
-    npic = 0
+    # ⚠ 好多版喺畫布外泊住一份舊圖（x 係負數）—— 嗰啲唔算內容，唔好當版式證據。
+    P("══ 3. 圖片（畫布內先算；畫布外泊住嘅舊圖另計）")
+    npic, off, ext_c = 0, 0, Counter()
     for s in sl:
         for p in _lst(s, "pictures", "pics", "images"):
             if not isinstance(p, dict):
                 continue
-            npic += 1
             x, y = _num(g(p, "x", "left")), _num(g(p, "y", "top"))
             w, h = _num(g(p, "w", "width")), _num(g(p, "h", "height"))
+            if x is not None and w is not None and x + w < 0.1:
+                off += 1; continue
+            npic += 1
+            ext_c[str(g(p, "ext", default="?")).lower()] += 1
             px = g(p, "px_w", "pixel_w", "img_w", default="?")
             py = g(p, "px_h", "pixel_h", "img_h", default="?")
             geo = (f"x{x:.2f} y{y:.2f} {w:.2f}x{h:.2f}in"
                    if None not in (x, y, w, h) else "幾何缺")
             P(f"  s{str(g(s, 'n', default='?')):>3}  {geo}　{px}x{py}px　{g(p, 'ext', default='')}")
-    P(f"  → 合共 {npic} 張圖\n")
+    P(f"  → 畫布內 {npic} 張（格式：{'、'.join(f'{k} {v}' for k, v in ext_c.most_common())}）"
+      f"；畫布外泊住 {off} 張（舊版本，唔理）")
+    P("  ※ wmf = 由 Excel／Tableau 貼入嚟嘅向量圖 → 嗰啲『表』冇 cell 資料可抄。\n")
 
     # ── 4. 原生表 ──────────────────────────────────────────────
     P("══ 4. 原生表（唔係截圖嗰啲）")
@@ -172,24 +204,35 @@ def run(path, schema_only=False):
     P(f"  → 合共 {ntb} 張原生表\n")
 
     # ── 5. 兩欄版幾何 ──────────────────────────────────────────
-    P("══ 5. 兩欄版（表左＋敘述右）：左表闊 / 右欄起點 / 間距")
+    # golden 啲數據表【係圖唔係表】，所以左邊嗰嚿要連 picture 一齊當「表」睇，
+    # 唔係就淨係撈到一兩版（第一版寫得只睇 tables，結果得 s31 而且係畫布外嗰個）。
+    P("══ 5. 兩欄版（左邊表／圖 ＋ 右邊敘述）：左邊闊 / 右欄起點 / 間距")
+    n2 = 0
     for s in sl:
-        tb = [t for t in _lst(s, "tables", "table") if isinstance(t, dict)]
-        if len(tb) != 1:
+        blocks = []
+        for t in _lst(s, "tables", "table") + _lst(s, "pictures", "pics", "images"):
+            if not isinstance(t, dict):
+                continue
+            x, w = _num(g(t, "x", "left")), _num(g(t, "w", "width"))
+            y = _num(g(t, "y", "top"))
+            if None in (x, w, y) or x + w < 0.1 or y < 0.9:       # 畫布外／頁首唔算
+                continue
+            blocks.append((x, w, y))
+        if not blocks:
             continue
-        t = tb[0]
-        tx, tw = _num(g(t, "x", "left")), _num(g(t, "w", "width"))
-        if None in (tx, tw):
+        lx, lw, _ = min(blocks, key=lambda b: b[0])
+        if lx + lw > 7.6:                                   # 佔成版闊 → 唔係兩欄版
             continue
-        right = [q for q in _lst(s, "texts", "text")
-                 if isinstance(q, dict) and (_num(g(q, "x", "left")) or 0) > tx + tw - 0.05
-                 and 1.0 < (_num(g(q, "y", "top")) or 0) < 6.5]
+        right = [_num(g(q, "x", "left")) for q in _lst(s, "texts", "text")
+                 if isinstance(q, dict)
+                 and (_num(g(q, "x", "left")) or -9) > lx + lw - 0.05
+                 and 0.9 < (_num(g(q, "y", "top")) or 0) < 6.6]
         if not right:
             continue
-        rx = min(_num(g(q, "x", "left")) for q in right)
-        P(f"  s{str(g(s, 'n', default='?')):>3}  左表 x{tx:.2f} w{tw:.2f}（右邊界 {tx + tw:.2f}）"
-          f"　右欄 x{rx:.2f}　間距 {rx - tx - tw:.2f}")
-    P()
+        rx = min(right); n2 += 1
+        P(f"  s{str(g(s, 'n', default='?')):>3}  左邊 x{lx:.2f} w{lw:.2f}（右邊界 {lx + lw:.2f}）"
+          f"　右欄 x{rx:.2f}　間距 {rx - lx - lw:.2f}")
+    P(f"  → {n2} 版兩欄\n")
 
     # ── 6. marker 全表 + 異名偵測 ──────────────────────────────
     P("══ 6. UpSlide 章節標記全表（相鄰版名唔同 = 要跟返；繁簡混用會標出）")
