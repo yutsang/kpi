@@ -1340,6 +1340,14 @@ def _finding_head(ent_up, adj, sub):
             + "。根據指引及施行細則，我們建議將這部分支出進行剔除。")
 
 
+# 節名【照原報告原文】—— 原報告 s33 個節名用咗簡體「内」（成份稿其餘位置係繁體「內」），
+# 我哋 CANON 統一咗做「內」，於是 diff ① 一直報「名唔同」。節名會入目錄同 UpSlide 標記，
+# 要同原報告一模一樣就要跟返佢。★ 只影響【顯示】，CANON／分組完全唔郁。
+SUB_AS_REPORTED = {
+    "超出可計入範圍的內部資源支出": "超出可計入範圍的内部資源支出",
+}
+
+
 def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
     """③ 主要發現 —— 逐個調整類型【一版】（對 scan p28-40）：
         「主要發現」小標 → navy 導語（總額 + 三個 bucket 拆開）
@@ -1370,7 +1378,7 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
             head = (f"{pj['dicj code']}「{str(pj['名稱'])[:28]}」"
                     f"（潛在調整 {R.fmt_money(pj['調整'])} 萬澳門元）：")
             bul.append((head, txt or "待項目組補充分析發現。"))
-        crumb = f"本年度審查工作的主要發現  |  {adj}"
+        crumb = f"本年度審查工作的主要發現  |  {SUB_AS_REPORTED.get(adj, adj)}"
         head = _finding_head(ent_up, adj, sub)
         # 右欄裝唔晒就分版（表逐版重複，同 1.3／2.1 一樣）
         lw = W * 0.42
@@ -2095,18 +2103,32 @@ def main():
         n5 = render_canned(prs, canned, 77, 86, entity)
         print(f"    罐頭 ⑤ 六項KPI分析：{n5} 版")
 
-    # ⑥ 附件（slide 93-105）
+    # ⑥ 附件（原報告 s87-109）。次序跟返原報告：工作範圍 → 現場走訪 → 藝術品 → 補充圖片 → 封底
+    #   （之前我哋係 走訪 → 藝術品 → 工作範圍，次序都唔同。）
     divider(prs, "附件", "6")
-    if narr:
-        render_site_visits(prs, ent_up, sdf, narr)
-    render_artwork(prs, ent_up, av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
-                   entity)                      # 報告 slide 101 藝術品展出情況清單
 
-    # 目錄（報告 slide 7）：起完全部版先知頁碼 → 砌好插去第 2 版，再全份重編頁碼
-    n_app = render_canned(prs, canned, 87, 999, entity)   # 附件1 工作範圍 + 封底
-    #  ↑ 由 80 改做 87：⑤ 六項KPI 抽到 s86，範圍再由 80 起會出多次
+    def _canned_has(lo, hi):
+        return bool(canned) and any(lo <= s["n"] <= hi for s in canned.get("slides", []))
+
+    n_app = render_canned(prs, canned, 88, 96, entity)     # 附件1 工作範圍
+    # ★ 現場走訪同藝術品清單：原報告係【相片 + 表】，屬現場做出嚟嘅嘢，砌唔出。
+    #   有罐頭就用罐頭（同原報告一模一樣）；冇（其他家／其他年）先用我哋自己生成嗰版。
+    #   我哋生成嗰版係 prose card，把成段「實際投資內容」寫落去 → 附件章字數去到原報告
+    #   嘅 186%（diff ④ 捉到）。
+    if _canned_has(97, 104):
+        n_app += render_canned(prs, canned, 97, 104, entity)
+    elif narr:
+        render_site_visits(prs, ent_up, sdf, narr)
+    if _canned_has(105, 106):
+        n_app += render_canned(prs, canned, 105, 106, entity)
+    else:                                        # 藝術品展出情況清單（要開到表2）
+        render_artwork(prs, ent_up,
+                       av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2", entity)
+    n_app += render_canned(prs, canned, 107, 999, entity)  # 補充圖片 + 封底
     if n_app:
         print(f"    罐頭附件：{n_app} 版")
+
+    # 目錄（報告 slide 7）：起完全部版先知頁碼 → 砌好插去第 2 版，再全份重編頁碼
 
     _W, _H = L.size_of(prs)
     toc = _collect_toc(prs, _W, _H)
