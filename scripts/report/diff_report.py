@@ -214,7 +214,9 @@ def _arch(slide, W):
             x, w, h = _in(sh.left), _in(sh.width), _in(sh.height)
         except Exception:
             continue
-        if x + w < 0.05 or x > W - 0.05 or w < 2.0 or h < 0.8:
+        # ⚠ 高度門檻本來 0.8in，我哋「酒店客房改造」嗰類得兩三行嘅表高度唔夠 →
+        #   成版被報做「文」。表有冇唔係睇佢幾高，0.35 夠分辨得出 caption 條同真表。
+        if x + w < 0.05 or x > W - 0.05 or w < 2.0 or h < 0.35:
             continue
         if getattr(sh, "has_table", False):
             return "表"
@@ -655,6 +657,8 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
                 o_tblval[ch].append(float(x))
             except ValueError:
                 pass
+    _all_tblnum = set().union(*o_tblnum.values()) if o_tblnum else set()
+    _all_tblval = [v for vs in o_tblval.values() for v in vs]
     if True:
         tot_x = tot_sus = 0
         for ch in SECTIONS_ORDER(g_ch, o_ch):
@@ -662,7 +666,10 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
             extra = {k: v for k, v in on.items() if k not in gn}
             if not extra:
                 continue
-            mine, mvals = o_tblnum.get(ch, set()), o_tblval.get(ch, [])
+            # ⚠ 對【全份】嘅表，唔分章 —— 項目級金額（749萬／66萬…）喺「單項審查匯總」
+            #   嗰批表度，但敘述寫喺「主要發現」章，逐章對就會當咗搵唔到。
+            #   一個數只要喺我哋任何一張 code 計出嚟嘅表出現過，就算有根據。
+            mine, mvals = _all_tblnum, _all_tblval
             sus = {k: v for k, v in extra.items()
                    if not _mine_hit(k, mine, mvals)
                    and not (s_pairs is not None and _matched_src(k, s_pairs, s_bare))}
