@@ -3750,7 +3750,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 784eca3 · content a7d1353b · bundled 2026-09-11 12:03"
+BUILD_STAMP = "base 4f1c832 · content c1fdd7bb · bundled 2026-09-11 13:37"
 
 
 # ── from make_report ──
@@ -5483,7 +5483,11 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
 def _fac_bullets(ent_up, ov):
     """1.3 第 2 版：區分設施建設／活動舉辦嘅投資金額（由概況表自己嗰兩欄機械計）。"""
     F, A = "設施建設/資本性支出", "活動舉辦/營運性支出"
+    # ⚠ 呢度一空，1.3 就少一版（原報告 s12）。之前查咗兩轉都靠估 → 直接講明點解空。
     if ov is None or ov.empty or F not in ov.columns:
+        print(f"    ⚠ 1.3 第2版（區分設施建設/活動舉辦）出唔到："
+              f"{'ov 係空' if ov is None or ov.empty else f'ov 冇「{F}」欄'}"
+              + (f"；ov 有嘅欄：{list(ov.columns)[:12]}" if ov is not None and not ov.empty else ""))
         return []
 
     def num(row, c):
@@ -5498,6 +5502,8 @@ def _fac_bullets(ent_up, ov):
     nf, na = line("非博彩項目小計")
     cat = ov[~ov["範疇"].astype(str).str.endswith(("小計", "總計", "項目"))].copy()
     if cat.empty or (tf + ta) == 0:
+        print(f"    ⚠ 1.3 第2版（區分設施建設/活動舉辦）出唔到："
+              f"{'冇範疇行' if cat.empty else f'總計嘅設施建設+活動舉辦 = 0（{tf}+{ta}）'}")
         return []
     cat["_f"] = cat.apply(lambda r: num(r, F), axis=1)
     cat["_a"] = cat.apply(lambda r: num(r, A), axis=1)
@@ -5777,15 +5783,19 @@ def main():
              if abs(pd.to_numeric(_d3.loc[_d3["_adj"] == t, "調整_萬"],
                                   errors="coerce").fillna(0).sum()) > 0.5]
     divider(prs, S3, "3", [(f"3.{i}  {t}", "") for i, t in enumerate(_have, 1)])
-    fs = finding_summary(sdf)
-    if not fs.empty:
-        render_generic(prs, f"{ent_up} 本年度審查工作的主要發現摘要", fs.fillna(""), sec=2,
-                       crumb=f"{S3}  |  主要發現摘要",
-                       headline=(f"本次審查工作就{ent_up}報告的投資金額識別出{len(fs)}類潛在調整事項，"
-                                 f"合計潛在調減約{abs(pd.to_numeric(fs['調整額合計'], errors='coerce').sum()):,.0f}"
-                                 f"萬澳門元，摘要如下；逐項說明見後頁。"),
-                       note="註：金額單位為萬澳門元；括號表示調減。",
-                       llm=llm, tbl_id=tbl_key("發現摘要"))
+    # ★「主要發現摘要」版 —— 原報告冇（s29 係分隔頁），係我哋自己加嘅。
+    #   user 2026-09-11 拍板刪走。想要返就 KPI_FINDING_SUMMARY=1。
+    if os.environ.get("KPI_FINDING_SUMMARY") == "1":
+        fs = finding_summary(sdf)
+        if not fs.empty:
+            render_generic(prs, f"{ent_up} 本年度審查工作的主要發現摘要", fs.fillna(""), sec=2,
+                           crumb=f"{S3}  |  主要發現摘要",
+                           headline=(f"本次審查工作就{ent_up}報告的投資金額識別出{len(fs)}類潛在調整事項，"
+                                     f"合計潛在調減約"
+                                     f"{abs(pd.to_numeric(fs['調整額合計'], errors='coerce').sum()):,.0f}"
+                                     f"萬澳門元，摘要如下；逐項說明見後頁。"),
+                           note="註：金額單位為萬澳門元；括號表示調減。",
+                           llm=llm, tbl_id=tbl_key("發現摘要"))
     if narr:      # 逐調整類型 × 項目：金額(feed) + 事項描述(LLM ground 表2＋清單) / 清單抄字
         b2 = {}
         try:            # 表2＝審查底稿，清單冇料時頂住（加密檔，開唔到就靜靜跳過）
