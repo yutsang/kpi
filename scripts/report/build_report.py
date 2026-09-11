@@ -3716,7 +3716,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 4caef01 · content e0949624 · bundled 2026-09-11 09:26"
+BUILD_STAMP = "base ea444cb · content 80641a26 · bundled 2026-09-11 10:41"
 
 
 # ── from make_report ──
@@ -4659,8 +4659,10 @@ def render_canned(prs, canned, lo, hi, entity="mgm"):
                     missing.append(sh["file"])
                 continue
             if sh["kind"] == "shape":               # 流程圖方框：底色 + 框線，字另外疊上去
+                # ph = 骨架模式嘅圖片佔位（extract --skeleton）：白底灰框，唔好用 BAND 灰底
+                _fill = (WHITE if sh.get("ph") else (_rgb(sh.get("fill")) or BAND))
                 _rect(slide, sh["x"], sh["y"], sh["w"], sh["h"],
-                        _rgb(sh.get("fill")) or BAND, _rgb(sh.get("line")))
+                        _fill, _rgb(sh.get("line")) or (LGREY if sh.get("ph") else None))
                 if sh.get("text"):
                     put(slide, sh["x"], sh["y"], sh["w"], sh["h"], sh["text"],
                           size=sh.get("size") or SZ_BODY, bold=sh.get("bold", False),

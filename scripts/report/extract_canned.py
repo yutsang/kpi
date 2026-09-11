@@ -12,6 +12,8 @@ extract_canned.py — 由項目組原報告 pptx 抽【罐頭版】（法律聲�
     python scripts\\report\\extract_canned.py "MGM…報告.pptx"
     python scripts\\report\\extract_canned.py "MGM…報告.pptx" --slides 2-6,88-96,109
     python scripts\\report\\extract_canned.py "MGM…報告.pptx" --out conf\\local\\canned_mgm.json
+    python scripts\\report\\extract_canned.py "MGM…報告.pptx" --skeleton 9,97-108  # 指定邊幾版只抽版式
+    python scripts\\report\\extract_canned.py "MGM…報告.pptx" --skeleton none       # 連今年內容一齊抽
 
 預設抽邊幾版：由 diff_report ③ 揾到嗰批（2-6 前置、88-96 附件1、109 封底）。
 抽咗之後 build_report 會自動搵 conf\\local\\canned_{entity}.json，有就出返嗰幾版。
@@ -33,6 +35,16 @@ EMU_IN = 914400.0
 # ★ 呢批全部係圖／流程／現場相，冇底層數據砌得出（架構圖、swimlane、走訪相片、
 #   藝術品清單本身就係人手做嘅嘢）→ 連圖一齊抽返原位擺，係唯一做到「同原報告一樣」嘅方法。
 DEFAULT_SLIDES = "2-6,9,68-75,77-86,88-109"
+
+# ★ 骨架模式：呢批版【只抽版式，唔抽今年內容】。
+#   用途係做【明年 report automation 嘅格式底】—— 抄今年嘅走訪相、藝術品清單、
+#   官網截圖落去係反效果（明年要換晒）。所以呢啲版：
+#     圖片   → 唔抽 blob，改為虛線佔位框（標住原尺寸）
+#     表格   → 保留行列／欄闊／底色／字號／框線，格仔文字換成〔…〕
+#     文字框 → ≤30 字（標題、欄標、頁腳、資料來源）照留；長文換成〔…〕
+#   想連內容一齊抽（例如要重現今年份報告）就 --skeleton none。
+DEFAULT_SKELETON = "97-108"
+SKEL_MARK = "〔…〕"
 
 # 模板 placeholder／工作痕跡：唔算內容
 SKIP = ("已更新表格", "定稿後還需手動更新", "目錄手動修改為繁體字", "DO NOT DELETE",
@@ -168,7 +180,15 @@ def _parse_slides(spec):
     return out
 
 
-def extract(path, want, out_path):
+def _skel_text(t, keep=30):
+    """骨架模式嘅文字：短嘅（標題／欄標／頁腳）照留，長文換佔位符 + 原字數。"""
+    t = (t or "").strip()
+    if len(t) <= keep:
+        return t
+    return f"{SKEL_MARK}{len(t)}字"
+
+
+def extract(path, want, out_path, skel=frozenset()):
     prs = Presentation(str(path))
     W, H = _in(prs.slide_width), _in(prs.slide_height)
     img_dir = out_path.parent / (out_path.stem + "_img")
@@ -187,6 +207,12 @@ def extract(path, want, out_path):
             except Exception:
                 blob = None
             if blob:
+                if i in skel:            # 骨架：唔抽相，淨係留返個位
+                    shapes.append({"kind": "shape", "x": x, "y": y, "w": w, "h": h,
+                                   "text": f"〔圖片 {w:.1f}x{h:.1f}in〕", "fill": None,
+                                   "line": "BFBFBF", "size": 8.0, "bold": False,
+                                   "color": "8C8C8C", "ph": True})
+                    continue
                 img_dir.mkdir(parents=True, exist_ok=True)
                 fn = f"s{i}_{len(shapes)}.{ext}"
                 (img_dir / fn).write_bytes(blob); n_img += 1
@@ -194,11 +220,16 @@ def extract(path, want, out_path):
                 continue
             if getattr(sh, "has_table", False):
                 t = sh.table
+                cells = [[_cell(c) for c in r.cells] for r in t.rows]
+                if i in skel:            # 骨架：保留表結構同樣式，格仔文字換佔位符
+                    for row in cells:
+                        for c in row:
+                            c["t"] = _skel_text(c.get("t", ""))
                 shapes.append({
                     "kind": "table", "x": x, "y": y, "w": w, "h": h,
                     "colw": [_in(c.width) for c in t.columns],
                     "rowh": [_in(r.height) for r in t.rows],
-                    "cells": [[_cell(c) for c in r.cells] for r in t.rows],
+                    "cells": cells,
                 })
                 continue
             fill = _fill_hex(sh)
@@ -218,7 +249,8 @@ def extract(path, want, out_path):
                 title = txt
             # 有底色 = 流程圖／架構圖嘅方框（要連框一齊重畫）；冇底色 = 淨文字框
             shapes.append({"kind": "shape" if fill else "text", "x": x, "y": y, "w": w, "h": h,
-                           "size": sz, "bold": bold, "color": col, "text": txt,
+                           "size": sz, "bold": bold, "color": col,
+                           "text": _skel_text(txt) if i in skel else txt,
                            "fill": fill, "line": _line_hex(sh)})
         if shapes:
             slides.append({"n": i, "title": title, "marker": marker, "shapes": shapes})
@@ -231,6 +263,10 @@ def extract(path, want, out_path):
     print(f"✓ {out_path}")
     print(f"  {len(slides)} 版：{', '.join(str(s['n']) for s in slides)}")
     print(f"  文字框 {cnt['text']}｜方框(有底色) {cnt['shape']}｜表 {cnt['table']}｜圖 {cnt['pic']}")
+    if skel:
+        sk_hit = sorted(x["n"] for x in slides if x["n"] in skel)
+        print(f"  骨架模式（只抽版式、唔抽今年內容）：{len(sk_hit)} 版 "
+              f"→ {', '.join('s%d' % n for n in sk_hit[:14])}{' …' if len(sk_hit) > 14 else ''}")
     if n_img:
         print(f"  圖檔寫咗 {n_img} 個入 {img_dir}（同 JSON 一齊抄去 Windows）")
     for s in slides:
@@ -253,12 +289,14 @@ def main():
         print(__doc__); return
     src = pos[0]
     spec = args[args.index("--slides") + 1] if "--slides" in args else DEFAULT_SLIDES
+    sk = args[args.index("--skeleton") + 1] if "--skeleton" in args else DEFAULT_SKELETON
+    skel = frozenset() if str(sk).lower() in ("none", "0", "") else _parse_slides(sk)
     if "--out" in args:
         out = Path(args[args.index("--out") + 1])
     else:
         ent = re.split(r"[.\s]", Path(src).name)[0].lower() or "entity"
         out = Path("conf/local") / f"canned_{ent}.json"
-    extract(src, _parse_slides(spec), out)
+    extract(src, _parse_slides(spec), out, skel)
 
 
 if __name__ == "__main__":

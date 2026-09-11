@@ -1051,8 +1051,10 @@ def render_canned(prs, canned, lo, hi, entity="mgm"):
                     missing.append(sh["file"])
                 continue
             if sh["kind"] == "shape":               # 流程圖方框：底色 + 框線，字另外疊上去
+                # ph = 骨架模式嘅圖片佔位（extract --skeleton）：白底灰框，唔好用 BAND 灰底
+                _fill = (L.WHITE if sh.get("ph") else (_rgb(sh.get("fill")) or L.BAND))
                 L._rect(slide, sh["x"], sh["y"], sh["w"], sh["h"],
-                        _rgb(sh.get("fill")) or L.BAND, _rgb(sh.get("line")))
+                        _fill, _rgb(sh.get("line")) or (L.LGREY if sh.get("ph") else None))
                 if sh.get("text"):
                     L.put(slide, sh["x"], sh["y"], sh["w"], sh["h"], sh["text"],
                           size=sh.get("size") or L.SZ_BODY, bold=sh.get("bold", False),
