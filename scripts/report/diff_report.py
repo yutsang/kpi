@@ -20,6 +20,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
     python scripts\\report\\diff_report.py "MGM…報告.pptx" mgm_report_llm.pptx
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --brief    # 只出摘要（貼返用）
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --canned   # 淨係出 ③
+    python scripts\\report\\diff_report.py golden.pptx ours.pptx --format   # 淨係出格式（①⑤⑦）
 
 ⚠ --brief 只影響【印出嚟】嘅嘢；`results/diff_report.txt` 一樣係嗰份摘要，
   想睇逐項就唔好加 --brief。
@@ -469,7 +470,7 @@ def _norm_sub(s):
     return re.sub(r"\s+", "", s)
 
 
-def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
+def run(gold_path, ours_path, canned_only=False, entity=None, brief=False, fmt_only=False):
     L = []
     P = L.append
     entity = entity or re.split(r"[_.]", Path(ours_path).stem)[0].lower()
@@ -508,7 +509,7 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
         P(f"\n  → golden {len(g_by_sub)} 個子節，未做 {miss} 個，我哋多出 {len(extra)} 個")
 
         # ── ② 數字收斂 ───────────────────────────────────────────
-        s_pairs, s_bare, s_files = source_nums(entity)
+        s_pairs, s_bare, s_files = (None, None, []) if fmt_only else source_nums(entity)
         P("\n\n══ ② 數字收斂（golden 敘述帶單位嘅數字 → 我哋【同章】有冇同一個）")
         if s_files:
             ok = [x for x in s_files if x[1] is not None]
@@ -718,6 +719,16 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
     P("  ※『表』包括原報告嘅 Tableau 截圖（佢哋數字表係圖）。版數唔同唔一定錯，"
       "但『原報告文、我哋表』代表我哋逐版重出咗張表。")
 
+    if fmt_only:
+        # 只留【格式】嗰三節：① 結構、⑤ 樣式、⑦ 版型。
+        # ②③④⑥ 係內容／數字收斂 —— DB recon 未開始之前睇咗都冇用，反而蓋住格式問題。
+        keep, out, on = ("① ", "⑤ ", "⑦ "), [], True
+        for line in L:
+            if line.lstrip().startswith("══"):
+                on = any(k in line for k in keep)
+            if on:
+                out.append(line)
+        L[:] = out
     txt = "\n".join(L)
     dest = Path("results") if Path("results").is_dir() else Path(".")
     f = dest / "diff_report.txt"
@@ -759,7 +770,8 @@ def main():
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
     if len(a) < 2:
         print(__doc__); return
-    run(a[0], a[1], canned_only="--canned" in sys.argv, brief="--brief" in sys.argv)
+    run(a[0], a[1], canned_only="--canned" in sys.argv, brief="--brief" in sys.argv,
+        fmt_only="--format" in sys.argv)
 
 
 if __name__ == "__main__":
