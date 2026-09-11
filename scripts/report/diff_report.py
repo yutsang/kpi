@@ -273,12 +273,24 @@ def source_nums(entity):
     files = sorted(set(files))
     if not files:
         return None, None, []
-    pairs, bare = set(), set()
+    # ⚠ 表2 全部【加密】。原本淨係 load_workbook()，開唔到就 except: continue 靜靜跌咗，
+    #   但個檔照樣列入「源頭掃咗 N 個檔」→ 睇落好似掃過，其實七個表2 一個都冇讀到，
+    #   【源有】全部得清單嗰啲，【源冇】就報大咗（之前據此講「呢批收唔到」係冇根據）。
+    #   改用 inspect_biao2.load_wb（env KPI_XLSX_PW 或 credentials.yml xlsx_password 解密），
+    #   同埋逐檔記低成敗，喺報告度講明。
+    try:
+        import inspect_biao2 as _IB
+        _open = lambda f: _IB.load_wb(f)
+    except Exception:
+        _open = lambda f: load_workbook(f, read_only=True, data_only=True)
+    pairs, bare, status = set(), set(), []
     for f in files:
         try:
-            wb = load_workbook(f, read_only=True, data_only=True)
-        except Exception:
+            wb = _open(f)
+        except Exception as ex:
+            status.append((f, None, str(ex)[:60]))
             continue
+        n0 = len(pairs)
         for ws in wb.worksheets:
             try:
                 rows = ws.iter_rows(values_only=True)
@@ -295,11 +307,12 @@ def source_nums(entity):
                         pairs.add((m.group(1).replace(",", ""), m.group(2)))
                     for m in BARE.finditer(s):
                         bare.add(m.group(0).replace(",", ""))
+        status.append((f, len(pairs) - n0, None))
         try:
             wb.close()
         except Exception:
             pass
-    return pairs, bare, files
+    return pairs, bare, status
 
 
 def _fmt(v):
@@ -428,9 +441,15 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
         s_pairs, s_bare, s_files = source_nums(entity)
         P("\n\n══ ② 數字收斂（golden 敘述帶單位嘅數字 → 我哋【同章】有冇同一個）")
         if s_files:
-            P(f"   源頭掃咗 {len(s_files)} 個檔（表2＋清單）→ 對唔到嘅會標【源有】/【源冇】")
-            for f in s_files:
-                P(f"     · {Path(f).name}")
+            ok = [x for x in s_files if x[1] is not None]
+            P(f"   源頭：{len(s_files)} 個檔（表2＋清單），【真係讀到 {len(ok)} 個】"
+              f" → 對唔到嘅會標【源有】/【源冇】")
+            for f, n, err in s_files:
+                P(f"     {'✓' if err is None else '✗'} {Path(f).name}"
+                  + (f"　+{n} 個數" if err is None else f"　開唔到：{err}"))
+            if len(ok) < len(s_files):
+                P("   ⚠ 有檔開唔到（多數係加密未設密碼）→ 嗰啲檔入面嘅數會被誤判做【源冇】，"
+                  "下面『收唔到唔好再追』嗰句【唔可信】。")
         else:
             P("   （搵唔到 data/表2、data/投資項目清單 → 唔標源頭）")
         g_ch, o_ch = defaultdict(list), defaultdict(list)
