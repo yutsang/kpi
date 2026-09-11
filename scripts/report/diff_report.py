@@ -160,6 +160,52 @@ def _styled_runs(slide, W):
     return out
 
 
+def _mine_hit(key, mine_set, mine_nums):
+    """敘述嘅 (數, 單位) 喺我哋自己張表搵唔搵到。
+    ⚠ 一定要做【單位換算＋四捨五入容差】：報告寫「11.8億」，表入面係 118,000（萬），
+      而且 11.8 係由 117,950 舍出嚟 —— 淨係比字串一定對唔到。"""
+    n, u = key
+    if n in mine_set:
+        return True
+    try:
+        v = float(n)
+    except ValueError:
+        return False
+    if u == "億":                       # 億 → 萬，一位小數 ⇒ ±500萬
+        t = v * 10000
+        return any(abs(x - t) <= 500 for x in mine_nums)
+    if u == "萬":                       # 整數千分位 ⇒ ±0.6
+        return any(abs(x - v) <= 0.6 for x in mine_nums)
+    if u == "%":
+        return any(abs(x - v) <= 0.06 for x in mine_nums)
+    return any(abs(x - v) < 1e-9 for x in mine_nums)
+
+
+def _texts2(slide, W):
+    """→ (敘述文字, 表格文字)。⑥ 要分開：表由 code 計、tie 得返 feed；
+    敘述先係 LLM 寫。敘述講嘅數要同【我哋自己張表】對，唔係同源頭對。"""
+    narr, tbl = [], []
+    for sh in _walk(slide.shapes):
+        try:
+            x, w = _in(sh.left), _in(sh.width)
+        except Exception:
+            x = w = 0
+        if x + w < 0.05 or x > W - 0.05:
+            continue
+        if str(sh.name or "").startswith("cn:"):      # 罐頭版＝抄原報告，唔算我哋寫
+            continue
+        if getattr(sh, "has_table", False):
+            for r in sh.table.rows:
+                for c in r.cells:
+                    if (c.text or "").strip():
+                        tbl.append(c.text.strip())
+        elif sh.has_text_frame:
+            t = (sh.text_frame.text or "").strip()
+            if t and not any(m in t for m in MARKERS):
+                narr.append(t)
+    return narr, tbl
+
+
 def _arch(slide, W):
     """一版嘅版型：『表』＝有數據表／圖（原報告啲數字表係截圖，所以圖都算）；
     『文』＝淨係文字。細嘢（caption 條、icon、頁首頁尾）唔算。"""
@@ -592,26 +638,44 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
     # 嗰種差異前面幾把尺全部捉唔到。最危險係【我哋講咗一個原報告冇嘅數】——
     # 源頭有就只係多講咗，源頭都冇就好可能係 LLM 作出嚟。
     P("\n\n══ ⑥ 反向數字（我哋敘述有、原報告同章冇）")
-    if s_pairs is None:
-        P("  （冇源頭檔可對，跳過）")
-    else:
+    # ★ 對照對象係【我哋自己張表】，唔係源頭 —— 報告啲數多數係 code 由 feed 計出嚟
+    #   （完成率、小計、佔比），根本唔會原樣出現喺表2／清單度。第一版攞源頭做對照，
+    #   結果 491 個「源頭都搵唔到」幾乎全部係假警報。表由 code 計、tie 得返 feed，
+    #   LLM 只負責寫字 → 敘述講嘅數張表都冇，先至真係可疑。
+    prs_o6 = Presentation(str(ours_path))
+    W6 = _in(prs_o6.slide_width)
+    o_narr, o_tblnum, o_tblval = defaultdict(list), defaultdict(set), defaultdict(list)
+    for (_i, ch, _sub, _tx), sl6 in zip(ours, prs_o6.slides):
+        n6, t6 = _texts2(sl6, W6)
+        o_narr[ch] += n6
+        b6 = _bare(t6)
+        o_tblnum[ch] |= b6
+        for x in b6:
+            try:
+                o_tblval[ch].append(float(x))
+            except ValueError:
+                pass
+    if True:
         tot_x = tot_sus = 0
         for ch in SECTIONS_ORDER(g_ch, o_ch):
-            gn, on = set(_nums(g_ch.get(ch, []))), _nums(o_ch.get(ch, []))
+            gn, on = set(_nums(g_ch.get(ch, []))), _nums(o_narr.get(ch, []))
             extra = {k: v for k, v in on.items() if k not in gn}
             if not extra:
                 continue
-            sus = {k: v for k, v in extra.items() if not _matched_src(k, s_pairs, s_bare)}
+            mine, mvals = o_tblnum.get(ch, set()), o_tblval.get(ch, [])
+            sus = {k: v for k, v in extra.items()
+                   if not _mine_hit(k, mine, mvals)
+                   and not (s_pairs is not None and _matched_src(k, s_pairs, s_bare))}
             tot_x += len(extra); tot_sus += len(sus)
             P(f"\n  ── {ch or '—'}　我哋多咗 {len(extra)} 個數"
-              f"　（源頭有 {len(extra) - len(sus)}、【源頭都冇 {len(sus)}】）")
+              f"　（表／源頭對到 {len(extra) - len(sus)}、【邊度都冇 {len(sus)}】）")
             for k, v in list(sus.items())[:12 if not brief else 6]:
                 P(f"     ⚠ {k[0]}{k[1]}　…{v}…")
             if len(sus) > (6 if brief else 12):
                 P(f"     …另外 {len(sus) - (6 if brief else 12)} 個")
-        P(f"\n  → 合計多咗 {tot_x} 個數，其中 {tot_sus} 個【源頭都搵唔到】")
-        P("  ※ 源頭都冇 = 唔喺 golden、亦唔喺表2／清單 → 逐個查，多數係 LLM 自己計或者作。")
-        P("  ※ 源頭有 = 我哋比原報告講多咗，未必錯，但要諗下使唔使講。")
+        P(f"\n  → 合計多咗 {tot_x} 個數，其中 {tot_sus} 個【我哋自己張表都冇】")
+        P("  ※ 查法：敘述嘅數 → 原報告同章有冇 → 冇就睇我哋【自己張表】有冇 → 再睇表2／清單。")
+        P("  ※ 三處都冇 = LLM 寫咗一個邊度都追唔到嘅數，逐個查。")
 
     # ── ⑦ 版型對照 ──────────────────────────────────────────────
     # user 2026-09-11 肉眼捉到：原報告 1.3 係「圖 圖 文 文」（s13-14 純文字全闊），
