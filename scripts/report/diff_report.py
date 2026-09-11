@@ -14,6 +14,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
   ④ 文字量     逐章敘述字數 golden vs 我哋（②全中都可以寫得薄）
   ⑤ 版式對照   我哋每個角色（breadcrumb／副標題／註…）嘅字號同顏色 vs 原報告實測值
   ⑥ 反向數字   我哋敘述講咗、但原報告同章冇嘅數 —— 源頭都冇嗰啲好可能係作出嚟
+  ⑦ 版型對照   逐子節每版係『表』定『文』—— 捉「原報告純文字、我哋逐版重出張表」
 
 用法：
     python scripts\\report\\diff_report.py "MGM…報告.pptx" mgm_report_llm.pptx
@@ -157,6 +158,26 @@ def _styled_runs(slide, W):
                 f = r.font
                 out.append((y, x, f.size.pt if f.size else None, f.bold, _run_rgb(f)))
     return out
+
+
+def _arch(slide, W):
+    """一版嘅版型：『表』＝有數據表／圖（原報告啲數字表係截圖，所以圖都算）；
+    『文』＝淨係文字。細嘢（caption 條、icon、頁首頁尾）唔算。"""
+    for sh in _walk(slide.shapes):
+        try:
+            x, w, h = _in(sh.left), _in(sh.width), _in(sh.height)
+        except Exception:
+            continue
+        if x + w < 0.05 or x > W - 0.05 or w < 2.0 or h < 0.8:
+            continue
+        if getattr(sh, "has_table", False):
+            return "表"
+        try:
+            if sh.image is not None:
+                return "表"
+        except Exception:
+            pass
+    return "文"
 
 
 def _crumb(slide, W, H=7.5):
@@ -591,6 +612,36 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
         P(f"\n  → 合計多咗 {tot_x} 個數，其中 {tot_sus} 個【源頭都搵唔到】")
         P("  ※ 源頭都冇 = 唔喺 golden、亦唔喺表2／清單 → 逐個查，多數係 LLM 自己計或者作。")
         P("  ※ 源頭有 = 我哋比原報告講多咗，未必錯，但要諗下使唔使講。")
+
+    # ── ⑦ 版型對照 ──────────────────────────────────────────────
+    # user 2026-09-11 肉眼捉到：原報告 1.3 係「圖 圖 文 文」（s13-14 純文字全闊），
+    # 我哋每版都重出張表、文字迫喺右邊窄欄。②③④⑤⑥ 冇一把量得到版型 —— 呢把就係。
+    P("\n\n══ ⑦ 版型對照（逐子節：每版係『表』定『文』）")
+    gp, op = Presentation(str(gold_path)), Presentation(str(ours_path))
+    Wg, Wo2 = _in(gp.slide_width), _in(op.slide_width)
+
+    def _seq(prs_, rows, Wx):
+        out = defaultdict(list)
+        for (i, _ch, sub, _tx), sl_ in zip(rows, prs_.slides):
+            if sub:
+                out[_norm_sub(sub)].append(_arch(sl_, Wx))
+        return out
+
+    gseq, oseq = _seq(gp, gold, Wg), _seq(op, ours, Wo2)
+    bad = 0
+    P(f"  {_pad('子節', 46)}{'原報告':<12}{'我哋':<12}")
+    for sub in gseq:
+        g_, o_ = "".join(gseq[sub]), "".join(oseq.get(sub, []))
+        if not o_:
+            continue
+        same = (g_ == o_)
+        bad += 0 if same else 1
+        if brief and same:
+            continue
+        P(f"  {_pad(sub, 46)}{_pad(g_, 12)}{_pad(o_, 12)}{'' if same else '  ✗'}")
+    P(f"\n  → {len(gseq) - bad} 個子節版型一樣，{bad} 個唔同")
+    P("  ※『表』包括原報告嘅 Tableau 截圖（佢哋數字表係圖）。版數唔同唔一定錯，"
+      "但『原報告文、我哋表』代表我哋逐版重出咗張表。")
 
     txt = "\n".join(L)
     dest = Path("results") if Path("results").is_dir() else Path(".")
