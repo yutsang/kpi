@@ -483,10 +483,19 @@ def table_footnote(slide, x, y, w, note=None, *, source=None):
     return y + h
 
 
-def source_note(slide, W, y=None, *, note=None, more=False):
-    """表下：資料來源（左）+（下頁待續）（右）。"""
+SRC_W = 5.78            # 資料來源行闊度（原報告 s11/s12 實測 5.78；喺左圖下面嗰啲 3.46~4.58）
+
+
+def source_note(slide, W, y=None, *, note=None, more=False, w=None):
+    """表下：資料來源（左）+（下頁待續）（右）。
+
+    ⚠ 闊度唔係通版 —— 原報告逐版量度（--fmt）：
+        s11/s12  x0.53 y6.73 w5.78      s10  x0.54 y5.94 w4.58（喺左圖下面）
+        s30      x0.64 y3.40 w3.46（喺左圖下面）
+      即係【永遠跟住左邊嗰嚿嘅闊度】，唔會打橫通版。我哋本來 W-2.0 ≈ 8.83，
+      成行拉到成版闊，係一眼睇得出嘅差異。caller 想跟住個表就傳 w=。"""
     y = CONTENT_BOTTOM if y is None else y
-    put(slide, MARGIN, y, W - 2.0, 0.16,
+    put(slide, MARGIN, y, min(w or SRC_W, W - 2 * MARGIN), 0.30,
         note or "資料來源：管理層提供之項目投資計劃及執行報告資料，畢馬威分析",
         size=SZ_NOTE, color=NOTE_FG)
     if more:

@@ -568,7 +568,7 @@ def _draw_adj_table(slide, x, y, w, adjdf, *, font=None):
 
 
 def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, table_name=None,
-                          note=None, grouped=False):
+                          note=None, grouped=False, tbl_groups=None):
     """一個子節嘅多版：【第一版左表＋右敘述，續版純文字全闊】。
 
     ★ 2026-09-11 改：原本每一版都重出同一張表、敘述迫喺右邊窄欄。原報告唔係咁 ——
@@ -589,21 +589,30 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     avail = L.CONTENT_BOTTOM - top
     col_h = L.PROSE2_BOTTOM - L.PROSE2_Y         # 續版：兩欄，每欄咁高
     pages = []                                   # [(有冇表, 左欄items, 右欄items)]
-    for grp in (bullets if grouped else [(None, bullets)]):
+    for gi, grp in enumerate(bullets if grouped else [(None, bullets)]):
         head, items = grp if grouped else grp
         if not items:
             continue
         pre = [(head, "")] if head else []
-        narrow = L.fit_prose(items, colw, avail - (0.24 if head else 0),
-                             head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
-        first = narrow[0] if narrow else []
-        pages.append((True, pre + first, []))
-        rest = items[len(first):]
+        # tbl_groups：只有頭幾組先有表版，其餘直接兩欄文字。
+        #   原報告 1.3 四組 —— s11 整體執行概況（圖）、s12 區分設施建設/活動舉辦（圖）、
+        #   s13/s14 按範疇項目概況（純文字兩欄）。我哋本來每組都出一個表版 → 多咗一版表。
+        if tbl_groups is not None and gi >= tbl_groups:
+            rest = items
+            pre_rest = pre
+        else:
+            narrow = L.fit_prose(items, colw, avail - (0.24 if head else 0),
+                                 head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
+            first = narrow[0] if narrow else []
+            pages.append((True, pre + first, []))
+            rest = items[len(first):]
+            pre_rest = [(head + "（續）", "")] if head else []
         if rest:
             cols = L.fit_prose(rest, L.PROSE2_W, col_h,
                                head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY) or [rest]
             for k in range(0, len(cols), 2):     # 一版兩欄
-                lft = ([(head + "（續）", "")] if head else []) + cols[k]
+                lft = (pre_rest if k == 0 else
+                       ([(head + "（續）", "")] if head else [])) + cols[k]
                 pages.append((False, lft, cols[k + 1] if k + 1 < len(cols) else []))
     for pi, (with_tbl, left, right) in enumerate(pages):
         hl = headline + _pg(pi + 1, len(pages))
@@ -1797,9 +1806,11 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
               ("2025年度投資計劃區分設施建設/活動舉辦的投資金額", _fac_bullets(ent_up, ov)),
               ("按範疇的項目概況 — 博彩項目", g_bul),
               ("按範疇的項目概況 — 非博彩項目", n_bul)]
+    # tbl_groups=2：原報告 s11/s12 有圖、s13/s14 係純文字兩欄（--fmt 實測）
     render_overview_pages(prs, "2025年度投資計劃執行情況概述  |  2025年度投資項目的整體執行概況",
                           head, ovx if ovx is not None else ov, groups, sec=0, note=note,
-                          table_name=f"{ent_up} 2025年度計劃的整體投資支出概況", grouped=True)
+                          table_name=f"{ent_up} 2025年度計劃的整體投資支出概況", grouped=True,
+                          tbl_groups=2)
 
 
 def _fac_bullets(ent_up, ov):
