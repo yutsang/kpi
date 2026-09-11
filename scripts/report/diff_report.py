@@ -126,8 +126,19 @@ def _run_rgb(font):
         return None
 
 
+def _filled(sh):
+    """有實色填充 = 流程圖／架構圖嘅方框，唔係文字框。"""
+    try:
+        return sh.fill.type is not None and int(sh.fill.type) == 1
+    except Exception:
+        return False
+
+
 def _styled_runs(slide, W):
-    """一版嘅 (y, x, pt, bold, hex) —— 只收文字框（表格格仔另計），畫布外唔要。"""
+    """一版嘅 (y, x, pt, bold, hex) —— 只收【冇底色嘅文字框】，畫布外同表格格仔唔要。
+
+    ⚠ 一定要隔走有底色嗰啲：罐頭嘅流程圖／KPI 圖每版 20-47 個方框，方框字係
+      10pt navy，夾埋 552 個 run，直接蓋過真正文（9pt 黑）成為眾數 —— 尺就量錯咗。"""
     out = []
     for sh in _walk(slide.shapes):
         try:
@@ -136,6 +147,8 @@ def _styled_runs(slide, W):
             continue
         if x + w < 0.05 or x > W - 0.05 or y < 0 or not sh.has_text_frame:
             continue
+        if _filled(sh) or str(sh.name or "").startswith("cn:"):
+            continue        # 有底色＝流程圖方框；cn:*＝罐頭版（逐字抄原報告，量佢冇意義）
         for p in sh.text_frame.paragraphs:
             for r in p.runs:
                 if not (r.text or "").strip():

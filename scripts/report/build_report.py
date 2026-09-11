@@ -3716,7 +3716,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 21868bf · content df73ad52 · bundled 2026-09-10 18:15"
+BUILD_STAMP = "base dfead26 · content 151a7f1d · bundled 2026-09-11 09:00"
 
 
 # ── from make_report ──
@@ -4687,6 +4687,11 @@ def render_canned(prs, canned, lo, hi, entity="mgm"):
                                fill=_rgb(c.get("fill")), align=PP_ALIGN.LEFT,
                                color=_rgb(c.get("fg")))
                     cell_border(tbl.cell(ri, ci), c.get("bd"))   # 原報告附件表四邊 navy 1pt
+        # ★ 標記：罐頭版係逐字抄原報告，唔應該當成「我哋嘅版式」去量度
+        #   （diff ⑤ 一度把流程圖方框字 10pt navy 當咗正文眾數）。改名做 cn:*，
+        #   diff 見到就跳過。
+        for sh_ in slide.shapes:
+            _name(sh_, "cn:" + (sh_.name or ""))
         if s.get("marker"):
             subsec_marker(slide, s["marker"])
         footer(slide, W, H, len(prs.slides._sldIdLst))
