@@ -229,6 +229,30 @@ SPLIT_GAP = 0.14
 
 
 # ── from layout ──
+PROSE2_W = 4.80
+
+
+# ── from layout ──
+PROSE2_X2 = 5.60
+
+
+# ── from layout ──
+PROSE2_Y = 1.65
+
+
+# ── from layout ──
+PROSE2_BOTTOM = 6.95
+
+
+# ── from layout ──
+FIND_LEFT_W = 3.55
+
+
+# ── from layout ──
+FIND_TEXT_X = 4.15
+
+
+# ── from layout ──
 def tbl_font(ncol):
     """表身字號按欄數分三級。原本得 9pt／6pt 兩級，15 欄嘅表用緊 9pt，
     塞唔落 → 23 年單項審查表出到 12 版（原報告 7 版）。"""
@@ -3716,7 +3740,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 11d8ff7 · content e81202ed · bundled 2026-09-11 11:04"
+BUILD_STAMP = "base d5bd71a · content 1eb9d4ce · bundled 2026-09-11 11:10"
 
 
 # ── from make_report ──
@@ -4176,12 +4200,10 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     left_w = split_left(8)
     rx = MARGIN + left_w + SPLIT_GAP
     colw = W - rx - MARGIN                     # 第一版：右邊窄欄
-    full_w = W - 2 * MARGIN                    # 續版：全闊
     top = content_top(f"{headline}（1/9）", W) + (0.20 if table_name else 0)
     avail = CONTENT_BOTTOM - top
-    top_f = content_top(f"{headline}（1/9）", W)
-    avail_f = CONTENT_BOTTOM - top_f
-    pages = []                                   # [(有冇表, [items])]
+    col_h = PROSE2_BOTTOM - PROSE2_Y         # 續版：兩欄，每欄咁高
+    pages = []                                   # [(有冇表, 左欄items, 右欄items)]
     for grp in (bullets if grouped else [(None, bullets)]):
         head, items = grp if grouped else grp
         if not items:
@@ -4190,22 +4212,29 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
         narrow = fit_prose(items, colw, avail - (0.24 if head else 0),
                              head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
         first = narrow[0] if narrow else []
-        pages.append((True, pre + first))
+        pages.append((True, pre + first, []))
         rest = items[len(first):]
         if rest:
-            for ch in fit_prose(rest, full_w, avail_f - (0.24 if head else 0),
-                                  head_size=SZ_BODY_HEAD, body_size=SZ_BODY):
-                pages.append((False, ([(head + "（續）", "")] if head else []) + ch))
-    for pi, (with_tbl, page) in enumerate(pages):
+            cols = fit_prose(rest, PROSE2_W, col_h,
+                               head_size=SZ_BODY_HEAD, body_size=SZ_BODY) or [rest]
+            for k in range(0, len(cols), 2):     # 一版兩欄
+                lft = ([(head + "（續）", "")] if head else []) + cols[k]
+                pages.append((False, lft, cols[k + 1] if k + 1 < len(cols) else []))
+    for pi, (with_tbl, left, right) in enumerate(pages):
         hl = headline + _pg(pi + 1, len(pages))
         if with_tbl:
-            render_overview_page(prs, crumb, hl, table_df, page,
+            render_overview_page(prs, crumb, hl, table_df, left,
                                  sec=sec, table_name=table_name, note=note)
             continue
-        slide, Wx, _Hx, topx = _page(prs, sec, crumb, hl)
-        prose_box(slide, MARGIN, topx, full_w, CONTENT_BOTTOM - topx, page,
+        # 續版：兩欄文字，冇表、冇資料來源行（原報告 s13/s16/s23 實測就係咁）
+        slide, _Wx, _Hx, topx = _page(prs, sec, crumb, hl)
+        y0 = max(topx, PROSE2_Y)
+        h = PROSE2_BOTTOM - y0
+        prose_box(slide, MARGIN, y0, PROSE2_W, h, left,
                     head_size=SZ_BODY_HEAD, body_size=SZ_BODY, gap=7)
-        source_note(slide, Wx, more=(pi < len(pages) - 1))
+        if right:
+            prose_box(slide, PROSE2_X2, y0, PROSE2_W, h, right,
+                        head_size=SZ_BODY_HEAD, body_size=SZ_BODY, gap=7)
 
 
 # ── from make_report ──
@@ -5026,39 +5055,47 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
             bul.append((head, txt or "待項目組補充分析發現。"))
         crumb = f"本年度審查工作的主要發現  |  {SUB_AS_REPORTED.get(adj, adj)}"
         head = _finding_head(ent_up, adj, sub)
-        # 同 render_overview_pages：【第一版左表＋右敘述，續版純文字全闊】。
-        # 原報告 s30-44 逐版量度全部係 0 個數據表（嗰「1 table」係全闊嘅『事項描述』框），
-        # 我哋左邊嗰個數據表係自己加嘅 —— 起碼唔好逐版重複，續版放返全闊。
-        lw = W * 0.42
-        rx = MARGIN + lw + 0.24
+        # 原報告 s30 實測：全闊『事項描述』框（2r x 1c，r0 navy 條）入面【左圖右文】——
+        # 同我哋結構一樣，所以左表保留。但比例差好遠：佢左 3.49／右 6.13，
+        # 我哋本來 4.55／4.98（表霸咗位、敘述迫窄）→ 跟返 FIND_LEFT_W／FIND_TEXT_X。
+        # 續版同 1.3／2.x 一樣走兩欄文字（s13/s16/s23 實測），唔重複張表。
+        lw = FIND_LEFT_W
+        rx = FIND_TEXT_X
         rw = W - MARGIN - rx
-        fw = W - 2 * MARGIN
         top0 = content_top(head, W) + 0.40
         _narrow = fit_prose(list(bul), rw, CONTENT_BOTTOM - top0,
                               head_size=SZ_BODY_HEAD, body_size=SZ_BODY) or [bul]
-        pages = [_narrow[0]]
+        pages = [(_narrow[0], [])]
         _rest = bul[len(_narrow[0]):]
         if _rest:
-            pages += (fit_prose(_rest, fw, CONTENT_BOTTOM - top0,
-                                  head_size=SZ_BODY_HEAD, body_size=SZ_BODY) or [_rest])
-        for pi, chunk in enumerate(pages):
+            _cols = fit_prose(_rest, PROSE2_W, PROSE2_BOTTOM - PROSE2_Y,
+                                head_size=SZ_BODY_HEAD, body_size=SZ_BODY) or [_rest]
+            pages += [(_cols[k], _cols[k + 1] if k + 1 < len(_cols) else [])
+                      for k in range(0, len(_cols), 2)]
+        for pi, (chunk, chunk_r) in enumerate(pages):
             sfx = f"（{pi+1}/{len(pages)}）" if len(pages) > 1 else ""
             # scan p28 個「主要發現」小標 = 我哋 crumb 嗰行（crumb 仲寫埋調整類型，
             #   資訊多過 scan，而且目錄要靠「章節 | 子題」呢個格式收集）→ 唔另外再畫，會疊字。
             slide, W, H, top = _page(prs, 2, crumb, head + sfx)
             top = caption_bar(slide, MARGIN, top, W - 2 * MARGIN, "事項描述")
-            if pi == 0 and tbl is not None and not tbl.empty:
-                t2 = caption_bar(slide, MARGIN, top + 0.04, lw,
-                                   f"{ent_up} 報告投資金額中涵蓋的{adj}")
-                subs2, rows2, wid2, sup2 = _df_table(tbl.fillna(""), first_label="萬澳門元")
-                draw_table(slide, MARGIN, t2, lw, subs2, rows2, wid2, supers=sup2,
-                             font=SZ_TBL_WIDE, hfont=SZ_TBL_WIDE - 0.5, left_cols=1)
-                _px, _pw = rx, rw
-            else:
-                _px, _pw = MARGIN, fw          # 續版：冇表，敘述放全闊
-            prose_box(slide, _px, top + 0.04, _pw, CONTENT_BOTTOM - top - 0.10, chunk,
-                        head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
-            source_note(slide, W, more=(pi < len(pages) - 1))
+            if pi == 0:
+                if tbl is not None and not tbl.empty:
+                    t2 = caption_bar(slide, MARGIN, top + 0.04, lw,
+                                       f"{ent_up} 報告投資金額中涵蓋的{adj}")
+                    subs2, rows2, wid2, sup2 = _df_table(tbl.fillna(""), first_label="萬澳門元")
+                    draw_table(slide, MARGIN, t2, lw, subs2, rows2, wid2, supers=sup2,
+                                 font=SZ_TBL_WIDE, hfont=SZ_TBL_WIDE - 0.5, left_cols=1)
+                prose_box(slide, rx, top + 0.04, rw, CONTENT_BOTTOM - top - 0.10, chunk,
+                            head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
+                source_note(slide, W, more=(pi < len(pages) - 1))
+            else:                                # 續版：兩欄文字，冇表冇資料來源行
+                y0 = max(top + 0.04, PROSE2_Y)
+                h2 = PROSE2_BOTTOM - y0
+                prose_box(slide, MARGIN, y0, PROSE2_W, h2, chunk,
+                            head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
+                if chunk_r:
+                    prose_box(slide, PROSE2_X2, y0, PROSE2_W, h2, chunk_r,
+                                head_size=SZ_BODY_HEAD, body_size=SZ_BODY)
 
 
 # ── from make_report ──
