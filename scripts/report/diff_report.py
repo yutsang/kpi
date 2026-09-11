@@ -670,9 +670,13 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
             #   嗰批表度，但敘述寫喺「主要發現」章，逐章對就會當咗搵唔到。
             #   一個數只要喺我哋任何一張 code 計出嚟嘅表出現過，就算有根據。
             mine, mvals = _all_tblnum, _all_tblval
+            # ⚠ ⑥ 對源頭要【鬆過】②：② 係「原報告有、我哋冇」，寧緊莫鬆；
+            #   ⑥ 係「我哋有、原報告冇」，寧鬆莫緊 —— 誤報一個就要人手去查。
+            #   清單啲金額多數係裸數字（欄名先有單位），所以連 s_bare 都認。
             sus = {k: v for k, v in extra.items()
                    if not _mine_hit(k, mine, mvals)
-                   and not (s_pairs is not None and _matched_src(k, s_pairs, s_bare))}
+                   and not (s_pairs is not None
+                            and (_matched_src(k, s_pairs, s_bare) or k[0] in s_bare))}
             tot_x += len(extra); tot_sus += len(sus)
             P(f"\n  ── {ch or '—'}　我哋多咗 {len(extra)} 個數"
               f"　（表／源頭對到 {len(extra) - len(sus)}、【邊度都冇 {len(sus)}】）")
