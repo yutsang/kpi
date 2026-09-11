@@ -916,7 +916,7 @@ def prose(box, items, *, head_size=SZ_BODY_HEAD, body_size=SZ_BODY, gap=6):
             p.font.size = Pt(body_size); p.font.name = FONT_NUM; set_ea(p.font)
             p._p.get_or_add_endParaRPr().set("sz", str(int(round(body_size * 100))))
             r = p.add_run(); r.text = str(body)
-            setfont(r, body_size, color=RGBColor(0x33, 0x33, 0x33))
+            setfont(r, body_size, color=INK)   # 原報告正文係純黑，唔好另外寫死灰黑
             first = False
 
 
@@ -948,7 +948,7 @@ def prose_numbered(box, items, *, size=SZ_BODY, gap=7, indent=0.24, title=None, 
         rh = p.add_run(); rh.text = str(head)
         setfont(rh, size, bold=True, color=NAVY)
         rb = p.add_run(); rb.text = str(body)
-        setfont(rb, size, color=RGBColor(0x33, 0x33, 0x33))
+        setfont(rb, size, color=INK)
 
 
 # ── from layout ──
@@ -3716,7 +3716,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 7199570 · content 57e7704d · bundled 2026-09-11 09:15"
+BUILD_STAMP = "base 4caef01 · content e0949624 · bundled 2026-09-11 09:26"
 
 
 # ── from make_report ──
