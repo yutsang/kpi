@@ -733,7 +733,10 @@ def _tot_projects(ov):
     return int(v) if pd.notna(v) and v > 0 else 0
 
 
-_RATE_COLS = ("投資計劃完成率", "潛在調整後投資計劃完成率")
+# 1.2 個表唔顯示嘅欄 —— overview_by_bucket 留喺最後俾下游文字邏輯用，出表前 drop。
+# 設施建設／活動舉辦兩欄係 1.3 第2版（原報告 s12）嘅原料，唔可以喺上游就 drop 走。
+_RATE_COLS = ("投資計劃完成率", "潛在調整後投資計劃完成率",
+              "設施建設/資本性支出", "活動舉辦/營運性支出")
 
 
 def _overview_extra(ov, plan, sdf, budget, ent_up):

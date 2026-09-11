@@ -226,6 +226,13 @@ def _arch(slide, W):
                 return "表"
         except Exception:
             pass
+        # 骨架模式（extract_canned --skeleton）嘅圖片佔位框 —— 版式同原報告一樣，
+        # 只係唔抄今年張相。當「表」，否則每張骨架版都會白白報 ✗。
+        try:
+            if sh.has_text_frame and "〔圖片" in (sh.text_frame.text or ""):
+                return "表"
+        except Exception:
+            pass
     return "文"
 
 
