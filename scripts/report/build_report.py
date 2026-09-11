@@ -3716,7 +3716,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base dfead26 · content 151a7f1d · bundled 2026-09-11 09:00"
+BUILD_STAMP = "base 7199570 · content 57e7704d · bundled 2026-09-11 09:15"
 
 
 # ── from make_report ──
@@ -5701,6 +5701,9 @@ def main():
             pass
         render_findings(prs, ent_up, sdf, narr, llm=llm, b2=b2)
 
+    def _canned_has(lo, hi):
+        return bool(canned) and any(lo <= s["n"] <= hi for s in canned.get("slides", []))
+
     # ④ 其他信息（報告 slide 42-63）
     S4 = "其他信息"
     divider(prs, S4, "4")
@@ -5730,11 +5733,19 @@ def main():
             render_sheet(prs, f"報告年{yr}", tab.fillna(""), list(tab.columns),
                            ent_up=ent_up, sec=3, crumb=f"{S4}  |  單個項目審查結果匯總")
 
-    render_visit_summary(prs, ent_up, sdf)      # 報告 slide 71 走訪情況匯總（樣本標準+樣本量）
     # 4.4 執行管理流程（swimlane）+ 4.5 編制基礎 —— 講承批公司內部流程，靠訪談，數據砌唔出
     n4 = render_canned(prs, canned, 68, 70, entity)
     if n4:
         print(f"    罐頭 4.4 管理流程／4.5 編制基礎：{n4} 版")
+    # 4.6 本次審查工作執行嘅程序匯總（原報告 s71-75）—— 審查方法論：抽樣量、憑證抽查、
+    #   現場走訪標準、供應商查冊。冇底層數據砌得出（係我哋自己嘅工作記錄）。
+    #   diff ③ 顯示呢五版合共 4,728 字，佔咗 golden「其他信息」章 7,057 字嘅三分二 ——
+    #   就係嗰章一直 64% 嘅原因。有罐頭就用，冇就 fallback 返我哋自己嗰版走訪匯總。
+    if _canned_has(71, 75):
+        n46 = render_canned(prs, canned, 71, 75, entity)
+        print(f"    罐頭 4.6 審查程序匯總：{n46} 版")
+    else:
+        render_visit_summary(prs, ent_up, sdf)
 
     # ⑤ 投資計劃執行報告的六項KPI分析（原報告 slide 77-86）——之前成章缺席
     #   分隔頁我哋自己出（同 1/2/3/4/6 章一致），內容係 KPI 定義同計算方式，罐頭抽返
@@ -5747,10 +5758,6 @@ def main():
     # ⑥ 附件（原報告 s87-109）。次序跟返原報告：工作範圍 → 現場走訪 → 藝術品 → 補充圖片 → 封底
     #   （之前我哋係 走訪 → 藝術品 → 工作範圍，次序都唔同。）
     divider(prs, "附件", "6")
-
-    def _canned_has(lo, hi):
-        return bool(canned) and any(lo <= s["n"] <= hi for s in canned.get("slides", []))
-
     n_app = render_canned(prs, canned, 88, 96, entity)     # 附件1 工作範圍
     # ★ 現場走訪同藝術品清單：原報告係【相片 + 表】，屬現場做出嚟嘅嘢，砌唔出。
     #   有罐頭就用罐頭（同原報告一模一樣）；冇（其他家／其他年）先用我哋自己生成嗰版。
