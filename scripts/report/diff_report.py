@@ -13,6 +13,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
   ③ 罐頭文字   golden 有成段、我哋完全冇 → 直接就係要抄嘅 boilerplate 清單
   ④ 文字量     逐章敘述字數 golden vs 我哋（②全中都可以寫得薄）
   ⑤ 版式對照   我哋每個角色（breadcrumb／副標題／註…）嘅字號同顏色 vs 原報告實測值
+  ⑥ 反向數字   我哋敘述講咗、但原報告同章冇嘅數 —— 源頭都冇嗰啲好可能係作出嚟
 
 用法：
     python scripts\\report\\diff_report.py "MGM…報告.pptx" mgm_report_llm.pptx
@@ -564,6 +565,32 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False):
     P(f"\n  → {len(GOLD_SPEC) - bad}/{len(GOLD_SPEC)} 個角色對得上"
       + ("" if not bad else "　（✗ 嗰啲改 layout.py 嘅常數）"))
     P("  ※ 呢節只查【文字框】嘅角色。表格格仔、罐頭版（原樣抄返原報告）唔喺度查。")
+
+    # ── ⑥ 反向數字（我哋講咗、原報告冇講）────────────────────────
+    # ②③ 只查「golden 有 → 我哋有冇」。但表格＋敘述嗰批版，兩邊都寫咗嘢、內容唔同，
+    # 嗰種差異前面幾把尺全部捉唔到。最危險係【我哋講咗一個原報告冇嘅數】——
+    # 源頭有就只係多講咗，源頭都冇就好可能係 LLM 作出嚟。
+    P("\n\n══ ⑥ 反向數字（我哋敘述有、原報告同章冇）")
+    if s_pairs is None:
+        P("  （冇源頭檔可對，跳過）")
+    else:
+        tot_x = tot_sus = 0
+        for ch in SECTIONS_ORDER(g_ch, o_ch):
+            gn, on = set(_nums(g_ch.get(ch, []))), _nums(o_ch.get(ch, []))
+            extra = {k: v for k, v in on.items() if k not in gn}
+            if not extra:
+                continue
+            sus = {k: v for k, v in extra.items() if not _matched_src(k, s_pairs, s_bare)}
+            tot_x += len(extra); tot_sus += len(sus)
+            P(f"\n  ── {ch or '—'}　我哋多咗 {len(extra)} 個數"
+              f"　（源頭有 {len(extra) - len(sus)}、【源頭都冇 {len(sus)}】）")
+            for k, v in list(sus.items())[:12 if not brief else 6]:
+                P(f"     ⚠ {k[0]}{k[1]}　…{v}…")
+            if len(sus) > (6 if brief else 12):
+                P(f"     …另外 {len(sus) - (6 if brief else 12)} 個")
+        P(f"\n  → 合計多咗 {tot_x} 個數，其中 {tot_sus} 個【源頭都搵唔到】")
+        P("  ※ 源頭都冇 = 唔喺 golden、亦唔喺表2／清單 → 逐個查，多數係 LLM 自己計或者作。")
+        P("  ※ 源頭有 = 我哋比原報告講多咗，未必錯，但要諗下使唔使講。")
 
     txt = "\n".join(L)
     dest = Path("results") if Path("results").is_dir() else Path(".")
