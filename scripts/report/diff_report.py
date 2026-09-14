@@ -823,6 +823,12 @@ def main():
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
     if len(a) < 2:
         print(__doc__); return
+    OK = {"--brief", "--canned", "--format", "--text"}
+    bad = [x for x in sys.argv[1:] if x.startswith("--") and x not in OK]
+    if bad:
+        print(f"✗ 唔識嘅 flag：{' '.join(bad)}　（有效：{' '.join(sorted(OK))}）")
+        print("  ⚠ 打錯 flag 之前會【靜靜當冇】跑晒全份報告，白等一轉 —— 所以而家報錯。")
+        return
     if "--text" in sys.argv:
         L = show_text(a[0], a[1], sys.argv[sys.argv.index("--text") + 1])
         txt = "\n".join(L)
