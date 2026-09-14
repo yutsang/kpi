@@ -21,6 +21,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --brief    # 只出摘要（貼返用）
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --canned   # 淨係出 ③
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --format   # 淨係出格式（①⑤⑦）
+    python scripts\\report\\diff_report.py golden.pptx ours.pptx --text "人工成本"  # 逐段並排，唔評分
 
 ⚠ --brief 只影響【印出嚟】嘅嘢；`results/diff_report.txt` 一樣係嗰份摘要，
   想睇逐項就唔好加 --brief。
@@ -477,6 +478,51 @@ def _norm_sub(s):
     return re.sub(r"\s+", "", s)
 
 
+def show_text(gold_path, ours_path, key):
+    """--text「子節名」：原報告同我哋【逐段並排】，唔評分，直接睇。
+
+    點解要：②③④⑤⑥⑦ 全部係評分。③ 只捉「原報告有成段、我哋完全冇」——
+    兩邊都有但寫法／內容差天共地，佢一律當 ✓。user 2026-09-14 講『文字好多都
+    仲有好大差異』，而我啲尺同時報 6/6 同 19/28 → 即係量緊嘅唔係睇到嘅。
+    呢個模式唔出分數，淨係把兩邊文字擺埋一齊。"""
+    L = []
+
+    def P(x=""):
+        L.append(str(x))
+    gold, ours = _scan(gold_path), _scan(ours_path)
+    k = _norm_sub(key)
+
+    def grab(rows, path):
+        prs = Presentation(str(path))
+        W = _in(prs.slide_width)
+        out = []
+        for (i, _ch, sub, _tx), sl in zip(rows, prs.slides):
+            if not sub or k not in _norm_sub(sub):
+                continue
+            for sh in _walk(sl.shapes):
+                try:
+                    x, w, y = _in(sh.left), _in(sh.width), _in(sh.top)
+                except Exception:
+                    continue
+                if x + w < 0.05 or y < 0.6 or not sh.has_text_frame:
+                    continue
+                t = re.sub(r"[ \t]+", " ", (sh.text_frame.text or "").strip())
+                if len(re.sub(r"\s+", "", t)) < 40 or any(m in t for m in MARKERS):
+                    continue
+                out.append((i, len(re.sub(r"\s+", "", t)), t))
+        return out
+
+    g, o = grab(gold, gold_path), grab(ours, ours_path)
+    P(f"### 子節「{key}」　原報告 {len(g)} 段 / 我哋 {len(o)} 段\n")
+    for tag, items in (("原報告", g), ("我哋", o)):
+        P(f"{'=' * 72}\n【{tag}】")
+        for i, n, t in items:
+            P(f"\n── s{i}　{n} 字")
+            P("   " + t.replace("\n", "\n   "))
+        P()
+    return L
+
+
 def run(gold_path, ours_path, canned_only=False, entity=None, brief=False, fmt_only=False):
     L = []
     P = L.append
@@ -777,6 +823,15 @@ def main():
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
     if len(a) < 2:
         print(__doc__); return
+    if "--text" in sys.argv:
+        L = show_text(a[0], a[1], sys.argv[sys.argv.index("--text") + 1])
+        txt = "\n".join(L)
+        dest = Path("results") if Path("results").is_dir() else Path(".")
+        f = dest / "diff_text.txt"
+        f.write_text(txt, encoding="utf-8")
+        print(txt)
+        print(f"\n✓ 已寫 {f}（UTF-8）")
+        return
     run(a[0], a[1], canned_only="--canned" in sys.argv, brief="--brief" in sys.argv,
         fmt_only="--format" in sys.argv)
 
