@@ -11,6 +11,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
   ① 章節對照   golden 有邊啲子節 → 我哋出咗未（捉「成節冇做」）
   ② 數字收斂   golden 敘述每個帶單位嘅數字 → 我哋同章有冇同一個數（捉「數唔啱／冇講」）
   ③ 罐頭文字   golden 有成段、我哋完全冇 → 直接就係要抄嘅 boilerplate 清單
+               （每段再標【表2 n%】＝呢段喺審查底稿表2 有幾多原料，≥50% 就係接得落嗰批）
   ④ 文字量     逐章敘述字數 golden vs 我哋（②全中都可以寫得薄）
   ⑤ 版式對照   我哋每個角色（breadcrumb／副標題／註…）嘅字號同顏色 vs 原報告實測值
   ⑥ 反向數字   我哋敘述講咗、但原報告同章冇嘅數 —— 源頭都冇嗰啲好可能係作出嚟
@@ -323,6 +324,33 @@ def _bare(texts):
     return out
 
 
+# ── ③ 用：golden 嗰段文字係咪表2 有原料 ─────────────────────────────
+# 點解要量：之前我講過「③ 剩低嗰 60 段有 40 段要靠表2，收唔到」—— 嗰個係【估】，
+# 當時表2 根本未讀得出（密碼＋dump bug）。而家讀到咗，就量返個數。
+# 報告文字係由表2 編輯過（刪字、換標點、改語序），逐字比對必然唔中 →
+# 用 8-gram 重疊率；≥50% 當「表2 有原料，可以做」。
+_PUNC = re.compile(r"[\s　，。、；：:「」『』（）()《》〈〉“”\"'‘’,.;!?！？—–\-·…%％]+")
+
+
+def _grams(s, n=8):
+    s = _PUNC.sub("", s)
+    return {s[i:i + n] for i in range(max(0, len(s) - n + 1))}
+
+
+def _b2_grams(entity):
+    """表2 全部敘述原文 → 8-gram set。冇表2／開唔到就 None（唔標）。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import biao2 as B2
+        segs = B2.load_biao2_corpus("data/表2", entity or "")
+    except Exception:
+        return None
+    g = set()
+    for s in segs:
+        g |= _grams(s)
+    return g or None
+
+
 def source_nums(entity):
     """掃我哋【源頭】（表2 + 投資項目清單）嘅文字，出一個數字集。
     用嚟拆開「對唔到」：源頭有 = 我哋 pipeline 掉咗（可修）；源頭都冇 = auditor 現場
@@ -626,11 +654,25 @@ def run(gold_path, ours_path, canned_only=False, entity=None, brief=False, fmt_o
             e = seen.setdefault(body[:80], {"t": t, "n": len(body), "ch": ch,
                                             "sub": sub, "s": []})
             e["s"].append(i)
+    b2g = _b2_grams(entity) if (seen and not fmt_only) else None
+    for e in seen.values():
+        e["b2"] = (len(_grams(e["t"]) & b2g) / max(1, len(_grams(e["t"])))) if b2g else None
     for e in (() if brief else seen.values()):
+        cov = ("　【表2 %.0f%%】" % (e["b2"] * 100)) if e["b2"] is not None else ""
         P(f"\n  [golden s{_rng(e['s'])}｜{e['ch'] or '—'}｜{e['sub'] or '—'}]  {e['n']} 字"
-          + ("　（重複 %d 版）" % len(e["s"]) if len(e["s"]) > 1 else ""))
+          + ("　（重複 %d 版）" % len(e["s"]) if len(e["s"]) > 1 else "") + cov)
         P(f"    {e['t'][:180].replace(chr(10), ' ⏎ ')}…")
     P(f"\n  → {len(seen)} 段罐頭未接（去重後）")
+    if b2g:
+        have = [e for e in seen.values() if (e["b2"] or 0) >= 0.5]
+        part = [e for e in seen.values() if 0.2 <= (e["b2"] or 0) < 0.5]
+        P(f"  ── 表2 有冇原料（8-gram 重疊）──")
+        P(f"  ≥50%　{len(have):>3} 段　表2 入面有呢段原文 → 接得落，呢批先係真 todo")
+        P(f"  20-50%{len(part):>3} 段　部分源自表2（改寫過）")
+        P(f"  <20%　{len(seen) - len(have) - len(part):>3} 段　表2 冇 → 罐頭／模板文字，"
+          "或者 auditor 自己寫")
+    elif not fmt_only:
+        P("  （讀唔到 data/表2 → 冇標原料來源；表2 加密就要設 KPI_XLSX_PW）")
 
     # ── ④ 文字量 ────────────────────────────────────────────────
     # 項目組講過「他們的文字明顯較多」。②只數【數字】對唔對得上，數字全中都可以寫得好薄，

@@ -21,6 +21,7 @@ key = (gaming, 正規化碼)。gaming 由檔名判：『博監局』檔＝博彩
 """
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -188,6 +189,127 @@ def load_biao2_struct(folder, entity, log=lambda *a: None):
     out = {k: v for k, v in out.items() if v}      # 冇任何欄值 = 該項目冇 finding，唔留空 key
     log(f"表2（structured）：{len(files)} 檔 → {len(out)} 個項目有內容"
         f"（另 {n_all - len(out)} 個碼冇 finding）、{n_field} 個欄值")
+    return out
+
+
+# ── 調整類型層：主要發現嗰章嘅「事項描述」原文 ──────────────────────────
+# 2026-09-14 真係讀通表2 之後確認嘅嘢：報告『主要發現』每個調整類型嗰段事項描述，
+# 原文就喺表2『畢馬威關注事項』欄，八個類型一個唔少，段落形狀同報告一樣
+# （事實 → 引指引條文 → 建議剔除）。同一段會逐個項目抄一次，所以喺幾十行、
+# 跨檔逐字重複 →【重複最多嗰段】＝類型層 boilerplate，只出現一兩次嗰啲係該項目
+# 獨有補充。我哋本來只攞 per-project 碎片餵 LLM 叫佢自己歸納，原文喺度都冇攞。
+#
+# 另一個要點：表2 好多行嘅項目碼欄係合併儲存格（空），load_biao2_struct 靠碼認行
+# 會成批漏 → 呢度唔靠碼，逐行收。
+#
+# 一格可能寫兩個類型：「1、其他日常營運支出調整：… 2、未完全實現投資目的…：…」
+# → 先切編號（只切後面真係跟住「短標題＋冒號」嗰啲，正文入面嘅「1）」唔會中），
+#   再由開頭「名（金額）：」認類型。類型名喺呢度【唔】canonical 化 —— B.CANON 喺
+#   報告嗰層，biao2.py 保持唔依賴報告。
+_ADJ_NUM = r"\d{1,2}[、．]"
+_ADJ_HEAD = re.compile(r"^(?:" + _ADJ_NUM + r")?\s*([^：:]{4,40}?)\s*[：:]\s*(.+)$", re.S)
+_ADJ_AMT = re.compile(r"[（(][^）)]*(?:萬|億)[^）)]*[）)]\s*$")     # 類型名後面嗰個「（N萬澳門元）」
+_ADJ_EXTRA = ["承批公司反饋", "跨司回覆", "KPMG分析", "管理層解釋", "調整原因"]
+
+
+def split_adj_cell(cell):
+    """一格『畢馬威關注事項』→ [(類型名, 段落)]。"""
+    out = []
+    for p in re.split(r"(?:^|\s)(?=" + _ADJ_NUM + r"[^：:]{4,40}[：:])", _txt(cell)):
+        m = _ADJ_HEAD.match(p.strip())
+        if not m:
+            continue
+        name = _ADJ_AMT.sub("", m.group(1)).strip()
+        body = m.group(2).strip()
+        if len(name) >= 4 and len(body) >= 20:
+            out.append((name, body))
+    return out
+
+
+def _iter_rows(folder, entity, log=lambda *a: None):
+    """逐檔逐 sheet 逐行 → (檔名, sheet, {概念: [文字]})，唔理項目碼。
+    by_adj 同 corpus 共用 —— 兩者都唔需要逐項目對號，需要嘅係全部敘述原文。"""
+    d = Path(folder)
+    if not d.exists():
+        log(f"（冇 {folder}）"); return
+    files = [p for p in sorted(d.rglob("*.xls*"))
+             if not p.name.startswith("~$") and _match_entity(p.name, entity.lower())
+             and "提供附件" not in p.name]
+    log(f"表2 folder {folder}：match「{entity}」{len(files)} 檔")
+    for p in files:
+        try:
+            wb = IB.load_wb(p)
+        except Exception as e:
+            log(f"  ⚠ 開唔到 {p.name}: {e}"); continue
+        for sn in wb.sheetnames:
+            try:
+                rows = []
+                for i, r in enumerate(wb[sn].iter_rows(values_only=True)):
+                    rows.append(r)
+                    if i > 700:
+                        break
+                if not rows:
+                    continue
+                hr, nmatch = _detail_header_row(rows)
+                if nmatch < 3:
+                    continue                   # 附件／圖片頁，唔似標準表2
+                fcols = _field_cols(rows[hr])
+                if not fcols:
+                    continue
+                for r in rows[hr + 1:]:
+                    rec = {}
+                    for concept, cis in fcols.items():
+                        for ci in cis:
+                            if ci >= len(r):
+                                continue
+                            s = _txt(r[ci])
+                            if len(s) >= 3 and not _JUNK_RE.match(s):
+                                rec.setdefault(concept, []).append(s)
+                    if rec:
+                        yield p.name, sn, rec
+            except Exception as e:
+                log(f"  ⚠ {p.name}｜{sn}: {e}")
+
+
+def load_biao2_by_adj(folder, entity, log=lambda *a: None):
+    """{類型名: {"事項描述": 原文, "n": 重複次數, "變體": [...], "承批公司反饋": [...], …}}
+
+    「事項描述」＝該類型重複最多嗰段（同分就攞最長）。變體＝其餘寫法（多數係
+    針對單一項目嗰版，render 項目層 bullet 時有用）。"""
+    desc, extra, n_row = {}, {}, 0
+    for _fn, _sn, rec in _iter_rows(folder, entity, log):
+        n_row += 1
+        names = []
+        for cell in rec.get("關注事項", []):
+            for nm, body in split_adj_cell(cell):
+                desc.setdefault(nm, Counter())[body] += 1
+                names.append(nm)
+        for t in rec.get("調整類型", []):          # 『需溝通關注事項』＝該行嘅類型標籤
+            names.append(_ADJ_AMT.sub("", t).strip())
+        for nm in set(names):
+            for k in _ADJ_EXTRA:
+                for v in rec.get(k, []):
+                    extra.setdefault(nm, {}).setdefault(k, Counter())[v] += 1
+    out = {}
+    for nm, c in desc.items():
+        body, n = max(c.items(), key=lambda kv: (kv[1], len(kv[0])))
+        out[nm] = {"事項描述": body, "n": n,
+                   "變體": [t for t, _ in c.most_common() if t != body]}
+        for k, v in (extra.get(nm) or {}).items():
+            out[nm][k] = [t for t, _ in v.most_common(4)]
+    log(f"表2（類型層）：{n_row} 行 → {len(out)} 個調整類型有『事項描述』原文")
+    return out
+
+
+def load_biao2_corpus(folder, entity, log=lambda *a: None):
+    """表2 全部敘述欄原文（去重）。量『報告嗰段文字係咪表2 有原料』用。"""
+    seen, out = set(), []
+    for _fn, _sn, rec in _iter_rows(folder, entity, log):
+        for vs in rec.values():
+            for v in vs:
+                if v not in seen:
+                    seen.add(v); out.append(v)
+    log(f"表2（corpus）：{len(out)} 段、{sum(len(x) for x in out):,} 字")
     return out
 
 

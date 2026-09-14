@@ -12,6 +12,7 @@ dump_biao2.py — 睇【表2（審查底稿）入面到底有咩料】，判斷�
     python scripts\\report\\dump_biao2.py --pw "密碼"                 # 摘要（預設）
     python scripts\\report\\dump_biao2.py --pw "密碼" --full          # 連內容（會長）
     python scripts\\report\\dump_biao2.py --pw "密碼" --full --max 60 # 每欄最多 60 字
+    python scripts\\report\\dump_biao2.py --pw "密碼" --adj           # 逐【調整類型】抽事項描述原文
     python scripts\\report\\dump_biao2.py data\\表2 --entity mgm --pw "密碼"
 
 密碼亦可以唔喺 command line 畀：env KPI_XLSX_PW 或 conf/local/credentials.yml
@@ -152,12 +153,39 @@ def run(paths, entity, full, maxlen):
           "上面呢啲就係可以餵落去嘅原料）")
 
 
+def run_adj(root, ent, maxlen):
+    """--adj：逐個【調整類型】抽『事項描述』原文（報告主要發現嗰章嘅正文來源）。
+
+    點解另開一個 mode：--full 係逐行 dump，睇到有料但睇唔出【邊段係類型層 boilerplate、
+    邊段係單一項目獨有】。報告主要發現係逐個類型一節，要嘅就係類型層嗰段。"""
+    import biao2 as B2
+    by = B2.load_biao2_by_adj(str(root), ent, log=P)
+    if not by:
+        P("\n✗ 一個類型都抽唔到 —— 睇下上面有冇檔開唔到"); return
+    P(f"\n{'=' * 72}\n### 逐個調整類型（按重複次數排）\n")
+    for nm, rec in sorted(by.items(), key=lambda kv: -kv[1]["n"]):
+        P(f"\n── 【{nm}】　事項描述重複 {rec['n']} 次"
+          + (f"、另有 {len(rec['變體'])} 個變體" if rec["變體"] else ""))
+        P(f"   事項描述：{rec['事項描述'][:maxlen]}")
+        for k in ("調整原因", "承批公司反饋", "跨司回覆", "管理層解釋", "KPMG分析"):
+            for v in (rec.get(k) or [])[:2]:
+                P(f"   {k}：{v[:maxlen]}")
+        for i, v in enumerate(rec["變體"][:2], 1):
+            P(f"   變體{i}：{v[:maxlen]}")
+    P(f"\n{'=' * 72}")
+    P(f"→ {len(by)} 個調整類型有原文。重複次數高＝類型層 boilerplate（報告嗰段），"
+      "得 1-2 次嗰啲係該項目獨有補充。")
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
     av = sys.argv[1:]
+    for a in av:
+        if a.startswith("--") and a not in ("--pw", "--entity", "--max", "--full", "--adj"):
+            print(f"✗ 唔識嘅參數 {a}（有：--pw --entity --max --full --adj）"); return
     if "--pw" in av:
         import os
         os.environ["KPI_XLSX_PW"] = av[av.index("--pw") + 1]
@@ -175,7 +203,10 @@ def main():
                    if not x.name.startswith("~$") and ent in x.name.lower())
     if not paths:
         print(f"✗ {root} 入面冇 match「{ent}」嘅 xlsx"); return
-    run(paths, ent, full, maxlen)
+    if "--adj" in av:
+        run_adj(root, ent, maxlen)
+    else:
+        run(paths, ent, full, maxlen)
     txt = "\n".join(OUT)
     dest = Path("results") if Path("results").is_dir() else Path(".")
     fo = dest / "biao2_dump.txt"
