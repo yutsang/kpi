@@ -590,36 +590,40 @@ def render_overview_pages(prs, crumb, headline, table_df, bullets, *, sec=0, tab
     top = L.content_top(f"{headline}（1/9）", W) + (0.20 if table_name else 0)
     avail = L.CONTENT_BOTTOM - top
     col_h = L.PROSE2_BOTTOM - L.PROSE2_Y         # 續版：兩欄，每欄咁高
-    pages = []                                   # [(有冇表, 左欄items, 右欄items)]
+    pages = []                                   # [(表df 或 None, 左欄items, 右欄items)]
+    rest_all = []                                # ★ 續版文字【跨 group 連續】
     for gi, grp in enumerate(bullets if grouped else [(None, bullets)]):
         head, items = grp if grouped else grp
         if not items:
             continue
         pre = [(head, "")] if head else []
-        # tbl_groups：只有頭幾組先有表版，其餘直接兩欄文字。
+        # tbl_groups：只有頭幾組先有表版，其餘直接落兩欄文字流。
         #   原報告 1.3 四組 —— s11 整體執行概況（圖）、s12 區分設施建設/活動舉辦（圖）、
-        #   s13/s14 按範疇項目概況（純文字兩欄）。我哋本來每組都出一個表版 → 多咗一版表。
+        #   s13/s14 按範疇項目概況（純文字兩欄）。
         if tbl_groups is not None and gi >= tbl_groups:
-            rest = items
-            pre_rest = pre
-        else:
-            narrow = L.fit_prose(items, colw, avail - (0.24 if head else 0),
-                                 head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
-            first = narrow[0] if narrow else []
-            pages.append((True, pre + first, []))
-            rest = items[len(first):]
-            pre_rest = [(head + "（續）", "")] if head else []
+            rest_all += pre + items
+            continue
+        narrow = L.fit_prose(items, colw, avail - (0.24 if head else 0),
+                             head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY)
+        first = narrow[0] if narrow else []
+        # 逐 group 可以有自己張表（原報告 s11 整體概況圖、s12 設施活動拆分圖係兩張唔同嘅）。
+        #   table_df 畀 list 就逐 group 攞，畀單一 df 就每個表版都用佢。
+        tdf = table_df[gi] if isinstance(table_df, (list, tuple)) else table_df
+        pages.append((tdf, pre + first, []))
+        rest = items[len(first):]
         if rest:
-            cols = L.fit_prose(rest, L.PROSE2_W, col_h,
-                               head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY) or [rest]
-            for k in range(0, len(cols), 2):     # 一版兩欄
-                lft = (pre_rest if k == 0 else
-                       ([(head + "（續）", "")] if head else [])) + cols[k]
-                pages.append((False, lft, cols[k + 1] if k + 1 < len(cols) else []))
-    for pi, (with_tbl, left, right) in enumerate(pages):
+            rest_all += ([(head + "（續）", "")] if head else []) + rest
+    # ★ 一次過切兩欄 —— 之前逐 group 切，group 只夠一欄就另起一版，右欄空一大片
+    #   （實測我哋 s15／s17 就係咁，半版白）。連續灌就唔會。
+    if rest_all:
+        cols = L.fit_prose(rest_all, L.PROSE2_W, col_h,
+                           head_size=L.SZ_BODY_HEAD, body_size=L.SZ_BODY) or [rest_all]
+        for k in range(0, len(cols), 2):
+            pages.append((None, cols[k], cols[k + 1] if k + 1 < len(cols) else []))
+    for pi, (tdf, left, right) in enumerate(pages):
         hl = headline + _pg(pi + 1, len(pages))
-        if with_tbl:
-            render_overview_page(prs, crumb, hl, table_df, left,
+        if tdf is not None:
+            render_overview_page(prs, crumb, hl, tdf, left,
                                  sec=sec, table_name=table_name, note=note)
             continue
         # 續版：兩欄文字，冇表、冇資料來源行（原報告 s13/s16/s23 實測就係咁）
@@ -1829,10 +1833,30 @@ def render_category_overview(prs, ent_up, ov, df, narr, llm=None, ovx=None, note
               ("按範疇的項目概況 — 博彩項目", g_bul),
               ("按範疇的項目概況 — 非博彩項目", n_bul)]
     # tbl_groups=2：原報告 s11/s12 有圖、s13/s14 係純文字兩欄（--fmt 實測）
+    # 兩個表版用【唔同】嘅表：s11 整體概況、s12 設施建設/活動舉辦拆分。
+    _t0 = ovx if ovx is not None else ov
+    _tbls = [_t0, _fac_table(ov) if _fac_table(ov) is not None else _t0]
     render_overview_pages(prs, "2025年度投資計劃執行情況概述  |  2025年度投資項目的整體執行概況",
-                          head, ovx if ovx is not None else ov, groups, sec=0, note=note,
+                          head, _tbls, groups, sec=0, note=note,
                           table_name=f"{ent_up} 2025年度計劃的整體投資支出概況", grouped=True,
                           tbl_groups=2)
+
+
+def _fac_table(ov):
+    """1.3 第2版（原報告 s12）左邊嗰張表：範疇 × 設施建設／活動舉辦。
+
+    ⚠ 之前呢一版左邊擺返 1.2 嗰張【整體概況表】，同右邊文字（講設施建設/活動舉辦）
+      對唔上 —— dump 我哋自己出嘅 s13/s14 先發現兩版張表一模一樣。原報告 s11、s12
+      係兩張唔同嘅圖。"""
+    F, A = "設施建設/資本性支出", "活動舉辦/營運性支出"
+    if ov is None or ov.empty or F not in ov.columns:
+        return None
+    keep = ov[~ov["範疇"].astype(str).str.endswith("項目")].copy()
+    if keep.empty:
+        return None
+    out = keep[["範疇", F, A]].copy()
+    out.columns = ["萬澳門元", "設施建設/資本性支出", "活動舉辦/營運性支出"]
+    return out
 
 
 def _fac_bullets(ent_up, ov):
