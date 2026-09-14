@@ -29,6 +29,7 @@ try:
 except ImportError:
     print("✗ pip install pandas python-pptx openpyxl"); sys.exit(1)
 
+import report_year as RY               # 報告年度（一處定義，全 pipeline 派生）
 import layout as L                     # 版式引擎（KPMG house style；顏色/字體/表格/分頁全部喺嗰度）
 
 # 報告配色 alias（真身喺 layout.py，跟 KPMG Visual identity overview）
@@ -258,7 +259,7 @@ def render_cover(prs, entity, date="2026年6月30日"):
         slide = prs.slides.add_slide(lay)
         t = _ph(slide, 0)
         if t is not None:
-            t.text = f"{full}\n2025年年度投資計劃執行情況審查\n專項工作報告"
+            t.text = f"{full}\n{RY.COVER_TITLE}\n專項工作報告"
         b = _ph(slide, 11)
         if b is not None:
             b.text = f"初稿\n畢馬威會計師事務所\n{date}"
@@ -266,7 +267,7 @@ def render_cover(prs, entity, date="2026年6月30日"):
     slide, w, h = _dark_slide(prs)
     tb = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(7.2), Inches(2.6))
     tf = tb.text_frame; tf.word_wrap = True
-    for i, line in enumerate([full, "2025年年度投資計劃執行情況審查", "專項工作報告"]):
+    for i, line in enumerate([full, RY.COVER_TITLE, "專項工作報告"]):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         r = p.add_run(); r.text = line
         r.font.size = Pt(25); r.font.bold = True; r.font.color.rgb = LIGHT
@@ -1967,6 +1968,7 @@ def main():
     global ENT_UP
     ent_up = ENT_UP = entity.upper()
     print(f"build {BUILD_STAMP}")
+    print(RY.banner())
     print(f"entity={ent_up}  feed={feed.name}  清單={qingdan.name if qingdan else '(冇)'}  "
           f"template={template.name if template else '(冇→用 13.33x7.5)'}")
 

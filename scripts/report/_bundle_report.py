@@ -13,9 +13,10 @@ WB = SRC.parents[1] / "src" / "kpi" / "lib" / "workbench.py"   # workbench 喺 s
 OUT = SRC / "build_report.py"
 INTERNAL = {"build_project_review_table", "build_summary_tables", "build_overview_tables",
             "build_narrative", "render_review_table_pptx", "biao2", "inspect_biao2",
-            "build_llm_narrative", "layout", "feed_schema"}
+            "build_llm_narrative", "layout", "feed_schema", "report_year"}
 # 依賴序：被用者先定義（layout 最先，其餘全部用佢；LLM 鏈喺 make_report 之前）
 MODULES = [
+    ("report_year", SRC / "report_year.py"),      # 最前：layout／build_* 全部用佢
     ("layout", SRC / "layout.py"),
     ("feed_schema", SRC / "feed_schema.py"),
     ("render_review_table_pptx", SRC / "render_review_table_pptx.py"),
@@ -89,7 +90,8 @@ for mod, path in MODULES:
         body_parts.append(f"# ── from {mod} ──\n{seg}")
 
 assembled = "\n\n\n".join(body_parts + ([main_src] if main_src else []))
-assembled = re.sub(r"\b(B2|FS|IB|B|S|O|N|R|L)\.", "", assembled)   # de-qualify module aliases
+# ⚠ RY 要排喺 R 前面 —— alternation 由左到右試，"R" 先 match 就會食剩個 "Y."
+assembled = re.sub(r"\b(B2|FS|IB|RY|B|S|O|N|R|L)\.", "", assembled)   # de-qualify module aliases
 
 import subprocess, time                                       # build 印記：output 一眼睇到跑緊邊版
 try:

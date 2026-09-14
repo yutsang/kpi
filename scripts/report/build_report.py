@@ -8,6 +8,7 @@ build_report.py — 單一自足檔：由底層數據（feed + 清單）生成�
     python build_report.py [entity] --llm      # 即場生成 LLM 敘述（需 KPMG 網 + workbench creds）再出報告
 （此檔由各 build/LLM 模組自動合併；LLM 相關 heavy import [openai/msoffcrypto] 全 lazy；報告只作 ref。）
 """
+import os
 import re
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
@@ -17,11 +18,94 @@ from pptx.oxml.ns import qn
 import sys
 from pathlib import Path
 import json
-import os
 import time
 from typing import Any
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+# ── from report_year ──
+YEAR = int(os.environ.get("KPI_REPORT_YEAR", "2025"))
+
+
+# ── from report_year ──
+Y2 = YEAR % 100
+
+
+# ── from report_year ──
+P1, P2 = YEAR - 1, YEAR - 2
+
+
+# ── from report_year ──
+YB = f"{Y2:02d}"
+
+
+# ── from report_year ──
+YB_P1 = f"{Y2:02d}_{P1 % 100:02d}SY"
+
+
+# ── from report_year ──
+YB_P2 = f"{Y2:02d}_{P2 % 100:02d}SY"
+
+
+# ── from report_year ──
+LBL = f"{YEAR}年度投資計劃"
+
+
+# ── from report_year ──
+LBL_P1 = f"{P1}年度計劃期後投資"
+
+
+# ── from report_year ──
+LBL_P2 = f"{P2}年度計劃期後投資"
+
+
+# ── from report_year ──
+BUCKETS = {YB: LBL, YB_P1: LBL_P1, YB_P2: LBL_P2}
+
+
+# ── from report_year ──
+BUCKET_ORDER = [LBL, LBL_P1, LBL_P2]
+
+
+# ── from report_year ──
+BUCKET_PLANYR = {LBL: Y2, LBL_P1: P1 % 100, LBL_P2: P2 % 100}
+
+
+# ── from report_year ──
+BK_COL = [(LBL, f"{YEAR}年度投資計劃"),
+          (LBL_P1, f"{P1}年度投資計劃期後事項"),
+          (LBL_P2, f"{P2}年度投資計劃期後事項")]
+
+
+# ── from report_year ──
+SECTIONS = [
+    f"{YEAR}年度投資計劃執行情況概述",
+    f"過往年度投資計劃在{YEAR}年繼續執行的審查跟進",
+    "本年度審查工作的主要發現",
+    "其他信息",
+    "投資計劃執行報告的六項KPI分析",
+    "附件",
+]
+
+
+# ── from report_year ──
+COVER_TITLE = f"{YEAR}年年度投資計劃執行情況審查"
+
+
+# ── from report_year ──
+REVIEW_TITLE = {
+    f"報告年{Y2:02d}": f"{{e}} {YEAR}年度投資計劃單個項目審查結果匯總表",
+    f"報告年{P1 % 100:02d}": f"{{e}} {P1}年度投資計劃單個項目截至{YEAR}年末的審查結果匯總表",
+    f"報告年{P2 % 100:02d}": f"{{e}} {P2}年度投資計劃單個項目截至{YEAR}年末的審查結果匯總表",
+}
+
+
+# ── from report_year ──
+def banner():
+    """build 開頭印一行，一眼睇到跑緊邊個年度（唔係預設就特別標出）。"""
+    tag = "" if YEAR == 2025 else "　★ 非預設年度（KPI_REPORT_YEAR）"
+    return f"報告年度 {YEAR}（bucket {YB}／{YB_P1}／{YB_P2}）{tag}"
 
 
 # ── from layout ──
@@ -269,11 +353,6 @@ def split_left(ncol):
 
 # ── from layout ──
 SHOW_TABLE_CAPTION = False
-
-
-# ── from layout ──
-SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
-            "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
 
 
 # ── from layout ──
@@ -1176,11 +1255,7 @@ GROUP_LABEL = {"G1": "項目基本信息", "G2": "投資金額的潛在調整事
 
 
 # ── from render_review_table_pptx ──
-YEAR_TITLE = {
-    "報告年25": "{e} 2025年度投資計劃單個項目審查結果匯總表",
-    "報告年24": "{e} 2024年度投資計劃單個項目截至2025年末的審查結果匯總表",
-    "報告年23": "{e} 2023年度投資計劃單個項目截至2025年末的審查結果匯總表",
-}
+YEAR_TITLE = REVIEW_TITLE
 
 
 # ── from render_review_table_pptx ──
@@ -1834,11 +1909,7 @@ pd.set_option("display.width", 200)
 
 
 # ── from build_summary_tables ──
-BUCKET = {"25": "2025年度投資計劃", "25_24SY": "2024年度計劃期後投資", "25_23SY": "2023年度計劃期後投資"}
-
-
-# ── from build_summary_tables ──
-BUCKET_ORDER = ["2025年度投資計劃", "2024年度計劃期後投資", "2023年度計劃期後投資"]
+BUCKET = BUCKETS
 
 
 # ── from build_summary_tables ──
@@ -1947,7 +2018,7 @@ FA_TOT = ["項目數量", "獲批的計劃投資金額", "報告投資金額",
 
 
 # ── from build_summary_tables ──
-BUCKET_YR = {"2025年度投資計劃": 25, "2024年度計劃期後投資": 24, "2023年度計劃期後投資": 23}
+BUCKET_YR = BUCKET_PLANYR
 
 
 # ── from build_summary_tables ──
@@ -2121,10 +2192,6 @@ except ImportError:
 
 
 # ── from build_overview_tables ──
-BUCKET_PLANYR = {"2025年度投資計劃": 25, "2024年度計劃期後投資": 24, "2023年度計劃期後投資": 23}
-
-
-# ── from build_overview_tables ──
 def _plan_tot(plan, yr, gaming=None):
     d = (plan or {}).get(yr, {})
     return round(sum(v for (g, c), v in d.items() if gaming is None or g == gaming), 1)
@@ -2141,7 +2208,7 @@ def overview_by_bucket(df, bucket, plan, category=None, split=None):
     if d.empty:
         return pd.DataFrame()
     yr = BUCKET_PLANYR[bucket]
-    is_py = (bucket == "2025年度投資計劃")
+    is_py = (bucket == LBL)          # 本年度計劃（唔係期後）
     idx = ["_scope", "_go", "_ngn", "_sub"]
     g = d.groupby(idx, dropna=False).agg(
         項目數量=("dicj code", "nunique"), 報告=("調整前_萬", "sum"),
@@ -2314,9 +2381,7 @@ def finding_by_sub(df, adj_type):
     if d.empty:
         return pd.DataFrame()
     d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
-    BK = [("2025年度投資計劃", "2025年度投資計劃"),
-          ("2024年度計劃期後投資", "2024年度投資計劃期後事項"),
-          ("2023年度計劃期後投資", "2023年度投資計劃期後事項")]
+    BK = BK_COL
     cols = ["範疇"] + [lab for _b, lab in BK] + ["合計"]
     rows = []
     for sub in d.sort_values(["_scope", "_go", "_ngn", "_sub"])["_sub"].unique():
@@ -3754,7 +3819,7 @@ def _ph(slide, idx):
 
 
 # ── from make_report ──
-BUILD_STAMP = "base 4fe3aca · content d0683025 · bundled 2026-09-11 13:54"
+BUILD_STAMP = "base c74635d · content 5bfc0f9e · bundled 2026-09-14 14:36"
 
 
 # ── from make_report ──
@@ -3876,7 +3941,7 @@ def render_cover(prs, entity, date="2026年6月30日"):
         slide = prs.slides.add_slide(lay)
         t = _ph(slide, 0)
         if t is not None:
-            t.text = f"{full}\n2025年年度投資計劃執行情況審查\n專項工作報告"
+            t.text = f"{full}\n{COVER_TITLE}\n專項工作報告"
         b = _ph(slide, 11)
         if b is not None:
             b.text = f"初稿\n畢馬威會計師事務所\n{date}"
@@ -3884,7 +3949,7 @@ def render_cover(prs, entity, date="2026年6月30日"):
     slide, w, h = _dark_slide(prs)
     tb = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(7.2), Inches(2.6))
     tf = tb.text_frame; tf.word_wrap = True
-    for i, line in enumerate([full, "2025年年度投資計劃執行情況審查", "專項工作報告"]):
+    for i, line in enumerate([full, COVER_TITLE, "專項工作報告"]):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         r = p.add_run(); r.text = line
         r.font.size = Pt(25); r.font.bold = True; r.font.color.rgb = LIGHT
@@ -5638,6 +5703,7 @@ def main():
     global ENT_UP
     ent_up = ENT_UP = entity.upper()
     print(f"build {BUILD_STAMP}")
+    print(banner())
     print(f"entity={ent_up}  feed={feed.name}  清單={qingdan.name if qingdan else '(冇)'}  "
           f"template={template.name if template else '(冇→用 13.33x7.5)'}")
 

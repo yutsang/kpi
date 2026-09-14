@@ -152,8 +152,8 @@ def split_left(ncol):
 # 原報告【冇】表頂 navy 標題條，表直接由 CONTENT_Y 開始。想要返就改 True。
 SHOW_TABLE_CAPTION = False
 
-SECTIONS = ["2025年度投資計劃執行情況概述", "過往年度投資計劃在2025年繼續執行的審查跟進",
-            "本年度審查工作的主要發現", "其他信息", "投資計劃執行報告的六項KPI分析", "附件"]
+import report_year as RY
+SECTIONS = RY.SECTIONS          # 六大章名由報告年度派生
 
 _CN_RE = None
 

@@ -28,7 +28,8 @@ except ImportError:
 import build_summary_tables as S
 import build_project_review_table as B
 
-BUCKET_PLANYR = {"2025年度投資計劃": 25, "2024年度計劃期後投資": 24, "2023年度計劃期後投資": 23}
+import report_year as RY
+BUCKET_PLANYR = RY.BUCKET_PLANYR
 
 
 def _plan_tot(plan, yr, gaming=None):
@@ -53,7 +54,7 @@ def overview_by_bucket(df, bucket, plan, category=None, split=None):
     if d.empty:
         return pd.DataFrame()
     yr = BUCKET_PLANYR[bucket]
-    is_py = (bucket == "2025年度投資計劃")
+    is_py = (bucket == RY.LBL)          # 本年度計劃（唔係期後）
     idx = ["_scope", "_go", "_ngn", "_sub"]
     g = d.groupby(idx, dropna=False).agg(
         項目數量=("dicj code", "nunique"), 報告=("調整前_萬", "sum"),
@@ -224,9 +225,7 @@ def finding_by_sub(df, adj_type):
     if d.empty:
         return pd.DataFrame()
     d["_chg"] = pd.to_numeric(d["調整_萬"], errors="coerce").fillna(0.0)
-    BK = [("2025年度投資計劃", "2025年度投資計劃"),
-          ("2024年度計劃期後投資", "2024年度投資計劃期後事項"),
-          ("2023年度計劃期後投資", "2023年度投資計劃期後事項")]
+    BK = RY.BK_COL
     cols = ["範疇"] + [lab for _b, lab in BK] + ["合計"]
     rows = []
     for sub in d.sort_values(["_scope", "_go", "_ngn", "_sub"])["_sub"].unique():

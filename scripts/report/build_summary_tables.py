@@ -31,8 +31,10 @@ except ImportError:
 
 pd.set_option("display.max_columns", 30); pd.set_option("display.width", 200)
 
-BUCKET = {"25": "2025年度投資計劃", "25_24SY": "2024年度計劃期後投資", "25_23SY": "2023年度計劃期後投資"}
-BUCKET_ORDER = ["2025年度投資計劃", "2024年度計劃期後投資", "2023年度計劃期後投資"]
+# 年度一律由 report_year 派生（一處定義）—— 明年改 KPI_REPORT_YEAR 一個數就得
+import report_year as RY
+BUCKET = RY.BUCKETS
+BUCKET_ORDER = RY.BUCKET_ORDER
 GORDER = {"博彩娛樂場優化": 0, "博彩娛樂場場地的優化": 0, "博彩設施設備優化": 1, "博彩設施及設備的優化": 1}
 
 
@@ -124,7 +126,7 @@ FA_LEG = ["項目數量", "獲批的計劃投資金額", "報告投資金額",
           "潛在調整後投資金額"]
 FA_TOT = ["項目數量", "獲批的計劃投資金額", "報告投資金額",
           "投資金額的潛在調整事項", "潛在調整後投資金額"]
-BUCKET_YR = {"2025年度投資計劃": 25, "2024年度計劃期後投資": 24, "2023年度計劃期後投資": 23}
+BUCKET_YR = RY.BUCKET_PLANYR
 
 
 def _cap_key(v):
