@@ -16,6 +16,7 @@ make_report.py — 一鍵：由底層數據(feed) 做齊報告數字表 → 一�
 import os
 import re
 import sys
+from difflib import SequenceMatcher as SM
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1406,8 +1407,35 @@ SUB_AS_REPORTED = {
 #   1,000萬 擺喺兩者中間，好有空間。KPI_PROJ_BULLET_MIN 可以覆蓋。
 PROJ_BULLET_MIN = float(os.environ.get("KPI_PROJ_BULLET_MIN", "1000"))
 
+# 表2 同一個調整類型除咗類型層嗰段，仲有幾段講單一項目／期後嘅（load_biao2_by_adj 嘅
+# 「變體」）。原報告逐項都會講（客房改造嗰節就佔咗七版），所以要帶埋落去。
+# 擺 3 係因為實測 8 個類型最多得 3 個變體；想收窄／放寬改呢個。
+FIND_B2_VARIANTS = int(os.environ.get("KPI_FIND_B2_VARIANTS", "3"))
 
-def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
+
+def _b2_adj_by_canon(by_adj):
+    """表2 嘅類型名 → 我哋 ADJ_ALL 嘅 canonical 名。
+
+    唔可以直接查 B.CANON：表2 寫「超出可計入範圍的内部資源支出」（簡體「内」），
+    B.CANON 收咗「超過…内…」同「超出…內…」，就係差呢一個 combination。引號都
+    有全形／半形之分。所以先正規化再 exact，唔中先用相似度 —— 呢種係命名差異，
+    唔係真係對唔上，門檻放 0.75。"""
+    def _n(s):
+        return re.sub(r"[\s“”\"'‘’「」]", "", str(s)).replace("内", "內").replace("儘", "盡")
+    canon = {_n(t): t for t in B.ADJ_ALL}
+    out = {}
+    for nm, rec in (by_adj or {}).items():
+        t = canon.get(_n(nm)) or B.CANON.get(nm)
+        if not t:
+            cand = max(canon, key=lambda k: SM(None, _n(nm), k).ratio(), default=None)
+            if cand and SM(None, _n(nm), cand).ratio() >= 0.75:
+                t = canon[cand]
+        if t and t not in out:          # 同一個 canonical 撞到兩個表2 名 → 留第一個
+            out[t] = rec
+    return out
+
+
+def render_findings(prs, ent_up, df, narr, llm=None, b2=None, b2adj=None):
     """③ 主要發現 —— 逐個調整類型【一版】（對 scan p28-40）：
         「主要發現」小標 → navy 導語（總額 + 三個 bucket 拆開）
         → caption 條「事項描述」→ 左邊「範疇 × 三個 bucket」細表 → 右邊 bullet 敘述。
@@ -1435,8 +1463,17 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
         #   即係【絕對金額】決定使唔使落到項目層，唔係項目數量。
         #   我哋本來一律逐個項目一段 → 字數少過原報告 20%，版數反而多
         #   （diff ⑦ 捉到人工成本／內部資源／期後事項 都係「原報告 表、我哋 表文」）。
+        # ★ 事項描述用【表2 原文】，唔用 LLM 歸納（2026-09-14）。
+        #   表2『畢馬威關注事項』欄本身就係報告呢一段嘅原文，逐個項目抄一次所以跨檔
+        #   重複幾十次。我哋本來只攞 per-project 碎片餵 LLM 叫佢重寫一次，寫出嚟嘅嘢
+        #   一定同原報告唔同 —— 原文喺手邊。表2 開唔到就先返 LLM。
+        rec = (b2adj or {}).get(adj) or {}
         bul = []
-        if llm_adj.get(adj):
+        if rec.get("事項描述"):
+            bul.append(("", rec["事項描述"]))
+            for v in rec.get("變體", [])[:FIND_B2_VARIANTS]:    # 同類型其餘事項（原報告會逐項講）
+                bul.append(("", v))
+        elif llm_adj.get(adj):
             bul.append(("", llm_adj[adj]))              # 歸納段（冇項目標題）
         for _, pj in projs.iterrows():
             if bul and abs(float(pj["調整"])) < PROJ_BULLET_MIN:
@@ -2173,14 +2210,21 @@ def main():
                                      f"萬澳門元，摘要如下；逐項說明見後頁。"),
                            note="註：金額單位為萬澳門元；括號表示調減。",
                            llm=llm, tbl_id=tbl_key("發現摘要"))
-    if narr:      # 逐調整類型 × 項目：金額(feed) + 事項描述(LLM ground 表2＋清單) / 清單抄字
+    if narr:      # 逐調整類型 × 項目：金額(feed) + 事項描述(表2 原文) / 項目層抄清單
         b2 = {}
+        b2adj = {}
+        _b2dir = av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2"
         try:            # 表2＝審查底稿，清單冇料時頂住（加密檔，開唔到就靜靜跳過）
-            b2 = B2.load_biao2_struct(av[av.index("--biao2") + 1] if "--biao2" in av else "data/表2",
-                               entity, log=lambda *a: None)
+            b2 = B2.load_biao2_struct(_b2dir, entity, log=lambda *a: None)
         except Exception:
             pass
-        render_findings(prs, ent_up, sdf, narr, llm=llm, b2=b2)
+        try:            # 類型層：主要發現嗰段事項描述嘅【原文】就喺表2，唔使 LLM 重寫
+            b2adj = _b2_adj_by_canon(B2.load_biao2_by_adj(_b2dir, entity, log=lambda *a: None))
+            if b2adj:
+                print(f"  · 表2 事項描述原文：{len(b2adj)}/{len(B.ADJ_ALL)} 個調整類型")
+        except Exception as e:
+            print(f"  ⚠ 表2 類型層讀唔到（會退返 LLM 歸納）：{e}")
+        render_findings(prs, ent_up, sdf, narr, llm=llm, b2=b2, b2adj=b2adj)
 
     def _canned_has(lo, hi):
         return bool(canned) and any(lo <= s["n"] <= hi for s in canned.get("slides", []))

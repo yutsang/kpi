@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inspect_biao2 as IB      # load_wb（msoffcrypto 解密）
+import report_year as RY        # 報告年度一處定義（_adj_rank 要認「本年度計劃」嗰句）
 
 # 乾淨 code：項目N / 字母碼(B11.1/OP005/IV008)；唔匹配金額(27206)避免揀錯欄
 _CODE_RE = re.compile(r"^(項目\s*\d+|[A-Za-z]{1,5}\d+(?:\.\d+)?)$")
@@ -211,6 +212,31 @@ _ADJ_HEAD = re.compile(r"^(?:" + _ADJ_NUM + r")?\s*([^：:]{4,40}?)\s*[：:]\s*(
 _ADJ_AMT = re.compile(r"[（(][^）)]*(?:萬|億)[^）)]*[）)]\s*$")     # 類型名後面嗰個「（N萬澳門元）」
 _ADJ_EXTRA = ["承批公司反饋", "跨司回覆", "KPMG分析", "管理層解釋", "調整原因"]
 
+# 「與前述的…一致，我們就…同樣建議了該項調整」＝交叉引用短句，唔係描述本身。
+# ⚠ 呢種句子喺期後 sheet 逐年抄一次，所以【重複次數反而最高】—— 第一版淨係靠
+#   重複次數揀，8 個類型有 2 個揀中咗佢（人工成本、客房改造），實測出嚟先知。
+_ADJ_STUB = re.compile(r"與前述的|同樣建議了該項調整")
+_SHEET_YR = re.compile(r"20\d\d")
+
+
+def _sheet_year(sn):
+    """sheet 名 → 計劃年。「2025年度投資計劃項目」「因發生期後事項…之2024非博彩項目」
+    「博彩項目 - 表二（2025）」全部第一個 20xx 就係。"""
+    m = _SHEET_YR.search(sn or "")
+    return int(m.group(0)) if m else None
+
+
+def _adj_rank(body, n):
+    """揀邊段做事項描述：非交叉引用 > 講緊本年度計劃 > 重複多 > 長。
+
+    「講緊本年度計劃」嘅標記＝「{年}年度計劃的報告投資金額」／「{年}年度計劃投資支出」。
+    類型層嗰段一定有（報告主要發現講嘅就係本年度計劃）；單一項目嗰段同期後嗰段冇。
+    ⚠ 唔好寫成「{年}年度投資計劃」—— 交叉引用句入面個標題就係嗰個寫法，會撞。"""
+    y = RY.YEAR
+    return (not _ADJ_STUB.search(body),
+            bool(re.search(rf"{y}年度計劃(?:的報告)?投資(?:金額|支出)", body)),
+            n, len(body))
+
 
 def split_adj_cell(cell):
     """一格『畢馬威關注事項』→ [(類型名, 段落)]。"""
@@ -276,13 +302,15 @@ def load_biao2_by_adj(folder, entity, log=lambda *a: None):
 
     「事項描述」＝該類型重複最多嗰段（同分就攞最長）。變體＝其餘寫法（多數係
     針對單一項目嗰版，render 項目層 bullet 時有用）。"""
-    desc, extra, n_row = {}, {}, 0
-    for _fn, _sn, rec in _iter_rows(folder, entity, log):
+    desc, by_yr, extra, n_row = {}, {}, {}, 0
+    for _fn, sn, rec in _iter_rows(folder, entity, log):
         n_row += 1
+        yr = _sheet_year(sn)
         names = []
         for cell in rec.get("關注事項", []):
             for nm, body in split_adj_cell(cell):
                 desc.setdefault(nm, Counter())[body] += 1
+                by_yr.setdefault(nm, {}).setdefault(yr, Counter())[body] += 1
                 names.append(nm)
         for t in rec.get("調整類型", []):          # 『需溝通關注事項』＝該行嘅類型標籤
             names.append(_ADJ_AMT.sub("", t).strip())
@@ -292,9 +320,12 @@ def load_biao2_by_adj(folder, entity, log=lambda *a: None):
                     extra.setdefault(nm, {}).setdefault(k, Counter())[v] += 1
     out = {}
     for nm, c in desc.items():
-        body, n = max(c.items(), key=lambda kv: (kv[1], len(kv[0])))
-        out[nm] = {"事項描述": body, "n": n,
-                   "變體": [t for t, _ in c.most_common() if t != body]}
+        rank = sorted(c.items(), key=lambda kv: _adj_rank(*kv), reverse=True)
+        body, n = rank[0]
+        out[nm] = {"事項描述": body, "n": n, "變體": [t for t, _ in rank[1:]],
+                   # 期後跟進嗰章要嘅係【該計劃年】嗰段，唔係本年度嗰段
+                   "按計劃年": {y: sorted(cc.items(), key=lambda kv: _adj_rank(*kv))[-1][0]
+                                for y, cc in (by_yr.get(nm) or {}).items() if y}}
         for k, v in (extra.get(nm) or {}).items():
             out[nm][k] = [t for t, _ in v.most_common(4)]
     log(f"表2（類型層）：{n_row} 行 → {len(out)} 個調整類型有『事項描述』原文")

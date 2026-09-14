@@ -165,7 +165,9 @@ def run_adj(root, ent, maxlen):
     P(f"\n{'=' * 72}\n### 逐個調整類型（按重複次數排）\n")
     for nm, rec in sorted(by.items(), key=lambda kv: -kv[1]["n"]):
         P(f"\n── 【{nm}】　事項描述重複 {rec['n']} 次"
-          + (f"、另有 {len(rec['變體'])} 個變體" if rec["變體"] else ""))
+          + (f"、另有 {len(rec['變體'])} 個變體" if rec["變體"] else "")
+          + (f"、計劃年 {'/'.join(str(y) for y in sorted(rec['按計劃年']))}"
+             if rec.get("按計劃年") else ""))
         P(f"   事項描述：{rec['事項描述'][:maxlen]}")
         for k in ("調整原因", "承批公司反饋", "跨司回覆", "管理層解釋", "KPMG分析"):
             for v in (rec.get(k) or [])[:2]:
