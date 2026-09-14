@@ -107,18 +107,39 @@ def run(paths, entity, full, maxlen):
                 P(f"     {get_column_letter(i + 1):>4} {mark:<5} {h[:30]:<30} "
                   f"{len(vals):>4} / {chars:,}")
             if full and narr_i:
-                kc = next((i for i, c in enumerate(cls) if c == "key"), 0)
+                # ⚠ 本來要求每行有個「key 欄」（投資項目序號嗰類）做標籤，搵唔到就 fallback
+                #   去 column 0 —— 但表2 嘅 column 0 多數係合併儲存格、空嘅，於是【逐行跳過】，
+                #   成份 dump 除咗一張附件表之外全部空白。五萬四千字讀唔出係因為呢個。
+                #   改法：唔靠 key 欄 —— 只要該行有敘述欄有內容就印，標籤用【該行第一個
+                #   非空欄】（通常係項目碼或名），冇就用行號。
+                kc = next((i for i, c in enumerate(cls) if c == "key"), None)
                 P(f"\n     —— 內容（每欄最多 {maxlen} 字）——")
-                for r in body:
-                    if kc >= len(r) or r[kc] is None:
-                        continue
+                n_row = 0
+                for ri, r in enumerate(body, hr + 1):
                     segs = []
                     for i in narr_i:
                         if i < len(r) and r[i] is not None and str(r[i]).strip():
                             t = re.sub(r"\s+", " ", str(r[i]).strip())
+                            if len(t) < 3:            # 「是」「否」嗰類單字答案唔算敘述
+                                continue
                             segs.append(f"{hdr[i]}：{t[:maxlen]}")
-                    if segs:
-                        P(f"     [{str(r[kc]).strip()[:24]}] " + " ｜ ".join(segs))
+                    if not segs:
+                        continue
+                    lab = ""
+                    if kc is not None and kc < len(r) and r[kc] is not None:
+                        lab = str(r[kc]).strip()
+                    if not lab:
+                        # 標籤：揀第一個【唔喺敘述欄、又長過 3 個字】嘅值（通常係項目碼／名），
+                        #   唔好揀到「是」「否」嗰啲諮詢問題答案。都冇就用行號。
+                        cand = [str(v).strip() for i2, v in enumerate(r)
+                                if v is not None and str(v).strip()
+                                and i2 not in narr_i and len(str(v).strip()) > 3
+                                and re.search(r"[\u4e00-\u9fff]", str(v))]
+                        lab = cand[0] if cand else f"行{ri}"
+                    n_row += 1
+                    P(f"     [{lab[:28]}] " + " ｜ ".join(segs))
+                if not n_row:
+                    P("     （呢個 sheet 嘅敘述欄全部係空／單字答案）")
         try:
             wb.close()
         except Exception:
