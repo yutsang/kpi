@@ -23,6 +23,7 @@ diff_report.py — 收斂用：項目組原報告 pptx（golden） vs 我哋生�
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --canned   # 淨係出 ③
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --format   # 淨係出格式（①⑤⑦）
     python scripts\\report\\diff_report.py golden.pptx ours.pptx --text "人工成本"  # 逐段並排，唔評分
+    python scripts\\report\\diff_report.py golden.pptx ours.pptx --pw "…"   # ③ 要讀表2 先標得到【表2 n%】
 
 ⚠ --brief 只影響【印出嚟】嘅嘢；`results/diff_report.txt` 一樣係嗰份摘要，
   想睇逐項就唔好加 --brief。
@@ -862,15 +863,29 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-    a = [x for x in sys.argv[1:] if not x.startswith("--")]
-    if len(a) < 2:
-        print(__doc__); return
-    OK = {"--brief", "--canned", "--format", "--text"}
-    bad = [x for x in sys.argv[1:] if x.startswith("--") and x not in OK]
+    argv = sys.argv[1:]
+    OK = {"--brief", "--canned", "--format", "--text", "--pw"}
+    bad = [x for x in argv if x.startswith("--") and x not in OK]
     if bad:
         print(f"✗ 唔識嘅 flag：{' '.join(bad)}　（有效：{' '.join(sorted(OK))}）")
         print("  ⚠ 打錯 flag 之前會【靜靜當冇】跑晒全份報告，白等一轉 —— 所以而家報錯。")
         return
+    # --text／--pw 嘅值係跟喺 flag 後面嘅，唔可以當做 pptx 路徑
+    skip = {argv[argv.index(k) + 1] for k in ("--text", "--pw")
+            if k in argv and argv.index(k) + 1 < len(argv)}
+    a = [x for x in argv if not x.startswith("--") and x not in skip]
+    if len(a) < 2:
+        print(__doc__); return
+    if "--pw" in argv:          # 一次性密碼（同 dump_biao2 一樣），唔使改 conf
+        import os
+        pw = argv[argv.index("--pw") + 1]
+        os.environ["KPI_XLSX_PW"] = pw
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            import inspect_biao2 as IB
+            IB.PASSWORD = pw                       # PASSWORD 喺 import 嗰陣已經定咗
+        except Exception:
+            pass
     if "--text" in sys.argv:
         L = show_text(a[0], a[1], sys.argv[sys.argv.index("--text") + 1])
         txt = "\n".join(L)
