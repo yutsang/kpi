@@ -1397,6 +1397,12 @@ SUB_AS_REPORTED = {
 }
 
 
+# 主要發現：項目層另開一段嘅門檻（萬澳門元）。低過呢個就淨係喺類型層歸納段講。
+#   原報告實測：人工成本嗰批項目 22~66萬 → 冇獨立段落；客房改造 1.9~2.8億 → 有。
+#   1,000萬 擺喺兩者中間，好有空間。KPI_PROJ_BULLET_MIN 可以覆蓋。
+PROJ_BULLET_MIN = float(os.environ.get("KPI_PROJ_BULLET_MIN", "1000"))
+
+
 def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
     """③ 主要發現 —— 逐個調整類型【一版】（對 scan p28-40）：
         「主要發現」小標 → navy 導語（總額 + 三個 bucket 拆開）
@@ -1404,6 +1410,7 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
     ⚠ 之前做成【逐個項目一張 navy card】，報告冇呢種版（項目組 scan p28）。
     項目層嘅描述（LLM／清單／表2）而家併入右欄 bullet，逐個項目一點。"""
     llm_proj = (llm or {}).get("proj", {})
+    llm_adj = (llm or {}).get("adj", {})        # 類型層歸納 —— 原報告主體就係呢種
     d = df.copy()
     d["_adj"] = d["調整一級"].map(B.CANON).fillna(d["調整一級"])
     d.loc[~d["_adj"].isin(B.ADJ7), "_adj"] = B.ADJ_POST     # 殘差＝第 8 類（同 1.4／2.2 表一致）
@@ -1418,8 +1425,18 @@ def render_findings(prs, ent_up, df, narr, llm=None, b2=None):
             名稱=("project", "first"), 報告=("調整前_萬", "sum"),
             調整=("調整_萬", "sum")).reset_index()
         projs = projs.reindex(projs["調整"].abs().sort_values(ascending=False).index)
+        # ★ 結構跟原報告：【類型層歸納行先，項目層只列重大嗰幾個】。
+        #   原報告 s30 人工成本（7 個項目、每個 22-66萬）＝ 零個項目段落、一版歸納完；
+        #   s34-40 客房改造（2 個項目、各 1.9-2.8億）＝ 逐個項目詳述七版。
+        #   即係【絕對金額】決定使唔使落到項目層，唔係項目數量。
+        #   我哋本來一律逐個項目一段 → 字數少過原報告 20%，版數反而多
+        #   （diff ⑦ 捉到人工成本／內部資源／期後事項 都係「原報告 表、我哋 表文」）。
         bul = []
+        if llm_adj.get(adj):
+            bul.append(("", llm_adj[adj]))              # 歸納段（冇項目標題）
         for _, pj in projs.iterrows():
+            if bul and abs(float(pj["調整"])) < PROJ_BULLET_MIN:
+                continue                                 # 細項唔另開段，歸納段已經講咗
             nr = N.nlook(narr, pj["ng_scope"], pj["dicj code"])
             txt = (llm_proj.get(proj_key(adj, pj["ng_scope"], pj["dicj code"]), "")
                    or _trim(nr.get("KPMG分析發現", "")) or _trim(nr.get("管理層解釋", ""))
