@@ -29,6 +29,14 @@ from collections import Counter
 from pathlib import Path
 
 YEAR = re.compile(r"20(2[0-9]|30)")
+# breadcrumb 六大章名 —— 每張罐頭版都帶住（golden 自己嗰條），重複 4 次 x 40 版 ≈ 160 個，
+# 淨係報數量就淹晒真正要改嘅嘢。呢啲唔使逐版改，改 layout.SECTIONS 就一次過搞掂。
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from layout import SECTIONS as _SECS
+except Exception:
+    _SECS = []
+CRUMB = {re.sub(r"\s+", "", x) for x in _SECS}
 AMT = re.compile(r"\d[\d,]*(?:\.\d+)?\s*(?:億|萬)")
 NUM = re.compile(r"\d[\d,]*(?:\.\d+)?\s*(?:%|個|筆|件|家|場|次|名|間|項)")
 OUT = []
@@ -64,7 +72,8 @@ def run(path, maxlen):
         hits = []
         for sh in s.get("shapes") or []:
             for kind, t in _texts(sh):
-                if "〔" in t:                      # 骨架佔位符，唔算
+                flat = re.sub(r"\s+", "", t)
+                if "〔" in t or flat in CRUMB:      # 骨架佔位符／breadcrumb 章名，唔算
                     continue
                 tags = []
                 if YEAR.search(t):
@@ -89,6 +98,25 @@ def run(path, maxlen):
     P("  · [年] 多數係改一個數字（2025→2026）")
     P("  · [額]/[數] 係今年嘅實數（抽樣量、涉及項目數…）→ 明年要由當年數據換返")
     P("  · 改完之後 build_report 唔使郁，罐頭 JSON 改咗就即刻生效")
+    P(f"  · 已經隔走 breadcrumb 六大章名（{len(CRUMB)} 個，每版重複 4 次）——"
+      " 嗰啲改 layout.SECTIONS 一次過搞掂，唔使逐版執")
+    # code 層嘅年份硬編碼 —— 罐頭改完都仲要改呢度
+    P("\n══ code 入面寫死年份嘅地方（罐頭改完都仲要改）")
+    root = Path(__file__).resolve().parent
+    for f in sorted(root.glob("*.py")):
+        if f.name in ("canned_yearly.py", "build_report.py"):
+            continue                              # build_report 係 bundle 產物
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        hit = [(i, ln) for i, ln in enumerate(lines, 1)
+               if YEAR.search(ln) and not ln.lstrip().startswith("#")
+               and ("年度" in ln or "年繼續" in ln)]
+        for i, ln in hit[:6]:
+            P(f"  {f.name}:{i}  {ln.strip()[:96]}")
+        if len(hit) > 6:
+            P(f"  {f.name}    …另外 {len(hit) - 6} 行")
 
 
 def main():
